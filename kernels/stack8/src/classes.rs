@@ -5188,6 +5188,11 @@ impl<'a> Engine<'a> {
     }
 
     fn class_get_slow(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        // A mapping proxy's intrinsic methods do not inspect its entries.
+        if matches!(&subject, Value::View(proxy) if proxy.1 == "mapping")
+            && ["get", "keys", "values", "items", "copy", "__getitem__", "__contains__", "__len__", "__iter__", "__reversed__", "__or__", "__ror__", "__ior__", "__hash__"].contains(&name) {
+            return Ok(Value::ValueMethod(Rc::new((subject, name.to_owned()))));
+        }
         if (matches!(&subject, Value::Native(Builtin::ClassTool(11), _)) || matches!(&subject, Value::Adapter(parts) if parts.0 == 8)) && self.names_property_class(&subject.contents()) {
             let class = self.property_class();
             return self.class_get(Value::Class(class), name, plain);

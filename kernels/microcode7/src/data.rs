@@ -981,6 +981,18 @@ impl Value {
         self
     }
 
+    /// Resolve a native string key directly in a class-backed mapping window.
+    pub(super) fn window_text_entry(&self, key: &Value) -> Option<Option<Value>> {
+        match (self, key) {
+            (Value::Window(owner, 'm'), Value::Text(word)) if !word.starts_with(['#', '\0']) => {
+                let Value::Blueprint(plan) = owner.as_ref() else { return None; };
+                if plan.shared.named("\0type-keys", true).is_some() { return None; }
+                Some(plan.shared.named(word, true))
+            }
+            _ => None,
+        }
+    }
+
     pub fn proxy_pairs(&self) -> Value {
         if let Value::Shared(cell) | Value::Mutable(cell, _) = self { return cell.borrow().proxy_pairs(); }
         if let Value::Window(owner, 'm') = self { return owner.proxy_pairs(); }
@@ -2439,6 +2451,11 @@ pub struct Blueprint {
 }
 
 impl Blueprint {
+    /// Supply the seven varying fields and fill every other blueprint field.
+    pub fn bare(name: String, presentation: Option<String>, under: Option<Rc<Blueprint>>, parents: Vec<Rc<Blueprint>>, ancestry: Vec<Rc<Blueprint>>, constants: Vec<(String, Value)>, shared: BlueprintEntries) -> Self {
+        Self { name, presentation, under: RefCell::new(under), parents: RefCell::new(parents), ancestry: RefCell::new(ancestry), constants, shared, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), instance_slots: RefCell::new(None), namespace_layout: Cell::new(None), supplied_bases: RefCell::new(None), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: RefCell::new(None), mro_place: RefCell::new(vec![0]), mro_ready: Cell::new(true), base_epoch: Cell::new(0) }
+    }
+
     pub fn resolution(self: &Rc<Self>) -> Vec<Rc<Blueprint>> {
         let inherited=self.ancestry();
         let positions=self.mro_place.borrow();

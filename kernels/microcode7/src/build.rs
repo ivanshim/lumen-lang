@@ -12,6 +12,7 @@ use num_traits::ToPrimitive;
 use crate::math;
 use crate::scan::{Shape, Token};
 use crate::table::{Blocks, Table, FxBuildHasher};
+use std::hash::BuildHasher;
 use crate::form::{Clause, Input, Traps, Form, Prim, Routine, Address, Callee, Plan};
 use crate::data::{Reach, Value};
 
@@ -198,13 +199,17 @@ fn input_proof(input: &[Token]) -> Vec<u8> {
             output.extend_from_slice(&(written.len() as u64).to_le_bytes());
             output.extend_from_slice(written.as_bytes());
         }
-        output.extend_from_slice(&(item.span as u64).to_le_bytes());
-        output.extend_from_slice(&u64::from(item.row).to_le_bytes());
-        output.extend_from_slice(&(item.column as u64).to_le_bytes());
-        output.extend_from_slice(&(item.end_column as u64).to_le_bytes());
-        output.extend_from_slice(&u64::from(item.end_row).to_le_bytes());
-        output.extend_from_slice(&(item.utf8_column as u64).to_le_bytes());
-        output.extend_from_slice(&(item.utf8_end as u64).to_le_bytes());
+        // This positional suffix has a fixed wire layout; grow the row once.
+        let coordinates = [
+            (item.span as u64).to_le_bytes(),
+            u64::from(item.row).to_le_bytes(),
+            (item.column as u64).to_le_bytes(),
+            (item.end_column as u64).to_le_bytes(),
+            u64::from(item.end_row).to_le_bytes(),
+            (item.utf8_column as u64).to_le_bytes(),
+            (item.utf8_end as u64).to_le_bytes(),
+        ];
+        output.extend_from_slice(coordinates.as_flattened());
     }
     output
 }
@@ -356,7 +361,7 @@ const MET_WRITTEN: u8 = 1;
 const MET_ANNOTATED: u8 = 2;
 
 struct Layer {
-    name_cache: std::cell::RefCell<(usize, HashMap<String, usize, FxBuildHasher>)>,
+    name_cache: std::cell::RefCell<(usize, HashMap<u64, (usize, usize), FxBuildHasher>)>,
     // Keep annotation-scope parameters distinct from writable enclosing locals.
     type_names: Vec<String>,
     permits_async: bool,
@@ -390,10 +395,13 @@ impl Layer {
         let mut cache = self.name_cache.borrow_mut();
         let beginning = cache.0;
         for slot in beginning..self.idents.len() {
-            if !self.idents[slot].is_empty() { cache.1.insert(self.idents[slot].clone(), slot); }
+            if !self.idents[slot].is_empty() { note_global(&mut cache.1, &self.idents[slot], slot); }
         }
         cache.0 = self.idents.len();
-        if word.is_empty() { self.idents.iter().rposition(|candidate| candidate == word) } else { cache.1.get(word).copied() }
+        if word.is_empty() { return self.idents.iter().rposition(|candidate| candidate == word); }
+        // Spellings are keyed by hash alone: a seat that does not hold the word means a clash, answered by a scan.
+        let slot = cache.1.get(&FxBuildHasher::default().hash_one(word))?.1;
+        if self.idents[slot] == word { Some(slot) } else { self.idents.iter().rposition(|candidate| candidate == word) }
     }
 
 }
@@ -594,7 +602,7 @@ pub struct Builder<'a> {
     stripped_docs: HashSet<usize>,
     optimize: i64,
     indexes_globals: bool,
-    global_positions: HashMap<String, (usize, usize), FxBuildHasher>,
+    global_positions: HashMap<u64, (usize, usize), FxBuildHasher>,
     globals_indexed: usize,
     lexical_origin: Rc<Vec<Token>>,
     origin_content: Rc<std::cell::OnceCell<Rc<str>>>,
@@ -939,6 +947,22 @@ pub fn build_from_at(tokens: &[Token], table: &Table, seeded: &[String], assumed
     build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, Some((&at, &hard, &column)), None, None, true, false, 0, &[], 0).map_err(|said| (said, at.get()))
 }
 
+// Keep scope discovery for any token that can hide or create a binding.
+fn needs_expression_scope(input: &[Token], rules: &Table) -> bool {
+    if !rules.flag("ext.syntax.call.bind_names") || !rules.has_any("ext.op.assign.expression") { return true; }
+    let scopes = ["ext.op.lambda", "ext.op.comprehension.for", "stmt.function", "ext.stmt.class"]
+        .map(|label| rules.strings(label));
+    for part in input {
+        match part.shape {
+            Shape::Bare => if scopes.iter().any(|words| words.iter().any(|name| name == part.spelling())) { return true; },
+            Shape::Sign => if rules.spells("ext.op.assign.expression", part.spelling()) || rules.spells("stmt.assign", part.spelling()) { return true; },
+            Shape::Numeral | Shape::Quote | Shape::ByteQuote | Shape::CharacterRow | Shape::LineEnd | Shape::Finish => (),
+            _ => return true,
+        }
+    }
+    false
+}
+
 /// Text handed over to be read while the run goes: as one expression
 /// and nothing after it where it is to be weighed, else as statements;
 /// said besides which file it came out of, and which builtin words are
@@ -949,7 +973,7 @@ pub fn build_text(tokens: &[Token], table: &Table, seeded: &[String], before: u3
     let mut words = HashMap::new();
     let mut bound = shadowed.to_vec();
     let mut exports = HashSet::new();
-    if table.flag("ext.stmt.function.closes_over") {
+    if table.flag("ext.stmt.function.closes_over") && (!value_only || before != 0 || needs_expression_scope(tokens, table)) {
         let discovery = build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in.clone(), globe.clone(), born.clone(), framed_in.clone(), mark, None, None, true, &mut words, true, value_only, shadowed, &HashSet::new(), allow_top_await, interactive, settle, &[], future_bits).map_err(|said| (said, at.get(), column.get()))?;
         exports = discovery.native_exports;
         for name in discovery.bound_globally {
@@ -964,7 +988,7 @@ type Within<'w> = (&'w [String], Knows<'w>);
 
 fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, beside: Option<Value>, named: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, value_only: bool, settle: i64, aliasing: &[(String, String)], future_bits: i64) -> Res<Built> {
     let mut words = HashMap::new();
-    let (program_names, exports) = if table.flag("ext.stmt.function.closes_over") {
+    let (program_names, exports) = if table.flag("ext.stmt.function.closes_over") && (!value_only || before != 0 || needs_expression_scope(tokens, table)) {
         let reusable = !strict && before == 0 && assumed.is_empty() && within.is_none() && standing_in.is_none() && !read_in && !value_only && aliasing.is_empty() && seeded.iter().all(|name| name.is_empty() || name.starts_with("\0prior/")) && settle == 0 && future_bits == 0;
         if let Some(stored) = reusable.then(|| library_survey(tokens, table)).flatten() {
             words = stored.scopes;
@@ -1145,6 +1169,47 @@ fn class_spellings<'t>(input: &'t [Token], table: &Table) -> std::borrow::Cow<'t
     output
 }
 
+/// The global names are indexed by the hash of the spelling alone, with
+/// the first and last seat of each hash; a reading checks the seat it
+/// is handed against the name, so a clash of hashes costs a scan, never
+/// a wrong answer, and no spelling is copied to be indexed.
+fn note_global(index: &mut HashMap<u64, (usize, usize), FxBuildHasher>, name: &str, at: usize) {
+    index.entry(FxBuildHasher::default().hash_one(name)).and_modify(|pair| pair.1 = at).or_insert((at, at));
+}
+
+fn slot_of_global(index: &HashMap<u64, (usize, usize), FxBuildHasher>, names: &[String], name: &str, last: bool) -> Option<usize> {
+    let pair = index.get(&FxBuildHasher::default().hash_one(name))?;
+    let seat = if last { pair.1 } else { pair.0 };
+    if names[seat] == name { return Some(seat); }
+    if last { names.iter().rposition(|word| word == name) } else { names.iter().position(|word| word == name) }
+}
+
+thread_local! {
+    /// The names last indexed and their index: the next reading that is
+    /// seeded with the same names, and perhaps more after them, carries on
+    /// from it rather than indexing every seat again.
+    static SEEDED_INDEX: std::cell::RefCell<(Vec<String>, HashMap<u64, (usize, usize), FxBuildHasher>)> = Default::default();
+}
+
+/// The index of the seeded names. Empty seats are placeholders nothing
+/// reads by name, so they are left out.
+fn seeded_index(seeded: &[String]) -> HashMap<u64, (usize, usize), FxBuildHasher> {
+    SEEDED_INDEX.with(|kept| {
+        let mut kept = kept.borrow_mut();
+        let (names, index) = &mut *kept;
+        if seeded.len() < names.len() || seeded[..names.len()] != names[..] {
+            names.clear();
+            index.clear();
+        }
+        for at in names.len()..seeded.len() {
+            if !seeded[at].is_empty() { note_global(index, &seeded[at], at); }
+        }
+        let held = names.len();
+        names.extend_from_slice(&seeded[held..]);
+        index.clone()
+    })
+}
+
 fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String], exports: &HashSet<String>, allow_top_await: bool, interactive: bool, settle: i64, aliasing: &[(String, String)], future_bits: i64) -> Res<Built> {
     // A name the language reserves may not be written to: `async = 1`
     // and `await = 1` are syntax errors wherever they stand, before the
@@ -1158,23 +1223,18 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     let mut beginnings = seeded.to_vec();
     let indexes_globals = table.flag("ext.syntax.call.bind_names");
     let exceptions = table.strings("ext.builtin.exceptions");
-    let mut global_positions: HashMap<String, (usize, usize), FxBuildHasher> = HashMap::with_capacity_and_hasher(
-        if indexes_globals { seeded.iter().filter(|word| !word.is_empty()).count() + exceptions.len() } else { 0 }, FxBuildHasher::default());
-    if indexes_globals {
-        for (at, name) in seeded.iter().enumerate().filter(|(_, word)| !word.is_empty()) {
-            global_positions.entry(name.clone()).and_modify(|pair| pair.1 = at).or_insert((at, at));
-        }
-    }
-    for word in exceptions {
-        let present = if indexes_globals { global_positions.contains_key(word) } else { beginnings.contains(word) };
+    let mut global_positions: HashMap<u64, (usize, usize), FxBuildHasher> = if indexes_globals { seeded_index(seeded) } else { HashMap::default() };
+    // Scope discovery records spellings; reserve native seats in the real pass.
+    for word in exceptions.iter().filter(|_| !survey) {
+        let present = if indexes_globals { slot_of_global(&global_positions, &beginnings, word, false).is_some() } else { beginnings.contains(word) };
         if !present {
             let at = beginnings.len();
-            if indexes_globals { global_positions.insert(word.clone(), (at, at)); }
+            if indexes_globals { note_global(&mut global_positions, word, at); }
             beginnings.push(word.clone());
         }
     }
     let globals_indexed = if indexes_globals { beginnings.len() } else { 0 };
-    let top = Layer { type_names: Vec::new(), name_cache: Default::default(), async_walk_seen: false, return_value_at: None, permits_async: allow_top_await, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: aliasing.to_vec(), encountered: Vec::new() };
+    let top = Layer { type_names: Vec::new(), name_cache: std::cell::RefCell::new((globals_indexed, global_positions.clone())), async_walk_seen: false, return_value_at: None, permits_async: allow_top_await, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: aliasing.to_vec(), encountered: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
     if let Some((inside, (args, spellings, backs))) = within {
@@ -1205,7 +1265,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         }
     }
     let grammar = CompileWords::of(table);
-    let mut r = Builder { stripped_docs: HashSet::new(), image_settings: i64::from(value_only) | (i64::from(interactive) << 1) | (i64::from(allow_top_await) << 2) | (settle.clamp(0, 2) << 8), grammar: &grammar, origin_content: Rc::new(std::cell::OnceCell::new()), indexes_globals, global_positions, globals_indexed, lexical_origin: Rc::new(if survey { Vec::new() } else { tokens.to_vec() }), annotation_lookup: false, class_annotation_read: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, finally_loop_bases: Vec::new(), in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), starred_annotations: Vec::new(), unpack_annotation_starts: std::collections::HashSet::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, first_adornment: None, carrying: Vec::new(), pending_types: Vec::new(), documentation_statement: None, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, member_temps: Vec::new(), gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { stripped_docs: HashSet::new(), image_settings: i64::from(value_only) | (i64::from(interactive) << 1) | (i64::from(allow_top_await) << 2) | (settle.clamp(0, 2) << 8), grammar: &grammar, origin_content: Rc::new(std::cell::OnceCell::new()), indexes_globals, global_positions, globals_indexed, lexical_origin: Rc::new(if survey { Vec::new() } else { tokens.to_vec() }), annotation_lookup: false, class_annotation_read: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, finally_loop_bases: Vec::new(), in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), starred_annotations: Vec::new(), unpack_annotation_starts: std::collections::HashSet::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: std::mem::take(words), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, first_adornment: None, carrying: Vec::new(), pending_types: Vec::new(), documentation_statement: None, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, member_temps: Vec::new(), gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -1370,7 +1430,8 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         first.push(body);
         sequence(first)
     };
-    words.extend(r.surveyed.clone());
+    // The builder owns this survey until it returns it to the next pass.
+    std::mem::swap(words, &mut r.surveyed);
     let top = r.layers.pop().unwrap();
     // Where the text stands inside a routine, the layer just popped is
     // that routine's and the one under it holds the globals.
@@ -1834,10 +1895,14 @@ impl<'a> Builder<'a> {
                 else { names.iter().position(|word| word == name) };
         }
         for at in self.globals_indexed..names.len() {
-            self.global_positions.entry(names[at].clone()).and_modify(|pair| pair.1 = at).or_insert((at, at));
+            if names[at].is_empty() { continue; }
+            note_global(&mut self.global_positions, &names[at], at);
         }
         self.globals_indexed = names.len();
-        self.global_positions.get(name).map(|pair| if last { pair.1 } else { pair.0 })
+        if name.is_empty() {
+            return if last { names.iter().rposition(|word| word.is_empty()) } else { names.iter().position(|word| word.is_empty()) };
+        }
+        slot_of_global(&self.global_positions, names, name, last)
     }
 
     /// Read the first global slot, adding a name only when absent.
@@ -10920,7 +10985,7 @@ impl<'a> Builder<'a> {
             if table.flag("ext.op.compare.chained") {
                 if let Some((operation, level, words)) = self.comparison_head()? {
                     if floor > level { break; }
-                    left = self.comparison_tail(left, operation, level, words)?;
+                    left = self.comparison_tail(left, operation, level, words, origin)?;
                     continue;
                 }
             }
@@ -11112,19 +11177,20 @@ impl<'a> Builder<'a> {
 
     /// The next link runs beneath the true arm of this one. Its near
     /// side is the cell this link filled, so no middle is read twice.
-    fn comparison_tail(&mut self, left: Form, operation: Prim, level: u32, words: usize) -> Res<Form> {
+    fn comparison_tail(&mut self, left: Form, operation: Prim, level: u32, words: usize, origin: usize) -> Res<Form> {
         for _ in 0..words { self.move_past(); }
         let mut side = self.expr(level + 1)?;
         if self.table.has_any("ext.builtin.compile.modes") && matches!(operation, Prim::Contains | Prim::Absent) {
             if let Some(set) = frozen_display(&side, self.table) { side = constant(set); }
         }
         let Some((following, tier, width)) = self.comparison_head()?.filter(|(_, tier, _)| *tier == level) else {
-            return Ok(prim_call(operation, vec![left, side]));
+            return Ok(self.located(self.span_since(origin), prim_call(operation, vec![left, side])));
         };
         let near = self.gensym("middle");
         let far = self.gensym("next");
-        let test = prim_call(operation, vec![Form::Read(near.clone()), Form::Read(far.clone())]);
-        let rest = self.comparison_tail(Form::Read(far.clone()), following, tier, width)?;
+        let rest = self.comparison_tail(Form::Read(far.clone()), following, tier, width, origin)?;
+        let test = self.located(self.span_since(origin),
+            prim_call(operation, vec![Form::Read(near.clone()), Form::Read(far.clone())]));
         let answer = self.choose(test, rest, constant(Value::Flag(false)));
         let judged = self.gensym("judged");
         Ok(sequence(vec![Form::Write(near.clone(), Box::new(left)), Form::Write(far.clone(), Box::new(side)),

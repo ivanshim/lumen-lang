@@ -1,5 +1,5 @@
 # Runtime adapter derived from CPython v3.14.8 (8e6e75d9102e), Lib/annotationlib.py; PSF License.
-# Template AST rendering awaits template-string support.
+# Template values render through the syntax tree the reference unparses.
 def type_repr(value):
     """Convert a Python value to a format suitable for use with the STRING format.
 
@@ -8,10 +8,14 @@ def type_repr(value):
     repr() for most objects.
 
     """
-    if isinstance(value, (type, types.FunctionType, types.BuiltinFunctionType)):
+    # Builtin functions are their own type here. isinstance does not see
+    # them as types.BuiltinFunctionType, so the type object is compared.
+    if isinstance(value, (type, types.FunctionType)) or type(value) is types.BuiltinFunctionType or type(value) is types.BuiltinMethodType:
         if value.__module__ == "builtins":
             return value.__qualname__
         return f"{value.__module__}.{value.__qualname__}"
+    if _is_template(value):
+        return _get_ast().unparse(_template_to_ast(value))
     if value is ...:
         return "..."
     return repr(value)

@@ -81,9 +81,8 @@ impl<'a> Machine<'a> {
         if self.ancestor.is_none() {
             let title=self.detail("root").to_owned();
             let documentation=Self::builtin_kind_doc(&title).map(|text|vec![(self.detail("doc").to_owned(),Value::text(text))]).unwrap_or_default();
-            self.ancestor=Some(Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
-                parents: std::cell::RefCell::new(Vec::new()),ancestry:RefCell::new(Vec::new()),under: std::cell::RefCell::new(None),answers:Vec::new(),fields:Vec::new(),
-                reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared: crate::data::BlueprintEntries::new(documentation),instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(false), order_supplied:Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)}));
+            let presentation=Some(format!("<class '{title}'>"));
+            self.ancestor=Some(Rc::new(Blueprint::bare(title,presentation,None,Vec::new(),Vec::new(),Vec::new(),crate::data::BlueprintEntries::new(documentation))));
         }
         self.ancestor.as_ref().unwrap().clone()
     }
@@ -228,9 +227,11 @@ impl<'a> Machine<'a> {
             protocols.extend(names.into_iter().enumerate().map(|(index, name)|
                 (self.detail(name).to_owned(), Self::wrap(207, vec![Value::Small(index as i64)]))));
         }
-        let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:word.to_owned(),
-            parents: std::cell::RefCell::new(vec![root.clone()]),ancestry:RefCell::new(ranks),under: std::cell::RefCell::new(Some(root)),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared: crate::data::BlueprintEntries::new(protocols),instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot:Cell::new(None),has_slot_storage: word == "_ConstEvaluator", sealed:Cell::new(word == "_ConstEvaluator"), order_supplied:Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+        let parent=root.clone();
+        let mut made=Blueprint::bare(word.to_owned(),Some(format!("<class '{title}'>")),Some(root),vec![parent],ranks,vec![("\0native".to_owned(),Value::text(word))],crate::data::BlueprintEntries::new(protocols));
+        made.has_slot_storage=word=="_ConstEvaluator";
+        made.sealed.set(word=="_ConstEvaluator");
+        let kind=Rc::new(made);
         if word == "PyCapsule" { kind.sealed.set(true); }
         if word == "SimpleNamespace" && !self.detail("namespace").is_empty() {
             let name = self.detail("namespace").to_owned();
@@ -511,9 +512,10 @@ impl<'a> Machine<'a> {
         if let Some(b)=&self.builder_kind{return b.clone();}
         let root=self.common_ancestor();
         let title=self.table.prims.iter().find(|(_,p)|**p==Prim::SortOf).map(|(w,_)|w.to_string()).unwrap_or_default();
-        let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
-            parents: std::cell::RefCell::new(vec![root.clone()]),ancestry:RefCell::new(vec![root.clone()]),under: std::cell::RefCell::new(Some(root)),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared: crate::data::BlueprintEntries::new(Vec::new()),instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(false), order_supplied:Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+        let presentation=Some(format!("<class '{title}'>"));
+        let parent=root.clone();
+        let forebear=root.clone();
+        let kind=Rc::new(Blueprint::bare(title,presentation,Some(root),vec![parent],vec![forebear],Vec::new(),crate::data::BlueprintEntries::new(Vec::new())));
         self.builder_kind=Some(kind.clone());
         let names=[self.detail("name"),self.detail("qualified"),self.detail("doc")];
         for word in names.into_iter().filter(|word|!word.is_empty()) {
@@ -1467,10 +1469,10 @@ impl<'a> Machine<'a> {
                 .find(|(part, _)| self.table.single(&format!("ext.stmt.class.detail.{part}")).is_some_and(|word| word == entry.0)).map(|(_, number)| number);
             if let Some(number) = wrapping { entry.1 = Value::Wrapped(number, Rc::new(vec![entry.1.clone()]).into()); }
         }
-        let class=Rc::new(Blueprint {presentation:Some(format!("<class '{module}.{shown}'>")),name:title,
-            under:std::cell::RefCell::new(primary),parents: std::cell::RefCell::new(parents),ancestry:std::cell::RefCell::new(ranks),answers:vec![],fields:vec![],reaches:vec![],
-            methods:vec![],constants:fixed,
-            shared: crate::data::BlueprintEntries::new(entries),instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot:Cell::new(None),has_slot_storage: storage, sealed:Cell::new(false), order_supplied:Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: RefCell::new(type_names), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+        let mut class=Blueprint::bare(title,Some(format!("<class '{module}.{shown}'>")),primary,parents,ranks,fixed,crate::data::BlueprintEntries::new(entries));
+        class.has_slot_storage=storage;
+        class.type_names=RefCell::new(type_names);
+        let class=Rc::new(class);
         if let Some(cell) = &class_cell { let word = self.detail("cell.contents").to_owned(); self.alter_class_member(cell.clone(), &word, Some(Value::Blueprint(class.clone())), true)?; }
 
         if !self.rules.words_ext_builtin_weak_get.is_empty() { crate::ghost::note(crate::ghost::Ghost::Blueprint(Rc::downgrade(&class))); }
@@ -1897,9 +1899,10 @@ impl<'a> Machine<'a> {
             entries.push((self.detail(part).to_owned(),Self::wrap(58,vec![Value::text(Self::accessor_key(part))])));
         }
         entries.push((self.detail("name").to_owned(),Self::wrap(58,vec![Value::text("\0name")])));
-        let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
-            parents: std::cell::RefCell::new(vec![root.clone()]),ancestry:RefCell::new(vec![root.clone()]),under: std::cell::RefCell::new(Some(root)),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared: crate::data::BlueprintEntries::new(entries),instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(false), order_supplied:Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+        let presentation=Some(format!("<class '{title}'>"));
+        let parent=root.clone();
+        let forebear=root.clone();
+        let kind=Rc::new(Blueprint::bare(title,presentation,Some(root),vec![parent],vec![forebear],Vec::new(),crate::data::BlueprintEntries::new(entries)));
         self.property_kind=Some(kind.clone());
         kind
     }
@@ -1932,22 +1935,23 @@ impl<'a> Machine<'a> {
             current=base;
         }
     }
+    /// The blueprint that classmethod and staticmethod share, named by the work tag, with wrap tags for its getter and initializer.
+    fn method_wrapper_blueprint(&mut self, work: u8, get: u8, init: u8)->Rc<Blueprint> {
+        let root=self.common_ancestor();
+        let title=self.table.prims.iter().find(|(_,op)|**op==Prim::ClassWork(work)).map(|(w,_)|w.to_string()).unwrap_or_default();
+        let presentation=Some(format!("<class '{title}'>"));
+        Rc::new(Blueprint::bare(title,presentation,Some(root.clone()),vec![root.clone()],vec![root.clone()],Vec::new(),crate::data::BlueprintEntries::new(vec![
+            (self.detail("descriptor.get").to_owned(),Self::wrap(get,Vec::new())),
+            (self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).unwrap_or_default().to_owned(),Self::wrap(init,Vec::new())),
+        ])))
+    }
     /// The blueprint of every classmethod, made once. It keeps the
     /// routine it was given under a name no program can spell, and read
     /// through a class it binds the routine to that class, as the
     /// reference's own classmethod does.
     pub(super) fn classmethod_blueprint(&mut self)->Rc<Blueprint> {
         if let Some(b)=&self.classmethod_kind{return b.clone();}
-        let root=self.common_ancestor();
-        let title=self.table.prims.iter().find(|(_,op)|**op==Prim::ClassWork(10)).map(|(w,_)|w.to_string()).unwrap_or_default();
-        let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
-            parents:std::cell::RefCell::new(vec![root.clone()]),ancestry:std::cell::RefCell::new(vec![root.clone()]),under:std::cell::RefCell::new(Some(root.clone())),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),
-            shared: crate::data::BlueprintEntries::new(vec![
-                (self.detail("descriptor.get").to_owned(),Self::wrap(201,Vec::new())),
-                (self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).unwrap_or_default().to_owned(),Self::wrap(200,Vec::new())),
-            ]),
-            instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(false), type_names: std::cell::RefCell::new(None), order_supplied: std::cell::Cell::new(false), supplied_order: std::cell::RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+        let kind=self.method_wrapper_blueprint(10,201,200);
         self.classmethod_kind=Some(kind.clone());
         kind
     }
@@ -1956,16 +1960,7 @@ impl<'a> Machine<'a> {
     /// hands the routine back unbound.
     pub(super) fn staticmethod_blueprint(&mut self)->Rc<Blueprint> {
         if let Some(b)=&self.staticmethod_kind{return b.clone();}
-        let root=self.common_ancestor();
-        let title=self.table.prims.iter().find(|(_,op)|**op==Prim::ClassWork(9)).map(|(w,_)|w.to_string()).unwrap_or_default();
-        let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
-            parents:std::cell::RefCell::new(vec![root.clone()]),ancestry:std::cell::RefCell::new(vec![root.clone()]),under:std::cell::RefCell::new(Some(root.clone())),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),
-            shared: crate::data::BlueprintEntries::new(vec![
-                (self.detail("descriptor.get").to_owned(),Self::wrap(203,Vec::new())),
-                (self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).unwrap_or_default().to_owned(),Self::wrap(202,Vec::new())),
-            ]),
-            instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(false), type_names: std::cell::RefCell::new(None), order_supplied: std::cell::Cell::new(false), supplied_order: std::cell::RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+        let kind=self.method_wrapper_blueprint(9,203,202);
         self.staticmethod_kind=Some(kind.clone());
         kind
     }
@@ -5488,7 +5483,9 @@ impl<'a> Machine<'a> {
         for (name, tag) in [("__repr__",233),("__str__",233),("__reduce__",234),("__replace__",237)] { members.push((name.into(),Self::wrap(tag,Vec::new()))); }
         for (name, count) in [("n_sequence_fields",9),("n_fields",11),("n_unnamed_fields",0)] { members.push((name.into(),Value::Small(count))); }
         members.push(("__match_args__".into(), Value::tuple(TM_FIELDS[..9].iter().copied().map(Value::text).collect())));
-        let result=Rc::new(Blueprint { name:String::from("struct_time"),presentation:Some(String::from("<class 'time.struct_time'>")),under: std::cell::RefCell::new(Some(parent.clone())),parents: std::cell::RefCell::new(vec![parent]),ancestry:RefCell::new(ranks),answers:Vec::new(),fields:Vec::new(),reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".into(),Value::text("struct_time"))],shared: crate::data::BlueprintEntries::new(members),instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot:Cell::new(None),has_slot_storage:true,sealed:Cell::new(false),order_supplied:Cell::new(false),supplied_order:RefCell::new(Vec::new()),type_names:RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+        let mut result=Blueprint::bare(String::from("struct_time"),Some(String::from("<class 'time.struct_time'>")),Some(parent.clone()),vec![parent],ranks,vec![("\0native".into(),Value::text("struct_time"))],crate::data::BlueprintEntries::new(members));
+        result.has_slot_storage=true;
+        let result=Rc::new(result);
         self.native_kinds.push(("struct_time".into(),result.clone())); result
     }
     pub(super) fn clock_record(&mut self, target:Value, parameters:Vec<Value>) -> Res {
@@ -5675,6 +5672,12 @@ impl<'a> Machine<'a> {
         self.read_class_member_slow(value, key, direct)
     }
     fn read_class_member_slow(&mut self, value: Value, key: &str, direct: bool) -> Res {
+        // Binding a native mapping-window method needs no materialized dictionary.
+        if let Value::Window(_, 'm') = &value {
+            if matches!(key, "copy" | "items" | "values" | "keys" | "get" | "__hash__" | "__ior__" | "__ror__" | "__or__" | "__reversed__" | "__iter__" | "__len__" | "__contains__" | "__getitem__") {
+                return Ok(Value::Member(Rc::new(value), key.to_string()));
+            }
+        }
         if key.starts_with("co_") && key != "co_optimize" {
             if let Value::Thing(instance) = &value {
                 if self.code_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &instance.blueprint())) {
