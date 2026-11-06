@@ -6047,11 +6047,13 @@ impl<'a> Machine<'a> {
                     }
                     Form::OnLine(row, at, body) => {
                         self.stand_at_instruction(at as i64);
-                        self.row = row;
-                        if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(row as i64); }
+                        // The previous line dropped this. Bidding farewell
+                        // after the row moves blames the line being entered.
                         if crate::ghost::stirred(&self.ghost_tap) {
                             self.attend_to_gone();
                         }
+                        self.row = row;
+                        if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(row as i64); }
                         if !matches!(self.tracing_function, Value::Nil) { self.emit_trace("line", Value::Nil)?; }
                         // A statement reached inside a sleeping walk is
                         // an edge all the same: a signal waiting is
@@ -7839,9 +7841,10 @@ impl<'a> Machine<'a> {
         if self.any_unheard.get() {
             self.hand_over_unheard()?;
         }
-        if crate::ghost::stirred(&self.ghost_tap) {
-            self.attend_to_gone();
-        }
+        // Statement edges bid farewells. Doing it on every nested value
+        // walked the anchor list once per byte of an archive header.
+        // The edge must run while the line that dropped the object is
+        // still current; see OnLine.
         match node {
             Form::Const(Value::Routine(p)) => self.bind_program(p, frame),
             Form::Const(Value::OctetKind { changeable, .. }) if self.frames_named.last()
@@ -7865,7 +7868,18 @@ impl<'a> Machine<'a> {
             Form::Dyad { op, name, a, b } => { return self.value_arm_4(node, frame); }
             Form::Share(slot) => Ok(Value::Shared(self.shared_cell(slot, frame))),
             Form::Located(position, at, inner) => { return self.value_arm_5(node, frame); }
-            Form::OnLine(row, at, inner) => { return self.value_arm_6(node, frame); }
+            Form::OnLine(row, at, inner) => {
+                // Bid farewell before moving to this line and again after
+                // the statement finishes, while its line is still current.
+                if crate::ghost::stirred(&self.ghost_tap) {
+                    self.attend_to_gone();
+                }
+                let outcome = self.value_arm_6(node, frame);
+                if crate::ghost::stirred(&self.ghost_tap) {
+                    self.attend_to_gone();
+                }
+                return outcome;
+            }
             Form::Write(slot, value) => {
                 let v = self.value_of(value, frame)?;
                 self.store(slot, frame, v.clone())?;
