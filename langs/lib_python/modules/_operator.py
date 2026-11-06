@@ -91,7 +91,8 @@ def _replace_operator_functions():
     namespace = globals()
     for wrapper in replacements.values():
         namespace[wrapper.__name__] = wrapper
-        __all__.append(wrapper.__name__)
+        if wrapper.__name__ not in __all__:
+            __all__.append(wrapper.__name__)
     for name, member in list(module.__dict__.items()):
         wrapper = replacements.get(id(member))
         if wrapper is not None:
