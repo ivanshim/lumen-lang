@@ -20900,9 +20900,9 @@ impl<'a> Engine<'a> {
                 let supplied = items.into_iter().map(|(key, value)| match key {
                     Some(key) => Value::Tie(Rc::new((key, value))), None => value,
                 }).collect();
-                return this.class_work(30, supplied).map_err(|fault| match this.carried.take().unwrap_or(fault) {
+                return this.class_work(30, supplied).map_err(|fault| match this.thread.carried.take().unwrap_or(fault) {
                     Fault::Note(words) => words,
-                    raised => { this.carried = Some(raised); this.special_fault() }
+                    raised => { this.thread.carried = Some(raised); this.special_fault() }
                 });
             }
             let named = this.keyword_items(items)?; invoke(this, named)
