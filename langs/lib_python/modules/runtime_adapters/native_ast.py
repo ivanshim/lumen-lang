@@ -627,6 +627,16 @@ class AST:
             elif not hasattr(cls, field):
                 warnings.warn(name + ".__init__ missing 1 required positional argument: " + repr(field) + ". This will become an error in Python 3.15.", DeprecationWarning, stacklevel=2)
 
+    # CPython calls the node type with no arguments and then restores the
+    # instance dictionary. Placeholders, or skipping the initializer, break a
+    # subclass whose constructor accepts nothing. Copy asks for protocol 4, so
+    # every protocol stays on this reduction.
+    def __reduce__(self):
+        return type(self), (), self.__dict__
+
+    def __reduce_ex__(self, protocol):
+        return self.__reduce__()
+
     # Replace only declared class fields and attributes, keeping shallow values.
     @_native_keywords
     def __replace__(self, **changes):
