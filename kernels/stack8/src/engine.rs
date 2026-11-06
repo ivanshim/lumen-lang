@@ -28693,9 +28693,9 @@ impl<'a> Engine<'a> {
                     6 => {
                         arity(2)?;
                         let which = as_index(&args[1])? as i64;
-                        match self.beside.borrow_mut().remove(&which) {
+                        match self.beside.borrow_mut().get_mut(&which) {
                             None => Value::Flag(false),
-                            Some(mut kept) => {
+                            Some(kept) => {
                                 let _ = kept.child.kill();
                                 let _ = kept.child.wait();
                                 Value::Flag(true)
