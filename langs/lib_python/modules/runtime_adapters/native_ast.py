@@ -556,12 +556,20 @@ class AST:
         # Incomplete and deprecated forms take the warning walk below.
         # The direct store skips __setattr__, so building a node does not
         # drop a previously parsed tree's source stamp.
+        # _fields lives on the type. After it is deleted, the lookup has to
+        # name the type object; an instance lookup reports a different error.
+        cls = type(self)
+        try:
+            fields = cls._fields
+        except AttributeError:
+            # A deleted _fields is reported on the qualified type. An instance
+            # lookup would name the instance, which is a different error.
+            raise AttributeError("type object '" + cls.__module__ + "." + cls.__name__ + "' has no attribute '_fields'") from None
         if not args:
             # Nothing to store: context markers such as Load() are empty.
             # A node with fields and no arguments keeps the warning walk.
-            if not kwargs and not self._fields:
+            if not kwargs and not fields:
                 return
-            fields = self._fields
             attrs = self._attributes
             ready = True
             for field in fields:
@@ -578,7 +586,7 @@ class AST:
                 return
         cls = type(self)
         name = cls.__name__
-        fields = self._fields
+        fields = cls._fields
         if len(args) > len(fields):
             raise TypeError(name + ' constructor takes at most ' + str(len(fields)) + ' positional arguments')
         given = len(args)
@@ -1317,6 +1325,12 @@ class MatchAs(pattern):
 class MatchOr(pattern):
     _fields = ('patterns',)
     _attributes = ('lineno', 'col_offset', 'end_lineno', 'end_col_offset')
+
+class Index(AST):
+    # Deprecated. Callers receive the index value itself, not a node.
+    _fields = ()
+    def __new__(cls, value, **kwargs):
+        return value
 
 class type_ignore(AST):
     _fields = ()
@@ -2072,9 +2086,9 @@ def _lex(source, start, end, row, col, for_field, comments=None):
             col += width(i, j)
             i = j
             continue
-        if c == '_' or c.isalpha():
+        if c == '_' or c.isalpha() or (not c.isascii() and c.isidentifier()):
             j = i
-            while j < end and (chars[j] == '_' or chars[j].isalnum()):
+            while j < end and (chars[j] == '_' or chars[j].isalnum() or (not chars[j].isascii() and ('a' + chars[j]).isidentifier())):
                 j += 1
             word = source[i:j]
             lowered = word.lower()
@@ -2541,6 +2555,8 @@ class _Parser:
         while i < stop and i < len(text):
             if text[i] == '\t':
                 col += 8 - col % 8
+            elif text[i] == '\f':
+                col = 0
             else:
                 col += 1
             i += 1
@@ -2554,10 +2570,12 @@ class _Parser:
         text = self.lines[tok.srow - 1] if tok.srow - 1 < len(self.lines) else ''
         stop = tok.scol if tok.scol < len(text) else len(text)
         i = 0
+        col = 0
         while i < stop and (text[i] == ' ' or text[i] == '\t' or
                             text[i] == '\f'):
+            col = 0 if text[i] == '\f' else col + 1
             i += 1
-        return i
+        return col
 
     def prefix_len(self, tok):
         # The leading whitespace of the token's line, in characters; a
@@ -2667,7 +2685,7 @@ class _Parser:
         committed = at
         while at + 3 < limit:
             name = toks[at]
-            if name.kind != 'name' or name.scol != indent or name.text in skip:
+            if name.kind != 'name' or self.indent_col(name) != indent or name.text in skip:
                 break
             op = toks[at + 1]
             if op.kind != 'op' or op.text != '=':
@@ -3122,16 +3140,19 @@ class _Parser:
             self.expect_op(':')
             while self.toks[self.at].kind == 'newline':
                 self.pop()
-            indent = self.toks[self.at].scol
-            if indent <= first.scol:
+            case_tok = self.toks[self.at]
+            indent = self.indent_col(case_tok)
+            if indent <= self.indent_col(first):
                 raise IndentationError('expected an indented block')
             # The case clauses sit at a level of their own between the
             # subject and each body; register it so that a body's dedent
-            # back to the next case is a step the reader knows.
+            # back to the next case is a step the reader knows. The width
+            # is indent_col: a tab is one character wide in scol and eight
+            # wide here, and parse_block dedents with indent_col.
             self.indent_stack.append(indent)
-            self.alt_stack.append(self.alt_indent_col(self.toks[self.at]))
+            self.alt_stack.append(self.alt_indent_col(case_tok))
             cases = []
-            while self.at_name('case') and self.toks[self.at].scol == indent:
+            while self.at_name('case') and self.indent_col(self.toks[self.at]) == indent:
                 header = self.pop()
                 pattern, vs, ve = self.parse_case_as()
                 if isinstance(pattern, MatchStar) and not self.at_op(','):
@@ -3181,9 +3202,12 @@ class _Parser:
                     typ = None
                     name = None
                     if not self.at_op(':'):
-                        typ, ts, te = self.parse_expr(True)
-                        # 'except a,:' closes the bare tuple on the colon. A type list
-                        # such as 'except A, B:' ends on a name, not on that comma.
+                        # A bare 'except A, B' list is PEP 758 (3.14). Earlier
+                        # versions require the parentheses. A trailing comma
+                        # is never a tuple.
+                        typ, ts, te = self.parse_expr(self.fv >= 14)
+                        if self.fv < 14 and self.at_op(','):
+                            _syntax('invalid syntax')
                         if type(typ) == Tuple and self.at_op(':') and self.toks[self.at - 1].text == ',':
                             _syntax('invalid syntax')
                     if self.at_name('as'):
@@ -4430,7 +4454,61 @@ def _tree_digest(tree, positions=None):
     return out
 
 
+def _eval_leading_indent(source):
+    # Column of the first real character, with tabs at width eight.
+    # A backslash-newline continues the line and does not count.
+    i = 0
+    n = len(source)
+    col = 0
+    while i < n:
+        c = source[i]
+        if c == '\f':
+            col = 0
+            i += 1
+            continue
+        if c == ' ':
+            col += 1
+            i += 1
+            continue
+        if c == '\t':
+            col += 8 - col % 8
+            i += 1
+            continue
+        if c == '\r':
+            i += 1
+            continue
+        if c == '\n':
+            i += 1
+            col = 0
+            continue
+        if c == '\\' and i + 1 < n and source[i + 1] == '\n':
+            i += 2
+            col = 0
+            continue
+        if c == '#':
+            while i < n and source[i] != '\n':
+                i += 1
+            continue
+        return col > 0
+    return False
+
+
 def _remember(tree, source, mode='exec', type_comments=False, optimize=-1, fold_debug=False):
+    if not source.isascii():
+        import unicodedata
+        for node in walk(tree):
+            for field, typ in getattr(type(node), '_field_types', {}).items():
+                value = getattr(node, field, None)
+                if _is_ident_type(typ) and field not in _IDENT_SKIP and isinstance(value, str):
+                    value = unicodedata.normalize('NFKC', value)
+                    _check_ident(field, value)
+                    setattr(node, field, value)
+                elif getattr(typ, '__origin__', None) is list and typ.__args__[0] is str:
+                    setattr(node, field, [unicodedata.normalize('NFKC', item) for item in value])
+    # optimize above zero folds constants and, at 2, drops docstrings.
+    # fold_debug settles __debug__ even when the level is zero.
+    if optimize > 0 or fold_debug:
+        tree = _optimized_tree(tree, optimize if optimize > 0 else 0, fold_debug)
     global _parsed_tree
     if (not type_comments and optimize < 0 and not fold_debug
             and type(source) is str and source.isascii()):
@@ -4520,11 +4598,16 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         _check_features(tree, feature_version)
         return _remember(tree, source, mode, type_comments, optimize, fold_debug)
     if mode == 'eval':
+        # The lexer reports a later bad continuation as invalid syntax.
+        # Eval mode rejects a leading indent first, which is the error
+        # literal_eval is checked against.
+        if _eval_leading_indent(source):
+            raise IndentationError('unexpected indent')
         toks = _lex(source, 0, len(source), 1, 0, False)
         parser = _Parser(source, toks, optimize, fold_debug, fv=feature_version)
         while parser.peek().kind == 'newline':
             parser.pop()
-        if parser.peek().scol > 0:
+        if parser.indent_col(parser.peek()) > 0:
             raise IndentationError('unexpected indent')
         node, ls, le = parser.parse_expr(True)
         while parser.peek().kind == 'newline':
@@ -5204,6 +5287,163 @@ def _get_field_specs(cls):
 
 
 # Validate required fields, locations and ASDL categories before generating code.
+
+_ABSTRACT_NODES = None
+_IDENT_SKIP = {'type_comment', 'kind', 'tag'}
+
+
+def _abstract_nodes():
+    global _ABSTRACT_NODES
+    if _ABSTRACT_NODES is None:
+        _ABSTRACT_NODES = (AST, mod, stmt, expr, expr_context, pattern, excepthandler, boolop, operator, unaryop, cmpop, type_ignore, type_param)
+    return _ABSTRACT_NODES
+
+
+def _allows_none(typ):
+    args = getattr(typ, '__args__', None)
+    return bool(args) and type(None) in args
+
+
+def _is_ident_type(typ):
+    if typ is str:
+        return True
+    args = getattr(typ, '__args__', None)
+    return bool(args) and str in args and all(item is str or item is type(None) for item in args)
+
+
+def _check_ident(field, value):
+    if not isinstance(value, str):
+        raise TypeError('identifier must be of type str')
+    if field not in _IDENT_SKIP and value in ('True', 'False', 'None'):
+        raise ValueError("identifier field can't represent '" + value + "' constant")
+
+
+def _validate_value(value, typ, nullable, field, owner, active, in_list):
+    if value is None and (nullable or (not in_list and _allows_none(typ))):
+        return
+    if value is None:
+        if in_list:
+            raise ValueError('None disallowed')
+        raise ValueError("field '" + field + "' is required for " + owner.__name__)
+    if _is_ident_type(typ):
+        _check_ident(field, value)
+        return
+    if isinstance(value, AST) and type(value) in _abstract_nodes():
+        raise TypeError('expected some sort of ' + type(value).__name__ + ', but got ' + repr(value))
+    if not isinstance(value, typ):
+        if in_list:
+            raise TypeError('expected some sort of ' + typ.__name__ + ', but got ' + repr(value))
+        raise TypeError('expected ' + str(typ) + ', but got ' + repr(value))
+    if isinstance(value, AST):
+        _validate_node(value, active)
+
+
+def _pattern_const_ok(value):
+    if type(value) is bool or value is None or value is Ellipsis:
+        return False
+    return type(value) in (int, float, complex, str, bytes)
+
+
+def _pattern_key(node):
+    if type(node) is Constant:
+        return _pattern_const_ok(node.value) or node.value is None or type(node.value) is bool
+    if type(node) is Attribute:
+        return _dotted_name(node)
+    if type(node) is UnaryOp and type(node.op) is USub:
+        return type(node.operand) is Constant and type(node.operand.value) in (int, float, complex)
+    if type(node) is BinOp and type(node.op) in (Add, Sub):
+        left = node.left
+        if type(left) is UnaryOp and type(left.op) is USub:
+            left = left.operand
+        return (type(left) is Constant and type(left.value) in (int, float)
+                and type(node.right) is Constant and type(node.right.value) is complex)
+    return False
+
+
+def _dotted_name(node):
+    if type(node) is Name:
+        return True
+    if type(node) is Attribute:
+        return _dotted_name(node.value)
+    return False
+
+
+def _validate_shape(node):
+    cls = type(node)
+    if cls is ImportFrom:
+        if node.level is not None and node.level < 0:
+            raise ValueError('Negative ImportFrom level')
+        if not node.names:
+            raise ValueError('empty names on ImportFrom')
+    elif cls is Import and not node.names:
+        raise ValueError('empty names on Import')
+    elif cls in (Global, Nonlocal) and not node.names:
+        raise ValueError('empty names on ' + cls.__name__)
+    elif cls is Raise and node.exc is None and node.cause is not None:
+        raise ValueError('Raise with cause but no exception')
+    elif cls in (With, AsyncWith) and not node.items:
+        raise ValueError('empty items on ' + cls.__name__)
+    elif cls in (Try, TryStar):
+        if node.orelse and not node.handlers:
+            raise ValueError(cls.__name__ + ' has orelse but no except handlers')
+        if not node.handlers and not node.finalbody:
+            raise ValueError(cls.__name__ + ' has neither except handlers nor finalbody')
+    elif cls is arguments:
+        if len(node.defaults) > len(node.args) + len(node.posonlyargs):
+            raise ValueError('more positional defaults than args')
+        if len(node.kw_defaults) != len(node.kwonlyargs):
+            raise ValueError('length of kwonlyargs is not the same as kw_defaults')
+    elif cls in (ListComp, SetComp, GeneratorExp, DictComp) and not node.generators:
+        raise ValueError('comprehension with no generators')
+    elif cls is match_case and type(node.pattern) is MatchStar:
+        raise ValueError("can't use MatchStar here")
+    elif cls is MatchAs:
+        if node.name == '_':
+            raise ValueError("can't capture name '_' in patterns")
+        if node.pattern is not None and node.name is None:
+            raise ValueError('MatchAs must specify a target name if a pattern is given')
+        if type(node.pattern) is MatchStar:
+            raise ValueError("can't use MatchStar here")
+    elif cls is MatchSequence:
+        if sum(type(pat) is MatchStar for pat in node.patterns) > 1:
+            raise ValueError('multiple starred names in sequence pattern')
+    elif cls is MatchStar and node.name == '_':
+        raise ValueError("can't capture name '_' in patterns")
+    elif cls is MatchSingleton and node.value is not True and node.value is not False and node.value is not None:
+        raise ValueError('MatchSingleton can only contain True, False and None')
+    elif cls is MatchOr:
+        if len(node.patterns) < 2:
+            raise ValueError('MatchOr requires at least 2 patterns')
+        for pat in node.patterns:
+            if type(pat) is MatchStar:
+                raise ValueError("can't use MatchStar here")
+    elif cls is MatchValue and (not _pattern_key(node.value) or
+            (type(node.value) is Constant and not _pattern_const_ok(node.value.value))):
+        raise ValueError('unexpected constant inside of a literal pattern')
+    elif cls is MatchMapping:
+        if len(node.keys) != len(node.patterns):
+            raise ValueError("MatchMapping doesn't have the same number of keys as patterns")
+        if node.rest == '_':
+            raise ValueError("can't capture name '_' in patterns")
+        for key in node.keys:
+            if not _pattern_key(key):
+                raise ValueError('unexpected constant inside of a literal pattern')
+        for pat in node.patterns:
+            if type(pat) is MatchStar:
+                raise ValueError("can't use MatchStar here")
+    elif cls is MatchClass:
+        if not _dotted_name(node.cls):
+            raise ValueError('MatchClass name must be a dotted name')
+        if len(node.kwd_attrs) != len(node.kwd_patterns):
+            raise ValueError('MatchClass keyword patterns do not match attributes')
+        for pat in node.patterns:
+            if type(pat) is MatchStar:
+                raise ValueError("can't use MatchStar here")
+        for pat in node.kwd_patterns:
+            if type(pat) is MatchStar:
+                raise ValueError("can't use MatchStar here")
+
+
 def _validate_node(node, active=None):
     if active is None:
         active = set()
@@ -5214,6 +5454,8 @@ def _validate_node(node, active=None):
     if not isinstance(node, AST):
         raise TypeError('expected AST, got ' + repr(type(node).__name__))
     cls = type(node)
+    if cls in _abstract_nodes():
+        raise TypeError('expected some sort of ' + cls.__name__ + ', but got ' + repr(node))
     d = node.__dict__
     attrs = node._attributes
     if attrs:
@@ -5222,8 +5464,9 @@ def _validate_node(node, active=None):
         end_lineno = d.get('end_lineno', _MISSING)
         end_col_offset = d.get('end_col_offset', _MISSING)
         if (attrs == _STD_ATTRS and type(lineno) is int and type(col_offset) is int
-                and (end_lineno is None or (type(end_lineno) is int and end_lineno >= lineno))
-                and (end_col_offset is None or (type(end_col_offset) is int and (end_lineno != lineno or end_col_offset >= col_offset)))):
+                and lineno >= 0 and col_offset >= 0
+                and (end_lineno is None or (type(end_lineno) is int and end_lineno >= lineno and end_lineno >= 0))
+                and (end_col_offset is None or (type(end_col_offset) is int and end_col_offset >= 0 and (end_lineno != lineno or end_col_offset >= col_offset)))):
             pass
         else:
             category = 'stmt' if isinstance(node, stmt) else 'expr' if isinstance(node, expr) else cls.__name__
@@ -5263,6 +5506,9 @@ def _validate_node(node, active=None):
                 raise ValueError('AST node line range (' + str(lineno) + ', ' + str(end_lineno) + ') is not valid')
             if end_col_offset is not None and end_lineno == lineno and col_offset is not None and end_col_offset < col_offset:
                 raise ValueError('line ' + str(lineno) + ', column ' + str(col_offset) + '-' + str(end_col_offset) + ' is not a valid range')
+            if ((type(lineno) is int and lineno < 0) or (type(end_lineno) is int and end_lineno < 0)
+                    or (type(col_offset) is int and col_offset < 0) or (type(end_col_offset) is int and end_col_offset < 0)):
+                raise ValueError('AST node line range (' + str(lineno) + ', ' + str(end_lineno) + ') is not valid')
     if node._fields is cls._fields:
         for field, is_list, typ, nullable in _get_field_specs(cls):
             value = d.get(field, _MISSING)
@@ -5275,18 +5521,9 @@ def _validate_node(node, active=None):
                 if type(value) is not list and not isinstance(value, list):
                     raise TypeError(cls.__name__ + ' field "' + field + '" must be a list, not a ' + type(value).__name__)
                 for item in value:
-                    if item is None and nullable:
-                        continue
-                    if not isinstance(item, typ):
-                        raise TypeError('expected some sort of ' + typ.__name__ + ', but got ' + repr(item))
-                    if isinstance(item, AST):
-                        _validate_node(item, active)
-            elif value is None and nullable:
-                continue
-            elif not isinstance(value, typ):
-                raise TypeError('expected ' + str(typ) + ', but got ' + repr(value))
-            elif isinstance(value, AST):
-                _validate_node(value, active)
+                    _validate_value(item, typ, nullable, field, cls, active, True)
+            else:
+                _validate_value(value, typ, nullable, field, cls, active, False)
     else:
         for field in node._fields:
             value = d.get(field, _MISSING)
@@ -5300,19 +5537,11 @@ def _validate_node(node, active=None):
                 if not isinstance(value, list):
                     raise TypeError(cls.__name__ + ' field "' + field + '" must be a list, not a ' + type(value).__name__)
                 element_type = typ.__args__[0]
+                allow_none = (isinstance(node, arguments) and field == 'kw_defaults') or (isinstance(node, Dict) and field == 'keys')
                 for item in value:
-                    if item is None and ((isinstance(node, arguments) and field == 'kw_defaults') or (isinstance(node, Dict) and field == 'keys')):
-                        continue
-                    if not isinstance(item, element_type):
-                        raise TypeError('expected some sort of ' + element_type.__name__ + ', but got ' + repr(item))
-                    if isinstance(item, AST):
-                        _validate_node(item, active)
-            elif value is None and getattr(cls, field, ...) is None:
-                continue
-            elif not isinstance(value, typ):
-                raise TypeError('expected ' + str(typ) + ', but got ' + repr(value))
-            elif isinstance(value, AST):
-                _validate_node(value, active)
+                    _validate_value(item, element_type, allow_none, field, cls, active, True)
+            else:
+                _validate_value(value, typ, getattr(cls, field, ...) is None, field, cls, active, False)
     if cls is Constant:
         val = node.value
         if type(val) not in _SCALAR_EXACT and type(val) not in _FLOAT_COMPLEX:
@@ -5339,6 +5568,7 @@ def _validate_node(node, active=None):
             raise ValueError("Dict doesn't have the same number of keys as values")
         if isinstance(node, Constant):
             _validate_constant(node.value)
+    _validate_shape(node)
     active.remove(identity)
 
 # Compile the current tree rather than replaying the text from which it was parsed.
@@ -5587,8 +5817,11 @@ def _optimized_tree(tree, optimize, fold_debug=False):
                 body = result.body
                 if body and isinstance(body[0], Expr) and isinstance(body[0].value, Constant) and isinstance(body[0].value.value, str):
                     removed = body.pop(0)
-                    if not body:
-                        body.append(copy_location(Pass(), removed))
+                    if not body and not isinstance(result, Module):
+                        col = removed.col_offset
+                        line = removed.lineno
+                        body.append(Pass(lineno=line, col_offset=col,
+                                         end_lineno=line, end_col_offset=col + 4))
             return result
     return Optimizer().visit(tree)
 
@@ -5603,3 +5836,7 @@ def _copy_ast(value):
     if isinstance(value, list):
         return [_copy_ast(item) for item in value]
     return value
+
+
+if __name__ == '__main__':
+    main()
