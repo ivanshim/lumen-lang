@@ -646,6 +646,10 @@ def getegid():
 
 
 def urandom(size, /):
+    if type(size) is int and size >= 0:
+        error, result = _host('urandom', size)
+        if not error:
+            return result
     size = _fd(size)
     if size < 0:
         raise ValueError('negative argument not allowed')

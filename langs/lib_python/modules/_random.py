@@ -105,7 +105,13 @@ class Random:
         if len(state) != _WORDS + 1:
             raise ValueError('state vector is the wrong size')
         words = []
-        for place in range(_WORDS):
+        # A plain tuple of exact ints that already fit 32 bits (what
+        # getstate gives) is taken whole; anything else goes word by word.
+        if type(state) is tuple:
+            head = list(state[:_WORDS])
+            if set(map(type, head)) == {int} and min(head) >= 0 and max(head) <= _UNSIGNED_INT:
+                words = head
+        for place in (range(_WORDS) if not words else ()):
             given = state[place]
             if not isinstance(given, int):
                 raise TypeError('an integer is required')

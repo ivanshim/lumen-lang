@@ -539,6 +539,12 @@ struct ExecutionRules<'a> {
     class_builder: bool,
     weak_members: bool,
     detail_subclass: &'a str,
+    detail_slots: &'a str,
+    detail_bases: &'a str,
+    detail_function: &'a str,
+    detail_globals: &'a str,
+    detail_prepare: &'a str,
+    detail_base: &'a str,
     detail_allocate: &'a str,
     detail_descriptor_get: &'a str,
     detail_doc: &'a str,
@@ -585,6 +591,9 @@ pub struct Machine<'a> {
     /// because a step borrows the machine immutably. The activation's own
     /// slot is filled in when a different activation takes its place.
     cursor: std::cell::Cell<i64>,
+    /// Activations of finished calls that nothing else holds, emptied
+    /// but for their entry names, waiting to be filled for a new call.
+    idle_activations: Vec<Hold>,
     origin_limit: usize,
     symbolic_annotation: Option<(Rc<Routine>, Option<Rc<Blueprint>>, Vec<(Weak<Thing>, String)>)>,
     agen_callbacks: (Value, Value),
@@ -630,8 +639,7 @@ pub struct Machine<'a> {
     namespace_places: RefCell<Option<HashMap<usize, String, crate::table::FxBuildHasher>>>,
     /// The place the recursion limit was last read from in the system namespace.
     revised_members: RefCell<HashMap<usize, (usize, HashMap<String, usize, crate::table::FxBuildHasher>)>>,
-    sort_answers: Vec<(Prim, Value)>,
-    revised_namespaces: std::collections::HashSet<Rc<str>, crate::table::FxBuildHasher>,
+    sort_answers: Vec<(Prim, Value)>,    revised_namespaces: std::collections::HashSet<Rc<str>, crate::table::FxBuildHasher>,
     displaced_primitives: std::collections::BTreeSet<String>,
     /// The file the run began from, set once the program's own world
     /// dictionary has been written through. A name that dictionary
@@ -1222,7 +1230,7 @@ impl<'a> Machine<'a> {
         match value.settled() {
             Value::Small(number) => Some(number),
             Value::Flag(truth) => Some(i64::from(truth)),
-            Value::Thing(thing) if Self::native_beneath(&thing.of).as_deref() == Some("int") => {
+            Value::Thing(thing) if Self::native_beneath_asked(&thing.of, |kind| kind == Some("int")) => {
                 match Self::underlying(&Value::Thing(thing))? { Value::Small(number) => Some(number), _ => None }
             }
             _ => None,
@@ -2218,6 +2226,12 @@ impl<'a> Machine<'a> {
                 class_builder: table.has_any("ext.stmt.class.builder"),
                 weak_members: table.has_any("ext.builtin.weak.get"),
                 detail_subclass: table.single("ext.stmt.class.detail.subclass").unwrap_or(""),
+                detail_slots: table.loose_strings("ext.stmt.class.detail.slots").first().map_or("", String::as_str),
+                detail_bases: table.loose_strings("ext.stmt.class.detail.bases").first().map_or("", String::as_str),
+                detail_function: table.loose_strings("ext.stmt.class.detail.function").first().map_or("", String::as_str),
+                detail_globals: table.loose_strings("ext.stmt.class.detail.globals").first().map_or("", String::as_str),
+                detail_prepare: table.loose_strings("ext.stmt.class.detail.prepare").first().map_or("", String::as_str),
+                detail_base: table.loose_strings("ext.stmt.class.detail.base").first().map_or("", String::as_str),
                 detail_allocate: table.single("ext.stmt.class.detail.allocate").unwrap_or(""),
                 detail_descriptor_get: table.single("ext.stmt.class.detail.descriptor.get").unwrap_or(""),
                 detail_doc: table.single("ext.stmt.class.detail.doc").unwrap_or(""),
@@ -2265,8 +2279,7 @@ impl<'a> Machine<'a> {
             wildcard_view: RefCell::new(None),
             namespace_places: RefCell::new(None),
             revised_members: RefCell::new(HashMap::new()),
-            sort_answers: Vec::new(),
-            revised_namespaces: std::collections::HashSet::with_hasher(crate::table::FxBuildHasher::default()),
+            sort_answers: Vec::new(),            revised_namespaces: std::collections::HashSet::with_hasher(crate::table::FxBuildHasher::default()),
             displaced_primitives: std::collections::BTreeSet::new(),
             world_globals_source: None,
             loaded_spaces: HashMap::with_hasher(crate::table::FxBuildHasher::default()),
@@ -2315,6 +2328,7 @@ impl<'a> Machine<'a> {
             row: 0,
             active_trace: None,
             cursor: std::cell::Cell::new(-1),
+            idle_activations: Vec::new(),
             origin_limit: 0,
             symbolic_annotation: None,
             agen_callbacks: (Value::Nil, Value::Nil),
@@ -6789,6 +6803,21 @@ impl<'a> Machine<'a> {
         Some(format!("<frame at 0x{:x}, file {}, line {}, code {}>", crate::data::Hold::as_ptr(thing) as usize, file, line, name))
     }
 
+    /// The activation of a call that is over, if nothing else keeps it, is
+    /// stripped of what it held and put by, its entry names left in place.
+    fn set_aside_activation(&mut self, finished: Option<Hold>) {
+        let Some(mut activation) = finished else { return };
+        if self.idle_activations.len() >= 32 { return; }
+        if !self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &activation.of)) { return; }
+        let Some(thing) = Hold::get_mut(&mut activation) else { return };
+        if thing.reclassified.get_mut().is_some() { return; }
+        let entries = thing.holds.get_mut();
+        if entries.len() < 8 { return; }
+        entries.truncate(8);
+        entries.iter_mut().for_each(|entry| entry.1 = Value::Nil);
+        self.idle_activations.push(activation);
+    }
+
     fn activation(&mut self, routine: &Rc<Routine>, environment: &Rc<Env>, parent: Option<Hold>) -> Option<Hold> {
         let words = self.rules.trace_words;
         if words.len() <= 15 { return None; }
@@ -6827,6 +6856,29 @@ impl<'a> Machine<'a> {
             }
             other => other,
         };
+        if let Some(mut idle) = self.idle_activations.pop() {
+            if let Some(thing) = Hold::get_mut(&mut idle) {
+                let entries = thing.holds.get_mut();
+                entries[0].1 = Value::Small(routine.declared_on as i64);
+                entries[1].1 = code;
+                entries[2].1 = parent.map(Value::Thing).unwrap_or(Value::Nil);
+                entries[4].1 = globals;
+                entries[5].1 = body;
+                entries[7].1 = Value::Small(-1);
+                if hidden { entries.push(("\0native".to_owned(), Value::Flag(true))); }
+                if let Some(origin) = locals {
+                    entries.push((String::from("\0supplied-locals"), Value::Flag(true)));
+                    entries.push((String::from("\0locals-origin"), origin));
+                }
+                if !matches!(self.tracing_function, Value::Nil) {
+                    entries.push(("f_trace".to_owned(), Value::Nil));
+                    entries.push(("f_trace_lines".to_owned(), Value::Flag(true)));
+                }
+                self.made += 1;
+                thing.turn = self.made;
+                return Some(idle);
+            }
+        }
         let mut entries = Vec::with_capacity(8 + usize::from(hidden) + 2 * usize::from(locals.is_some()) + 2 * usize::from(!matches!(self.tracing_function, Value::Nil)));
         entries.push((words[4].to_string(), Value::Small(routine.declared_on as i64)));
         entries.push((words[5].to_string(), code));
@@ -10878,7 +10930,7 @@ impl<'a> Machine<'a> {
             Prim::AsReal => crate::data::worth_of_binary(0.0, crate::math::DEFAULT_PLACES),
             Prim::ComplexMade => crate::complex::pair(self.table, 0.0, 0.0),
             Prim::Span => Value::Progression(Rc::new(crate::data::Progression {
-                first: BigInt::from(0), limit: BigInt::from(0), stride: BigInt::from(1), word: word.to_owned(),
+                plain: Default::default(), first: BigInt::from(0), limit: BigInt::from(0), stride: BigInt::from(1), word: word.to_owned(),
             })),
             Prim::Listed => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
             Prim::Tupling => Value::tuple(Vec::new()),
@@ -12561,7 +12613,7 @@ impl<'a> Machine<'a> {
             let declared = thing.holds.borrow().iter().find(|entry| names.contains(&entry.0)).map(|entry| entry.1.settled());
             if let Some(Value::Text(label)) = declared { return Some(label.to_string()); }
         }
-        if names.is_empty() || Self::native_beneath(&thing.blueprint()).as_deref() != Some("module") { return None; }
+        if names.is_empty() || Self::native_beneath_asked(&thing.blueprint(), |kind| kind != Some("module")) { return None; }
         let title = Self::imported_attribute(value, "__name__")?;
         if let Value::Text(text) = Self::underlying(&title).unwrap_or_else(|| title.settled()) {
             Some(text.to_string())
@@ -16707,8 +16759,9 @@ impl<'a> Machine<'a> {
         self.update_watched_locals();
         if mine {
             self.park_cursor();
-            self.active_trace = caller_trace;
+            let finished = std::mem::replace(&mut self.active_trace, caller_trace);
             self.wake_cursor();
+            self.set_aside_activation(finished);
             self.extent = parent_extent;
         }
         if let Some(previous) = earlier_gathering { self.gathering_locals = previous; }
@@ -22713,7 +22766,7 @@ impl<'a> Machine<'a> {
         if values.len() == 2 { return self.complex_pair(&values[0], &values[1]); }
         if matches!(&values[0], Value::Text(_) | Value::Unpaired(_) | Value::Huge(_)) { return crate::complex::create(self.table, values); }
         if let Value::Thing(thing) = &values[0] {
-            if Self::native_beneath(&thing.blueprint()).as_deref() == Some("str") {
+            if Self::native_beneath_asked(&thing.blueprint(), |kind| kind == Some("str")) {
                 if let Some(held) = Self::underlying(&values[0]) {
                     return crate::complex::create(self.table, &[held]);
                 }
@@ -25103,7 +25156,7 @@ impl<'a> Machine<'a> {
                 if let Value::Progression(walk) = &target {
                     let clipped = self.span_clipped(bounds, &Value::from_big(walk.count()))?;
                     let [from, to, by] = <[BigInt; 3]>::try_from(clipped).expect("three bounds");
-                    let picked = crate::data::Progression { first: &walk.first + &from * &walk.stride, limit: &walk.first + &to * &walk.stride, stride: &walk.stride * by, word: walk.word.clone() };
+                    let picked = crate::data::Progression { plain: Default::default(), first: &walk.first + &from * &walk.stride, limit: &walk.first + &to * &walk.stride, stride: &walk.stride * by, word: walk.word.clone() };
                     return Ok(Value::Progression(Rc::new(picked)));
                 }
             }
@@ -30775,16 +30828,21 @@ impl<'a> Machine<'a> {
                 // of them reaches REACH ahead into words still standing
                 // as they were; the rest wrap back onto words this very
                 // rolling has already laid down.
+
                 fn roll(mt: &mut [u32; KEPT]) {
-                    let stood: Vec<u32> = mt.to_vec();
-                    for at in 0..KEPT - REACH {
-                        let pair = (mt[at] & 0x8000_0000) | (mt[at + 1] & 0x7fff_ffff);
-                        mt[at] = stood[at + REACH] ^ (pair >> 1) ^ (if pair & 1 == 1 { 0x9908_b0df } else { 0 });
+                    let mut at = 0usize;
+                    while at + REACH < KEPT {
+                        let mixed = (mt[at] & 0x8000_0000) | (mt[at + 1] & 0x7fff_ffff);
+                        let twist = if mixed & 1 == 1 { 0x9908_b0df } else { 0 };
+                        mt[at] = mt[at + REACH] ^ (mixed >> 1) ^ twist;
+                        at += 1;
                     }
-                    for at in KEPT - REACH..KEPT {
+                    while at < KEPT {
                         let neighbour = if at + 1 == KEPT { 0 } else { at + 1 };
-                        let pair = (mt[at] & 0x8000_0000) | (mt[neighbour] & 0x7fff_ffff);
-                        mt[at] = mt[at + REACH - KEPT] ^ (pair >> 1) ^ (if pair & 1 == 1 { 0x9908_b0df } else { 0 });
+                        let mixed = (mt[at] & 0x8000_0000) | (mt[neighbour] & 0x7fff_ffff);
+                        let twist = if mixed & 1 == 1 { 0x9908_b0df } else { 0 };
+                        mt[at] = mt[at + REACH - KEPT] ^ (mixed >> 1) ^ twist;
+                        at += 1;
                     }
                 }
                 // One word drawn from the stream at the spot it stands.
@@ -30803,7 +30861,219 @@ impl<'a> Machine<'a> {
                     std::fs::File::open("/dev/urandom")
                         .and_then(|mut source| source.read_exact(&mut numbers))
                         .map_err(|_| "OSError: the source of disorder did not answer".to_string())?;
+
                     Ok(numbers)
+                }
+                fn noise_word(width: u32) -> Result<u128, String> {
+                    if width == 0 { return Ok(0); }
+                    let span = width.div_ceil(8) as usize;
+                    let raw = disorder(span)?;
+                    let mut acc = 0u128;
+                    let mut index = 0usize;
+                    while index < raw.len() {
+                        acc = (acc << 8) | u128::from(raw[index]);
+                        index += 1;
+                    }
+                    let spare = (span * 8) as u32 - width;
+                    Ok(acc >> spare)
+                }
+                #[link(name = "m")]
+                extern "C" {
+                    fn log2(arg: f64) -> f64;
+                    fn log(arg: f64) -> f64;
+                    fn lgamma(arg: f64) -> f64;
+                }
+                fn base2(z: f64) -> f64 { unsafe { log2(z) } }
+                fn natural(z: f64) -> f64 { unsafe { log(z) } }
+                fn gamma_ln(z: f64) -> f64 { unsafe { lgamma(z) } }
+                fn widen(mt: &mut [u32; KEPT], spot: &mut usize) -> f64 {
+                    let top = draw(mt, spot) >> 5;
+                    let bottom = draw(mt, spot) >> 6;
+                    (top as f64 * 67108864.0 + bottom as f64) * (1.0 / 9007199254740992.0)
+                }
+                fn tally(mt: &mut [u32; KEPT], spot: &mut usize, count: i64, p: f64) -> Result<i64, String> {
+                    if count == 1 {
+                        return Ok(if widen(mt, spot) < p { 1 } else { 0 });
+                    }
+                    if p > 0.5 {
+                        let complement = tally(mt, spot, count, 1.0 - p)?;
+                        return Ok(count - complement);
+                    }
+                    if (count as f64) * p < 10.0 {
+                        return Ok(devroye(mt, spot, count, p));
+                    }
+                    hormann(mt, spot, count, p)
+                }
+                fn devroye(mt: &mut [u32; KEPT], spot: &mut usize, count: i64, p: f64) -> i64 {
+                    let slope = base2(1.0 - p);
+                    if slope == 0.0 { return 0; }
+                    let mut hits = 0i64;
+                    let mut covered = 0i64;
+                    loop {
+                        let draw = widen(mt, spot);
+                        if draw == 0.0 { continue; }
+                        let ratio = base2(draw) / slope;
+                        if ratio.is_nan() { continue; }
+                        let jumped = ratio.floor();
+                        if jumped.is_infinite() || jumped >= 9223372036854775808.0 { return hits; }
+                        let step = (jumped as i64).saturating_add(1);
+                        match covered.checked_add(step) {
+                            Some(next) if next <= count => { covered = next; hits += 1; }
+                            _ => return hits,
+                        }
+                    }
+                }
+                fn hormann(mt: &mut [u32; KEPT], spot: &mut usize, count: i64, p: f64) -> Result<i64, String> {
+                    let n = count as f64;
+                    let sd = (n * p * (1.0 - p)).sqrt();
+                    let bb = 2.53f64.mul_add(sd, 1.15);
+                    let aa = 0.0248f64.mul_add(bb, -0.0873) + 0.01 * p;
+                    let cc = n * p + 0.5;
+                    let vr = 0.92 - 4.2 / bb;
+                    let alpha = (2.83 + 5.1 / bb) * sd;
+                    let lpq = natural(p / (1.0 - p));
+                    let mode = ((n + 1.0) * p).floor();
+                    let height = gamma_ln(mode + 1.0) + gamma_ln(n - mode + 1.0);
+                    loop {
+                        let shift = widen(mt, spot) - 0.5;
+                        let gap = 0.5 - shift.abs();
+                        if gap == 0.0 { continue; }
+                        let guess = ((2.0 * aa / gap + bb) * shift + cc).floor();
+                        if !guess.is_finite() || guess < 0.0 || guess > n { continue; }
+                        let k = guess as i64;
+                        let mut v = widen(mt, spot);
+                        if gap >= 0.07 && v <= vr { return Ok(k); }
+                        v *= alpha / (aa / (gap * gap) + bb);
+                        if !(v > 0.0) { return Err("ValueError: math domain error".to_string()); }
+                        let left = natural(v);
+                        let right = height - gamma_ln(k as f64 + 1.0) - gamma_ln(n - k as f64 + 1.0) + (k as f64 - mode) * lpq;
+                        if left <= right { return Ok(k); }
+                    }
+                }
+                fn as_weight(value: &Value) -> Result<f64, String> {
+                    match value.settled() {
+                        Value::Flag(bit) => Ok(if bit { 1.0 } else { 0.0 }),
+                        Value::Small(n) => {
+                            let widened = n as f64;
+                            if widened as i64 == n { Ok(widened) } else { Err("\0defer".to_string()) }
+                        }
+                        Value::Frac(ratio) => Ok(crate::data::nearest_binary(&ratio.above, &ratio.beneath)),
+                        _ => Err("\0defer".to_string()),
+                    }
+                }
+                fn span_of(value: &Value) -> Result<usize, String> {
+                    let n = match value {
+                        Value::Vector(row) | Value::Tuple(row) => row.len(),
+                        Value::Progression(walk) => walk.count().to_usize().ok_or_else(|| "\0defer".to_string())?,
+                        _ => return Err("\0defer".to_string()),
+                    };
+                    if n > 2000000 { return Err("\0defer".to_string()); }
+                    Ok(n)
+                }
+                fn weight_row(value: &Value) -> Result<Vec<f64>, String> {
+                    let value = value.settled();
+                    let n = span_of(&value)?;
+                    let mut out = Vec::with_capacity(n);
+                    match &value {
+                        Value::Vector(row) | Value::Tuple(row) => {
+                            let mut at = 0usize;
+                            while at < row.len() {
+                                out.push(as_weight(&row[at])?);
+                                at += 1;
+                            }
+                        }
+                        Value::Progression(walk) => {
+                            let mut at = 0usize;
+                            while at < n {
+                                let member = walk.item(&BigInt::from(at as u64)).ok_or_else(|| "\0defer".to_string())?;
+                                out.push(as_weight(&member)?);
+                                at += 1;
+                            }
+                        }
+                        _ => return Err("\0defer".to_string()),
+                    }
+                    Ok(out)
+                }
+                fn running_total(mode: i64, payload: &Value, n: usize) -> Result<Vec<f64>, String> {
+                    let raw = weight_row(payload)?;
+                    if raw.len() != n {
+                        return Err("ValueError: The number of weights does not match the population".to_string());
+                    }
+                    let running = if mode == 1 {
+                        let mut acc = Vec::with_capacity(raw.len());
+                        let mut sum = 0.0;
+                        for value in raw { sum += value; acc.push(sum); }
+                        acc
+                    } else { raw };
+                    let Some(total) = running.last().copied() else {
+                        return Err("IndexError: index out of range".to_string());
+                    };
+                    if total <= 0.0 {
+                        return Err("ValueError: Total of weights must be greater than zero".to_string());
+                    }
+                    if !total.is_finite() {
+                        return Err("ValueError: Total of weights must be finite".to_string());
+                    }
+                    Ok(running)
+                }
+                fn member_at(population: &Value, index: usize) -> Result<Value, String> {
+                    match population {
+                        Value::Vector(row) | Value::Tuple(row) => {
+                            if index >= row.len() { return Err("IndexError: index out of range".to_string()); }
+                            Ok(row[index].clone())
+                        }
+                        Value::Progression(walk) => walk.item(&BigInt::from(index as u64))
+                            .ok_or_else(|| "IndexError: index out of range".to_string()),
+                        _ => Err("\0defer".to_string()),
+                    }
+                }
+                fn insertion(cumulative: &[f64], probe: f64, exclusive: usize) -> usize {
+                    let mut left = 0usize;
+                    let mut right = exclusive;
+                    loop {
+                        if left >= right { break; }
+                        let middle = left + (right - left) / 2;
+                        if probe < cumulative[middle] { right = middle; } else { left = middle + 1; }
+                    }
+                    left
+                }
+                fn select_members(mt: &mut [u32; KEPT], spot: &mut usize, population: &Value, mode: i64, payload: &Value, copies: i64) -> Result<Vec<Value>, String> {
+                    let population = population.settled();
+                    let n = span_of(&population)?;
+                    if copies > 1000000 { return Err("\0defer".to_string()); }
+                    if mode == 0 {
+                        if copies <= 0 { return Ok(Vec::new()); }
+                        if n == 0 {
+                            let _ignored = widen(mt, spot);
+                            return Err("IndexError: index out of range".to_string());
+                        }
+                        let width = n as f64;
+                        let mut chosen = Vec::with_capacity(copies as usize);
+                        let mut left = copies;
+                        while left > 0 {
+                            let slot = (widen(mt, spot) * width).floor();
+                            if !(slot >= 0.0 && slot < width) {
+                                return Err("IndexError: index out of range".to_string());
+                            }
+                            chosen.push(member_at(&population, slot as usize)?);
+                            left -= 1;
+                        }
+                        return Ok(chosen);
+                    }
+                    if mode != 1 && mode != 2 { return Err("\0defer".to_string()); }
+                    let running = running_total(mode, payload, n)?;
+                    if copies <= 0 { return Ok(Vec::new()); }
+                    let total = running[running.len() - 1];
+                    let exclusive = n - 1;
+                    let mut chosen = Vec::with_capacity(copies as usize);
+                    let mut left = copies;
+                    while left > 0 {
+                        let probe = widen(mt, spot) * total;
+                        let slot = insertion(&running, probe, exclusive);
+                        chosen.push(member_at(&population, slot)?);
+                        left -= 1;
+                    }
+                    Ok(chosen)
                 }
                 thread_local! {
                     static DRAWN_ON: RefCell<Vec<([u32; KEPT], usize)>> = RefCell::new(Vec::new());
@@ -30913,8 +31183,112 @@ impl<'a> Machine<'a> {
                                 }
                                 Ok(limbs)
                             })?;
+
                             Value::Huge(Rc::new(BigInt::from(num_bigint::BigUint::new(limbs))))
                         }
+                    }
+                    "below" => {
+                        if v.len() != 3 { return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string()); }
+                        let which = match &v[1] {
+                            Value::Small(mark) if *mark >= 0 => *mark as usize,
+                            _ => return Err("\0defer".to_string()),
+                        };
+                        marked(which)?;
+                        let Value::Small(limit) = v[2].settled() else { return Err("\0defer".to_string()); };
+                        if limit <= 0 { return Err("\0defer".to_string()); }
+                        let width = (limit as u64).ilog2() + 1;
+                        let chosen = DRAWN_ON.with(|streams| -> Result<u64, String> {
+                            let mut all = streams.borrow_mut();
+                            let Some(stream) = all.get_mut(which) else {
+                                return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string());
+                            };
+                            loop {
+                                let sample = if width > 32 {
+                                    let floor = draw(&mut stream.0, &mut stream.1);
+                                    let keep = width - 32;
+                                    let roof = draw(&mut stream.0, &mut stream.1) >> (32 - keep);
+                                    u64::from(floor) | (u64::from(roof) << 32)
+                                } else {
+                                    let shift = 32 - width;
+                                    u64::from(draw(&mut stream.0, &mut stream.1) >> shift)
+                                };
+                                if sample < limit as u64 { return Ok(sample); }
+                            }
+                        })?;
+                        Value::Small(chosen as i64)
+                    }
+                    "osbelow" => {
+                        if v.len() != 2 { return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string()); }
+                        let Value::Small(limit) = v[1].settled() else { return Err("\0defer".to_string()); };
+                        if limit <= 0 { return Err("\0defer".to_string()); }
+                        let width = (limit as u64).ilog2() + 1;
+                        let mut chosen = noise_word(width)? as u64;
+                        while chosen >= limit as u64 {
+                            chosen = noise_word(width)? as u64;
+                        }
+                        Value::Small(chosen as i64)
+                    }
+                    "osbits" => {
+                        if v.len() != 2 { return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string()); }
+                        let Value::Small(count) = v[1].settled() else { return Err("\0defer".to_string()); };
+                        if !(0..=64).contains(&count) { return Err("\0defer".to_string()); }
+                        let drawn = noise_word(count as u32)?;
+                        if drawn <= i64::MAX as u128 {
+                            Value::Small(drawn as i64)
+                        } else {
+                            Value::Huge(Rc::new(BigInt::from(drawn as u64)))
+                        }
+                    }
+                    "osunit" => {
+                        if v.len() != 1 { return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string()); }
+                        let magnitude = noise_word(53)?;
+                        let unit = (magnitude as f64) * (1.0 / 9007199254740992.0);
+                        let mut worth = crate::data::worth_of_binary(unit, self.real_figures());
+                        if let Value::Frac(ratio) = &mut worth { Rc::make_mut(ratio).float_style = self.rules.floating_math; }
+                        worth
+                    }
+                    "binomial" => {
+                        if v.len() != 4 { return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string()); }
+                        let which = match &v[1] {
+                            Value::Small(mark) if *mark >= 0 => *mark as usize,
+                            _ => return Err("\0defer".to_string()),
+                        };
+                        marked(which)?;
+                        let Value::Small(count) = v[2].settled() else { return Err("\0defer".to_string()); };
+                        let Value::Frac(ratio) = v[3].settled() else { return Err("\0defer".to_string()); };
+                        if ratio.past_numbers() { return Err("\0defer".to_string()); }
+                        let p = crate::data::nearest_binary(&ratio.above, &ratio.beneath);
+                        if count < 0 || (count as f64) as i64 != count || !(p > 0.0 && p < 1.0) {
+                            return Err("\0defer".to_string());
+                        }
+                        let produced = DRAWN_ON.with(|streams| -> Result<i64, String> {
+                            let mut all = streams.borrow_mut();
+                            let Some(stream) = all.get_mut(which) else {
+                                return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string());
+                            };
+                            tally(&mut stream.0, &mut stream.1, count, p)
+                        })?;
+                        Value::Small(produced)
+                    }
+                    "choices" => {
+                        if v.len() != 6 { return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string()); }
+                        let which = match &v[1] {
+                            Value::Small(mark) if *mark >= 0 => *mark as usize,
+                            _ => return Err("\0defer".to_string()),
+                        };
+                        marked(which)?;
+                        let population = v[2].settled();
+                        let Value::Small(mode) = v[3].settled() else { return Err("\0defer".to_string()); };
+                        let payload = v[4].settled();
+                        let Value::Small(copies) = v[5].settled() else { return Err("\0defer".to_string()); };
+                        let produced = DRAWN_ON.with(|streams| -> Result<Vec<Value>, String> {
+                            let mut all = streams.borrow_mut();
+                            let Some(stream) = all.get_mut(which) else {
+                                return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string());
+                            };
+                            select_members(&mut stream.0, &mut stream.1, &population, mode, &payload, copies)
+                        })?;
+                        Value::Vector(crate::tuples::Sequence::plain(produced))
                     }
                     "state" => {
                         if v.len() != 2 { return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string()); }
@@ -32397,7 +32771,7 @@ impl<'a> Machine<'a> {
                     else { (integer(&v[0])?, integer(&v[1])?) };
                 let stride = v.get(2).map(integer).transpose()?.unwrap_or_else(|| BigInt::from(1));
                 if stride == BigInt::from(0) { return Err(self.argument_fault("ext.builtin.range.zero", None)); }
-                Value::Progression(Rc::new(crate::data::Progression { first, limit, stride, word: name.to_owned() }))
+                Value::Progression(Rc::new(crate::data::Progression { plain: Default::default(), first, limit, stride, word: name.to_owned() }))
             },
             _ => unreachable!(),
         };
@@ -39909,7 +40283,7 @@ impl Machine<'_> {
                 let walks = text_at(1);
                 let (first, limit, stride, at) = (big_at(2)?, big_at(3)?, big_at(4)?, big_at(6)?);
                 let Some(word) = text_at(5) else { return Err(malformed()) };
-                let walk = crate::data::Progression { first, limit, stride, word: word.to_string() };
+                let walk = crate::data::Progression { plain: Default::default(), first, limit, stride, word: word.to_string() };
                 Ok(Self::cursor_value_walked(IteratorKind::Stepping(Rc::new(walk), at), walks))
             }
             "back" => {
@@ -41353,7 +41727,7 @@ impl Machine<'_> {
                 // place first, never gathered into the row it stands for.
                 if let Value::Progression(walk) = &input[0] {
                     let last = &walk.first + (walk.count() - 1) * &walk.stride;
-                    let backwards = crate::data::Progression { first: last, limit: &walk.first - &walk.stride, stride: -&walk.stride, word: walk.word.clone() };
+                    let backwards = crate::data::Progression { plain: Default::default(), first: last, limit: &walk.first - &walk.stride, stride: -&walk.stride, word: walk.word.clone() };
                     return self.core_primitive(Prim::Iterator, name, vec![Value::Progression(Rc::new(backwards))], Vec::new());
                 }
                 if let Value::Vector(items) = &input[0] {

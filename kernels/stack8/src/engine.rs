@@ -161,6 +161,9 @@ pub struct Engine<'a> {
     stream_origin: Option<Weak<Class>>,
     stream_class: Option<(Weak<Class>, u64, [String; 3])>,
     limit_place: StateCell<usize>,
+    /// Frames of finished calls nobody else holds, kept with their names
+    /// in place so the next call fills them in instead of building new ones.
+    spare_frames: Vec<Keep>,
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
     coroutines: HashMap<usize, (Weak<RefCell<Generator>>, Rc<Routine>, Option<Weak<Instance>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>), crate::value::FxBuildHasher>,
@@ -199,7 +202,7 @@ pub struct Engine<'a> {
     // World size, inventory identities, and retired native slot positions.
     quiet_module_slots: (usize, Vec<(String, usize)>, Vec<usize>),
     kind_names: RefCell<HashMap<String, Vec<String>>>,
-    member_words: [&'a str; 26],
+    member_words: [&'a str; 31],
     opened_descriptors: HashMap<i32, std::fs::File>,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
@@ -268,7 +271,7 @@ pub struct Engine<'a> {
     mirrored_rows: HashMap<usize, usize>,
     // These dictionaries remain strongly owned by the module inventory.
     globals_by_cell: HashMap<usize, String, crate::value::FxBuildHasher>,
-    native_slots: HashMap<String, usize>,
+    native_slots: HashMap<String, usize, crate::value::FxBuildHasher>,
     module_by_address: RefCell<HashMap<usize, String, crate::value::FxBuildHasher>>,
     changed_module_positions: RefCell<HashMap<usize, (usize, HashMap<String, usize, crate::value::FxBuildHasher>)>>,
     module_addresses_ready: std::cell::Cell<bool>,
@@ -1807,6 +1810,11 @@ impl<'a> Engine<'a> {
                 lang.class_details.get("text_signature").and_then(|list| list.first()).map_or("", String::as_str),
                 lang.class_details.get("slots").and_then(|list| list.first()).map_or("", String::as_str),
                 lang.class_details.get("descriptor.name").and_then(|list| list.first()).map_or("", String::as_str),
+                lang.class_details.get("main").and_then(|list| list.first()).map_or("", String::as_str),
+                lang.class_details.get("code").and_then(|list| list.first()).map_or("", String::as_str),
+                lang.class_details.get("globals").and_then(|list| list.first()).map_or("", String::as_str),
+                lang.class_details.get("function").and_then(|list| list.first()).map_or("", String::as_str),
+                lang.class_details.get("prepare").and_then(|list| list.first()).map_or("", String::as_str),
             ],
             lang,
             world,
@@ -1844,6 +1852,7 @@ impl<'a> Engine<'a> {
             stream_origin: None,
             stream_class: None,
             limit_place: StateCell::new(0),
+            spare_frames: Vec::new(),
             generator_frames: HashMap::new(),
             coroutines: HashMap::new(),
             async_generators: HashMap::default(),
@@ -5475,8 +5484,10 @@ impl<'a> Engine<'a> {
             if let Some((_, captured)) = &mut self.class_body_capture { *captured = Some(namespace); }
         }
         self.plant_step();
-        self.trace_frame = caller_frame;
+        drop(seen);
+        let finished = std::mem::replace(&mut self.trace_frame, caller_frame);
         self.lift_step();
+        self.retire_frame(finished);
         self.inline_comp = previous_comp;
         self.refresh_observed_frame();
         self.location = caller_location;
@@ -7384,6 +7395,20 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// A finished call's frame that nothing else holds is emptied of what it
+    /// kept, so that nothing outlives the call, and put by for the next one.
+    fn retire_frame(&mut self, finished: Option<Keep>) {
+        let Some(mut frame) = finished else { return };
+        if self.spare_frames.len() >= 32 || !self.frame_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &frame.class)) { return; }
+        let Some(inner) = Keep::get_mut(&mut frame) else { return };
+        if inner.replacement_class.get_mut().is_some() { return; }
+        let held = inner.fields.get_mut();
+        if held.len() < 9 { return; }
+        held.truncate(9);
+        for (_, value) in held.iter_mut() { *value = Value::Null; }
+        self.spare_frames.push(frame);
+    }
+
     fn make_frame(&mut self, program: &Rc<Routine>, locals: &[Value], back: Option<Keep>) -> Option<Keep> {
         if self.lang.trace_fields.len() < 16 { return None; }
         let lang = self.lang;
@@ -7431,12 +7456,36 @@ impl<'a> Engine<'a> {
             }
             other => other,
         };
+        let slots = Value::tuple(program.idents.iter().zip(locals).map(|(name, value)| if matches!(name.as_bytes().first(), Some(b'#')) && !(program.generator && program.formals.first() == Some(name)) { Value::Blank } else { value.clone() }).collect());
+        if let Some(mut spare) = self.spare_frames.pop() {
+            if let Some(frame) = Keep::get_mut(&mut spare) {
+                let held = frame.fields.get_mut();
+                held[0].1 = Value::Small(program.declared_on as i64);
+                held[1].1 = code;
+                held[2].1 = back.map_or(Value::Null, Value::Object);
+                held[4].1 = global_book;
+                held[5].1 = slots;
+                held[6].1 = Value::Routine(program.clone());
+                held[8].1 = Value::Small(-1);
+                if hidden { held.push(("\0native".into(), Value::Flag(true))); }
+                if let Some(source) = local_book {
+                    held.push(("\0mapping-locals".into(), Value::Flag(true)));
+                    held.push(("\0mapping-source".into(), source));
+                }
+                if !matches!(self.trace_hook, Value::Null) {
+                    held.push(("f_trace".into(), Value::Null));
+                    held.push(("f_trace_lines".into(), Value::Flag(true)));
+                }
+                frame.mark = self.made;
+                return Some(spare);
+            }
+        }
         let mut fields = vec![
             (keys[4].clone(), Value::Small(program.declared_on as i64)),
             (keys[5].clone(), code),
             (keys[11].clone(), back.map_or(Value::Null, Value::Object)),
             (keys[12].clone(), Value::Null), (keys[13].clone(), global_book),
-            ("\0slots".into(), Value::tuple(program.idents.iter().zip(locals).map(|(name, value)| if matches!(name.as_bytes().first(), Some(b'#')) && !(program.generator && program.formals.first() == Some(name)) { Value::Blank } else { value.clone() }).collect())),
+            ("\0slots".into(), slots),
             ("\0routine".into(), Value::Routine(program.clone())),
             ("\0observed".into(), Value::Null),
             ("\0instruction".into(), Value::Small(-1)),
@@ -8937,7 +8986,7 @@ impl<'a> Engine<'a> {
             kind @ (Builtin::Set | Builtin::Frozen) => Value::Set(Rc::new(RefCell::new(crate::value::Members::empty(word.to_string(), *kind == Builtin::Frozen)))),
             Builtin::Bytes(mutable) => Value::Bytes(Rc::new(RefCell::new(Vec::new())), *mutable == 1, Rc::from(word)),
             Builtin::Span => Value::Counted(Rc::new(crate::value::Counted {
-                start: BigInt::from(0), stop: BigInt::from(0), step: BigInt::from(1), name: word.to_string(),
+                words: Default::default(), start: BigInt::from(0), stop: BigInt::from(0), step: BigInt::from(1), name: word.to_string(),
             })),
             Builtin::MakeSlice => Value::Slice(Rc::new([Value::Null, Value::Null, Value::Null])),
             _ => return None,
@@ -11938,7 +11987,7 @@ impl<'a> Engine<'a> {
                 let settled = self.slice_settled(bounds)?;
                 if let Value::Counted(row) = a {
                     let [from, to, by] = self.slice_clipped(&settled, &Value::of_big(row.length()))?;
-                    let picked = crate::value::Counted { start: &row.start + &from * &row.step, stop: &row.start + &to * &row.step, step: &row.step * &by, name: row.name.clone() };
+                    let picked = crate::value::Counted { words: Default::default(), start: &row.start + &from * &row.step, stop: &row.start + &to * &row.step, step: &row.step * &by, name: row.name.clone() };
                     return Ok(Value::Counted(Rc::new(picked)));
                 }
                 return self.dyadic(op, a, &Value::Slice(Rc::new(settled)));
@@ -30002,7 +30051,214 @@ impl<'a> Engine<'a> {
                         drawn ^= (drawn << 7) & 0x9d2c_5680;
                         drawn ^= (drawn << 15) & 0xefc6_0000;
                         drawn ^= drawn >> 18;
+
                         drawn
+                    }
+                    fn unit(&mut self) -> f64 {
+                        let high = self.word() >> 5;
+                        let low = self.word() >> 6;
+                        (high as f64 * 67108864.0 + low as f64) * (1.0 / 9007199254740992.0)
+                    }
+                    fn log2_of(value: f64) -> f64 {
+                        extern "C" { fn log2(value: f64) -> f64; }
+                        unsafe { log2(value) }
+                    }
+                    fn ln_of(value: f64) -> f64 {
+                        extern "C" { fn log(value: f64) -> f64; }
+                        unsafe { log(value) }
+                    }
+                    fn ln_gamma(value: f64) -> f64 {
+                        extern "C" { fn lgamma(value: f64) -> f64; }
+                        unsafe { lgamma(value) }
+                    }
+                    fn successes(&mut self, trials: i64, chance: f64) -> Result<i64, String> {
+                        if trials == 1 {
+                            return Ok(if self.unit() < chance { 1 } else { 0 });
+                        }
+                        if chance > 0.5 {
+                            let flipped = self.successes(trials, 1.0 - chance)?;
+                            return Ok(trials - flipped);
+                        }
+                        if (trials as f64) * chance < 10.0 {
+                            return Ok(self.geometric(trials, chance));
+                        }
+                        self.transformed(trials, chance)
+                    }
+                    fn geometric(&mut self, trials: i64, chance: f64) -> i64 {
+                        let slope = Self::log2_of(1.0 - chance);
+                        if slope == 0.0 { return 0; }
+                        let mut found = 0i64;
+                        let mut walked = 0i64;
+                        loop {
+                            let draw = self.unit();
+                            if draw == 0.0 { continue; }
+                            let ratio = Self::log2_of(draw) / slope;
+                            if ratio.is_nan() { continue; }
+                            let jumped = ratio.floor();
+                            if jumped >= 9223372036854775808.0 || jumped.is_infinite() { return found; }
+                            let step = (jumped as i64).saturating_add(1);
+                            match walked.checked_add(step) {
+                                Some(next) if next <= trials => { walked = next; found += 1; }
+                                _ => return found,
+                            }
+                        }
+                    }
+                    fn transformed(&mut self, trials: i64, chance: f64) -> Result<i64, String> {
+                        let width = trials as f64;
+                        let spread = (width * chance * (1.0 - chance)).sqrt();
+                        let bend = 1.15 + 2.53 * spread;
+                        let tilt = -0.0873 + 0.0248 * bend + 0.01 * chance;
+                        let center = width * chance + 0.5;
+                        let squeeze = 0.92 - 4.2 / bend;
+                        let mut ready = false;
+                        let mut alpha = 0.0;
+                        let mut lpq = 0.0;
+                        let mut mode = 0.0;
+                        let mut height = 0.0;
+                        loop {
+                            let u = self.unit() - 0.5;
+                            let us = 0.5 - u.abs();
+                            if us == 0.0 { continue; }
+                            let guessed = ((2.0 * tilt / us + bend) * u + center).floor();
+                            if !guessed.is_finite() || guessed < 0.0 || guessed > width { continue; }
+                            let k = guessed as i64;
+                            let mut v = self.unit();
+                            if us >= 0.07 && v <= squeeze { return Ok(k); }
+                            if !ready {
+                                alpha = (2.83 + 5.1 / bend) * spread;
+                                lpq = Self::ln_of(chance / (1.0 - chance));
+                                mode = ((width + 1.0) * chance).floor();
+                                height = Self::ln_gamma(mode + 1.0) + Self::ln_gamma(width - mode + 1.0);
+                                ready = true;
+                            }
+                            v *= alpha / (tilt / (us * us) + bend);
+                            if !(v > 0.0) { return Err("ValueError: math domain error".into()); }
+                            let left = Self::ln_of(v);
+                            let right = height - Self::ln_gamma(k as f64 + 1.0)
+                                - Self::ln_gamma(width - k as f64 + 1.0)
+                                + ((k as f64) - mode) * lpq;
+                            if left <= right { return Ok(k); }
+                        }
+                    }
+                    fn weight_of(value: &Value) -> Result<f64, String> {
+                        match value.contents() {
+                            Value::Flag(bit) => Ok(if bit { 1.0 } else { 0.0 }),
+                            Value::Small(n) => {
+                                let widened = n as f64;
+                                if widened as i64 == n { Ok(widened) } else { Err("\0defer".into()) }
+                            }
+                            Value::Real(real) => Ok(crate::value::as_binary(&real.p, &real.q)),
+                            _ => Err("\0defer".into()),
+                        }
+                    }
+                    fn seq_len(value: &Value) -> Result<usize, String> {
+                        let n = match value {
+                            Value::Array(items) | Value::Tuple(items) => items.len(),
+                            Value::Counted(walk) => walk.length().to_usize().ok_or_else(|| "\0defer".to_string())?,
+                            _ => return Err("\0defer".into()),
+                        };
+                        if n > 2_000_000 { return Err("\0defer".into()); }
+                        Ok(n)
+                    }
+                    fn read_weights(value: &Value) -> Result<Vec<f64>, String> {
+                        let value = value.contents();
+                        let n = Self::seq_len(&value)?;
+                        let mut out = Vec::with_capacity(n);
+                        match &value {
+                            Value::Array(items) | Value::Tuple(items) => {
+                                for item in items.iter() { out.push(Self::weight_of(item)?); }
+                            }
+                            Value::Counted(walk) => {
+                                let mut at = 0usize;
+                                while at < n {
+                                    let member = walk.at_place(&BigInt::from(at as u64)).ok_or_else(|| "\0defer".to_string())?;
+                                    out.push(Self::weight_of(&member)?);
+                                    at += 1;
+                                }
+                            }
+                            _ => return Err("\0defer".into()),
+                        }
+                        Ok(out)
+                    }
+                    fn cumulative(mode: i64, payload: &Value, n: usize) -> Result<Vec<f64>, String> {
+                        let raw = Self::read_weights(payload)?;
+                        if raw.len() != n {
+                            return Err("ValueError: The number of weights does not match the population".into());
+                        }
+                        let running = if mode == 1 {
+                            let mut acc = Vec::with_capacity(raw.len());
+                            let mut sum = 0.0;
+                            for value in raw { sum += value; acc.push(sum); }
+                            acc
+                        } else { raw };
+                        let Some(total) = running.last().copied() else {
+                            return Err("IndexError: index out of range".into());
+                        };
+                        if total <= 0.0 {
+                            return Err("ValueError: Total of weights must be greater than zero".into());
+                        }
+                        if !total.is_finite() {
+                            return Err("ValueError: Total of weights must be finite".into());
+                        }
+                        Ok(running)
+                    }
+                    fn take_member(population: &Value, index: usize) -> Result<Value, String> {
+                        match population {
+                            Value::Array(items) | Value::Tuple(items) => {
+                                if index >= items.len() { return Err("IndexError: index out of range".into()); }
+                                Ok(items[index].clone())
+                            }
+                            Value::Counted(walk) => walk.at_place(&BigInt::from(index as u64))
+                                .ok_or_else(|| "IndexError: index out of range".to_string()),
+                            _ => Err("\0defer".into()),
+                        }
+                    }
+                    fn upper_bound(cumulative: &[f64], key: f64, exclusive: usize) -> usize {
+                        let mut lo = 0usize;
+                        let mut hi = exclusive;
+                        while lo < hi {
+                            let mid = (lo + hi) / 2;
+                            if key < cumulative[mid] { hi = mid; } else { lo = mid + 1; }
+                        }
+                        lo
+                    }
+                    fn picked(&mut self, population: &Value, mode: i64, payload: &Value, copies: i64) -> Result<Vec<Value>, String> {
+                        let population = population.contents();
+                        let n = Self::seq_len(&population)?;
+                        if copies > 1_000_000 { return Err("\0defer".into()); }
+                        if mode == 0 {
+                            if copies <= 0 { return Ok(Vec::new()); }
+                            if n == 0 {
+                                let _drawn = self.unit();
+                                return Err("IndexError: index out of range".into());
+                            }
+                            let width = n as f64;
+                            let mut out = Vec::with_capacity(copies as usize);
+                            let mut left = copies;
+                            while left > 0 {
+                                let slot = (self.unit() * width).floor();
+                                if !(slot >= 0.0 && slot < width) {
+                                    return Err("IndexError: index out of range".into());
+                                }
+                                out.push(Self::take_member(&population, slot as usize)?);
+                                left -= 1;
+                            }
+                            return Ok(out);
+                        }
+                        if mode != 1 && mode != 2 { return Err("\0defer".into()); }
+                        let running = Self::cumulative(mode, payload, n)?;
+                        if copies <= 0 { return Ok(Vec::new()); }
+                        let total = running[running.len() - 1];
+                        let exclusive = n - 1;
+                        let mut out = Vec::with_capacity(copies as usize);
+                        let mut left = copies;
+                        while left > 0 {
+                            let key = self.unit() * total;
+                            let slot = Self::upper_bound(&running, key, exclusive);
+                            out.push(Self::take_member(&population, slot)?);
+                            left -= 1;
+                        }
+                        Ok(out)
                     }
                 }
                 thread_local! {
@@ -30018,6 +30274,18 @@ impl<'a> Engine<'a> {
                         .and_then(|mut source| source.read_exact(&mut held))
                         .map_err(|_| "OSError: the source of disorder did not answer".to_string())?;
                     Ok(held)
+                }
+                // The leading `width` bits of a fresh big-endian draw.
+                fn entropy_bits(width: u64) -> Result<u64, String> {
+                    if width == 0 { return Ok(0); }
+                    let nbytes = ((width + 7) / 8) as usize;
+                    let raw = read_disorder(nbytes)?;
+                    let mut packed = 0u64;
+                    for byte in raw {
+                        packed = (packed << 8) | u64::from(byte);
+                    }
+                    let spare = (nbytes as u32) * 8 - (width as u32);
+                    Ok(packed >> spare)
                 }
                 // The place the stream stands at, told as a whole
                 // number a library can hand back.
@@ -30116,8 +30384,110 @@ impl<'a> Engine<'a> {
                                 }
                                 None => Err(self.lang.module_helper_amiss.clone()),
                             })?;
+
                             Value::of_big(BigInt::from(num_bigint::BigUint::new(drawn)))
                         }
+                    }
+                    "below" => {
+                        if args.len() != 3 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let Some(under) = whole_arg(1).and_then(|n| n.to_usize()) else {
+                            return Err(self.lang.module_helper_amiss.clone());
+                        };
+                        let Some(limit) = whole_arg(2).and_then(|n| n.to_u64()) else {
+                            return Err("\0defer".into());
+                        };
+                        if limit == 0 { return Err("\0defer".into()); }
+                        let width = 64 - limit.leading_zeros();
+                        let drawn = LENT.with(|held| -> Result<u64, String> {
+                            let mut slot = held.borrow_mut();
+                            let Some(stream) = slot.get_mut(under) else {
+                                return Err(self.lang.module_helper_amiss.clone());
+                            };
+                            loop {
+                                let sample = if width <= 32 {
+                                    u64::from(stream.word() >> (32 - width))
+                                } else {
+                                    let low = u64::from(stream.word());
+                                    let high = u64::from(stream.word() >> (64 - width));
+                                    low | (high << 32)
+                                };
+                                if sample < limit { return Ok(sample); }
+                            }
+                        })?;
+                        Value::Small(drawn as i64)
+                    }
+                    "osbelow" => {
+                        if args.len() != 2 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let Some(limit) = whole_arg(1).and_then(|n| n.to_u64()) else {
+                            return Err("\0defer".into());
+                        };
+                        if limit == 0 { return Err("\0defer".into()); }
+                        let width = u64::from(64 - limit.leading_zeros());
+                        let drawn = loop {
+                            let sample = entropy_bits(width)?;
+                            if sample < limit { break sample; }
+                        };
+                        Value::Small(drawn as i64)
+                    }
+                    "osbits" => {
+                        if args.len() != 2 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let Some(count) = whole_arg(1).and_then(|n| n.to_u64()) else {
+                            return Err("\0defer".into());
+                        };
+                        if count > 64 { return Err("\0defer".into()); }
+                        let drawn = entropy_bits(count)?;
+                        if drawn <= i64::MAX as u64 {
+                            Value::Small(drawn as i64)
+                        } else {
+                            Value::of_big(BigInt::from(drawn))
+                        }
+                    }
+                    "osunit" => {
+                        if args.len() != 1 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let drawn = (entropy_bits(53)? as f64) * (1.0 / 9007199254740992.0);
+                        let mut value = crate::value::real_of(drawn, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                        if let Value::Real(real) = &mut value { Rc::make_mut(real).floating = self.lang.math_floating; }
+                        value
+                    }
+                    "binomial" => {
+                        if args.len() != 4 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let Some(under) = whole_arg(1).and_then(|n| n.to_usize()) else {
+                            return Err(self.lang.module_helper_amiss.clone());
+                        };
+                        let Some(trials) = whole_arg(2).and_then(|n| n.to_i64()) else {
+                            return Err("\0defer".into());
+                        };
+                        let chance = match args[3].contents() {
+                            Value::Real(real) if !real.outside() => crate::value::as_binary(&real.p, &real.q),
+                            _ => return Err("\0defer".into()),
+                        };
+                        if trials < 0 || (trials as f64) as i64 != trials || !(chance > 0.0 && chance < 1.0) {
+                            return Err("\0defer".into());
+                        }
+                        let amiss = self.lang.module_helper_amiss.clone();
+                        let produced = LENT.with(|held| -> Result<i64, String> {
+                            let mut slot = held.borrow_mut();
+                            let Some(stream) = slot.get_mut(under) else { return Err(amiss); };
+                            stream.successes(trials, chance)
+                        })?;
+                        Value::Small(produced)
+                    }
+                    "choices" => {
+                        if args.len() != 6 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let Some(under) = whole_arg(1).and_then(|n| n.to_usize()) else {
+                            return Err(self.lang.module_helper_amiss.clone());
+                        };
+                        let population = args[2].contents();
+                        let mode = match args[3].contents() { Value::Small(mode) => mode, _ => return Err("\0defer".into()) };
+                        let payload = args[4].contents();
+                        let copies = match args[5].contents() { Value::Small(copies) => copies, _ => return Err("\0defer".into()) };
+                        let amiss = self.lang.module_helper_amiss.clone();
+                        let produced = LENT.with(|held| -> Result<Vec<Value>, String> {
+                            let mut slot = held.borrow_mut();
+                            let Some(stream) = slot.get_mut(under) else { return Err(amiss); };
+                            stream.picked(&population, mode, &payload, copies)
+                        })?;
+                        Value::array(produced)
                     }
                     "state" => {
                         if args.len() != 2 { return Err(self.lang.module_helper_amiss.clone()); }
@@ -30480,7 +30850,7 @@ impl<'a> Engine<'a> {
                 if bounds.len() == 1 { bounds.insert(0, BigInt::from(0)); }
                 if bounds.len() == 2 { bounds.push(BigInt::from(1)); }
                 if bounds[2] == BigInt::from(0) { return Err(self.lang.range_zero[0].clone()); }
-                Value::Counted(Rc::new(crate::value::Counted { start: bounds[0].clone(), stop: bounds[1].clone(), step: bounds[2].clone(), name: name.to_string() }))
+                Value::Counted(Rc::new(crate::value::Counted { words: Default::default(), start: bounds[0].clone(), stop: bounds[1].clone(), step: bounds[2].clone(), name: name.to_string() }))
             },
             _ => unreachable!(),
         };
@@ -32360,7 +32730,7 @@ impl Engine<'_> {
                 let walked = text_at(1);
                 let (start, stop, step, at) = (big_at(2)?, big_at(3)?, big_at(4)?, big_at(6)?);
                 let Some(name) = text_at(5) else { return Err(malformed()) };
-                let row = crate::value::Counted { start, stop, step, name: name.to_string() };
+                let row = crate::value::Counted { words: Default::default(), start, stop, step, name: name.to_string() };
                 Ok(Self::core_cursor_walked(CursorSource::Counted(Rc::new(row), at), walked))
             }
             "back" => {
@@ -32596,7 +32966,7 @@ impl Engine<'_> {
                     return Ok(found);
                 }
                 CursorSource::Counted(row, place) => {
-                    let found = row.at(place.clone());
+                    let found = row.at_place(place);
                     if found.is_some() { *place += 1; } else { state.finished = true; }
                     return Ok(found);
                 }
@@ -33742,7 +34112,7 @@ impl Engine<'_> {
                 if let Value::Counted(row) = &source {
                     let length = row.length();
                     let last = &row.start + (&length - 1) * &row.step;
-                    let backwards = crate::value::Counted { start: last, stop: &row.start - &row.step, step: -&row.step, name: row.name.clone() };
+                    let backwards = crate::value::Counted { words: Default::default(), start: last, stop: &row.start - &row.step, step: -&row.step, name: row.name.clone() };
                     return self.core_iterator(&Value::Counted(Rc::new(backwards)));
                 }
                 if let Value::Array(items) = &source {
@@ -35168,6 +35538,10 @@ impl Engine<'_> {
             && self.running_routine.as_ref().is_some_and(|routine| routine.globals_rebound || routine.code_flags & 1 != 0 && Self::function_book(routine).is_some()) {
             return Some(Kept::Outer);
         }
+        // A cell the kernel keeps for itself is in no dictionary unless
+        // a text's or a module's book claims it, so with neither there is
+        // nothing to look through.
+        if ident.starts_with('\0') && self.text_books.is_empty() && self.module_books.is_empty() { return None; }
         if !self.module_books.is_empty() {
             if let Some(rest) = ident.strip_prefix("\0module:") {
                 let path = rest.splitn(3, ':').nth(1)?;
@@ -36003,6 +36377,7 @@ impl Engine<'_> {
     /// it is one: the dictionary is handed out as a cell, so the cell's
     /// own address names it.
     fn globals_module_of(&self, cell: &Rc<RefCell<Value>>) -> Option<String> {
+        if self.globals_by_cell.is_empty() { return None; }
         self.globals_by_cell.get(&(Rc::as_ptr(cell) as usize)).cloned()
     }
     // A dictionary write can replace any native binding, including through
