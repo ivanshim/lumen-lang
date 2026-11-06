@@ -88,6 +88,9 @@ fn ast_line(row: u32, column: usize) -> u32 {
 /// The global names, each with a slot.
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Registry {
+    /// Slots owned by another registry need addresses, not placeholder strings.
+    #[serde(default)]
+    outside: usize,
     index: HashMap<String, usize, crate::value::FxBuildHasher>,
     module_index: HashMap<String, HashMap<String, usize, crate::value::FxBuildHasher>, crate::value::FxBuildHasher>,
     wildcard_index: HashMap<usize, (usize, HashMap<String, usize, crate::value::FxBuildHasher>), crate::value::FxBuildHasher>,
@@ -180,39 +183,28 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// Reserve outer addresses without indexing placeholder names that source cannot read.
+    /// Start new names after the slots owned by the surrounding registry.
     pub fn with_outside_slots(count: usize) -> Self {
-        let mut registry = Self {
-            idents: Vec::with_capacity(count),
-            ..Self::default()
-        };
-        registry.leave_outside(count);
-        registry
+        Self { outside: count, ..Self::default() }
     }
 
+    /// Assign a stable global address to a spelling.
     pub fn slot(&mut self, name: &str) -> usize {
         if let Some(&slot) = self.index.get(name) {
             return slot;
         }
-        self.index.insert(name.to_string(), self.idents.len());
+        self.index.insert(name.to_string(), self.outside + self.idents.len());
         if let Some((_, tail)) = name.strip_prefix("\0module:").and_then(|word| word.split_once(':')) {
             if let Some((path, member)) = tail.split_once(':') {
                 // The path is spelled into a key only for the first member it has.
                 match self.module_index.get_mut(path) {
-                    Some(members) => { members.insert(member.to_string(), self.idents.len()); }
-                    None => { self.module_index.entry(path.to_string()).or_default().insert(member.to_string(), self.idents.len()); }
+                    Some(members) => { members.insert(member.to_string(), self.outside + self.idents.len()); }
+                    None => { self.module_index.entry(path.to_string()).or_default().insert(member.to_string(), self.outside + self.idents.len()); }
                 }
             }
         }
         self.idents.push(name.to_string());
-        self.idents.len() - 1
-    }
-
-    /// Leave the first `count` slots to the names an earlier registry
-    /// holds: they are never looked up by name here, so each takes an
-    /// empty word rather than a spelled and hashed one.
-    pub fn leave_outside(&mut self, count: usize) {
-        self.idents.resize(count, String::new());
+        self.outside + self.idents.len() - 1
     }
 
     /// The most recently registered slot for a module member. Dynamic
@@ -228,13 +220,13 @@ impl Registry {
         let prefix = format!("\0module:{base}:");
         if name.contains(':') {
             let suffix = format!(":{name}");
-            return self.idents.iter().position(|word| word.starts_with(&prefix) && word.ends_with(&suffix));
+            return self.idents.iter().position(|word| word.starts_with(&prefix) && word.ends_with(&suffix)).map(|at| self.outside + at);
         }
         let (scanned, members) = self.wildcard_index.entry(base).or_default();
         for (at, word) in self.idents.iter().enumerate().skip(*scanned) {
             if word.starts_with(&prefix) {
                 if let Some((_, member)) = word.rsplit_once(':') {
-                    members.entry(member.to_owned()).or_insert(at);
+                    members.entry(member.to_owned()).or_insert(self.outside + at);
                 }
             }
         }
@@ -353,13 +345,21 @@ pub(crate) fn prepared_entries(definition: &str) -> Option<(PreparedEntries, Pre
 fn token_fingerprint(tokens: &[Token]) -> Vec<u8> {
     fn number(bytes: &mut Vec<u8>, n: usize) { bytes.extend_from_slice(&(n as u64).to_le_bytes()); }
     fn word(bytes: &mut Vec<u8>, text: &str) { number(bytes, text.len()); bytes.extend_from_slice(text.as_bytes()); }
-    let mut bytes = Vec::new();
+    // Each token has 66 fixed bytes before its lexeme and optional raw spelling.
+    let mut bytes = Vec::with_capacity(8 + tokens.len() * 66);
     number(&mut bytes, tokens.len());
     for token in tokens {
         bytes.push(token.shape as u8);
         word(&mut bytes, &token.lexeme);
         match &token.raw { Some(raw) => { bytes.push(1); word(&mut bytes, raw); }, None => bytes.push(0) }
-        for n in [token.width, token.row, token.column, token.end_column, token.end_row, token.byte_column, token.byte_end_column] { number(&mut bytes, n); }
+        // Append the fixed-width position record with one capacity check.
+        let positions = [
+            (token.width as u64).to_le_bytes(), (token.row as u64).to_le_bytes(),
+            (token.column as u64).to_le_bytes(), (token.end_column as u64).to_le_bytes(),
+            (token.end_row as u64).to_le_bytes(), (token.byte_column as u64).to_le_bytes(),
+            (token.byte_end_column as u64).to_le_bytes(),
+        ];
+        bytes.extend_from_slice(positions.as_flattened());
     }
     bytes
 }
@@ -776,6 +776,20 @@ pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before:
     compile_within(tokens, lang, table, before, written_in, None, None, true)
 }
 
+// Prove that a single expression has no lexical bindings to discover.
+// Interpolated strings and every scope or assignment form keep both passes.
+fn binding_free_expression(tokens: &[Token], lang: &Lang) -> bool {
+    if !lang.bind_names || lang.expression_assign.is_empty() { return false; }
+    tokens.iter().all(|token| match token.shape {
+        Shape::Instr => [&lang.lambda_words, &lang.comprehension_for, &lang.function_words, &lang.class_words]
+            .iter().all(|words| !Lang::spells(words, token.spelling())),
+        Shape::Sign => !Lang::spells(&lang.expression_assign, token.spelling())
+            && !Lang::spells(&lang.assign_words, token.spelling()),
+        Shape::Numeral | Shape::Quote | Shape::Bytes | Shape::Codepoints | Shape::LineEnd | Shape::Finish => true,
+        _ => false,
+    })
+}
+
 /// The same, save that the text may be read as standing inside a
 /// routine already running: the names it already has are given here, and
 /// a name the text reads or writes means that one. Names of its own are
@@ -821,7 +835,7 @@ fn compile_hinted(
     let mut plans = HashMap::default();
     let wants_value = std::mem::take(&mut table.value_only);
     let interactive = std::mem::take(&mut table.interactive);
-    if lang.closes_over {
+    if lang.closes_over && !(wants_value && before == 0 && binding_free_expression(tokens, lang)) {
         let reusable = before == 0 && inside.is_none() && within.is_none() && !wants_value && !interactive && future_bits == 0 && table.optimize == 0;
         if let Some(stored) = reusable.then(|| prepared_scope(tokens, lang, hint)).flatten() {
             plans = stored.plans;
@@ -1037,7 +1051,8 @@ fn compile_pass(
     let spelled = tokens;
     let renamed = private_tokens(tokens, lang);
     let tokens = renamed.as_ref();
-    for name in &lang.exceptions { table.slot(name); }
+    // Only emitted code needs the complete native exception slot roster.
+    if !discovering { for name in &lang.exceptions { table.slot(name); } }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
     let mut top = Piece {
@@ -1078,7 +1093,7 @@ fn compile_pass(
         gives_back.extend(table.gives_back.iter().cloned());
     }
     let future_bits = table.future_bits;
-    let mut a = Compiler { omitted_docs: HashSet::new(), call_temporaries: 0, image_modes: i64::from(wants_value) | (i64::from(interactive) << 1) | (i64::from(table.allow_top_level_await) << 2) | (table.optimize.clamp(0, 2) << 8), source_content: Rc::new(std::cell::OnceCell::new()), source_tokens: if discovering { Rc::from([]) } else { Rc::from(tokens) }, reading_annotation: false, class_annotation_read: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: table.allow_flufl || future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, finally_loop_bases: Vec::new(), except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, ast_expression_starts: AST_POSITIONS.with(|entries| (!entries.borrow().is_empty()).then(Vec::new)), spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, decorated_at: None, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { omitted_docs: HashSet::new(), call_temporaries: 0, image_modes: i64::from(wants_value) | (i64::from(interactive) << 1) | (i64::from(table.allow_top_level_await) << 2) | (table.optimize.clamp(0, 2) << 8), source_content: Rc::new(std::cell::OnceCell::new()), source_tokens: if discovering { Rc::from([]) } else { Rc::from(tokens) }, reading_annotation: false, class_annotation_read: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: table.allow_flufl || future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, finally_loop_bases: Vec::new(), except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: std::mem::take(plans), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, ast_expression_starts: AST_POSITIONS.with(|entries| (!entries.borrow().is_empty()).then(Vec::new)), spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, decorated_at: None, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1244,7 +1259,8 @@ fn compile_pass(
         }
         a.prepend(head);
     }
-    plans.extend(a.plans.clone());
+    // Transfer the discovered plans between passes without cloning their names.
+    *plans = std::mem::take(&mut a.plans);
     let mut unit = a.pieces.pop().expect("the top unit");
     if !lang.compile_modes.is_empty() { fold_boolean_branches(&mut unit.instrs); }
     a.registry.top_level_coroutine = unit.generator;
@@ -14661,7 +14677,13 @@ fn peephole(mut instrs: Vec<Instr>) -> Vec<Instr> {
         };
         let mut group = None;
         let mut width = 4;
-        if clear(4) {
+        // Every fusion starts with a load. Other instructions cannot match,
+        // so do not scan their jump/guard windows or clone unused operands.
+        let load = matches!(&instrs[i], Instr::Read(_) | Instr::Const(_));
+        if matches!(&instrs[i], Instr::Read(_))
+            && matches!(instrs.get(i + 2), Some(Instr::Act(_, 2)))
+            && matches!(instrs.get(i + 3), Some(Instr::Skip(_) | Instr::Write(_)))
+            && clear(4) {
             group = match (&instrs[i], &instrs[i + 1], &instrs[i + 2], &instrs[i + 3]) {
                 (Instr::Read(a), b, Instr::Act(op, 2), Instr::Skip(to)) if !a.moving && comparison(op) => {
                     operand_of(b).map(|b| Instr::SkipCmp { op: op.clone(), a: Operand::Cell(Box::new(a.clone())), b, to: *to })
@@ -14672,19 +14694,23 @@ fn peephole(mut instrs: Vec<Instr>) -> Vec<Instr> {
                 _ => None,
             };
         }
-        if group.is_none() && clear(3) {
-            if let (Some(a), Some(b), Instr::Act(op, 2)) = (operand_of(&instrs[i]), operand_of(&instrs[i + 1]), &instrs[i + 2]) {
-                if arithmetic(op) {
-                    group = Some(Instr::Dyad { op: op.clone(), a, b });
-                    width = 3;
+        if group.is_none() && load {
+            if let Some(Instr::Act(op, 2)) = instrs.get(i + 2) {
+                if arithmetic(op) && clear(3) {
+                    if let (Some(a), Some(b)) = (operand_of(&instrs[i]), operand_of(&instrs[i + 1])) {
+                        group = Some(Instr::Dyad { op: op.clone(), a, b });
+                        width = 3;
+                    }
                 }
             }
         }
-        if group.is_none() && clear(2) {
-            if let (Some(b), Instr::Act(op, 2)) = (operand_of(&instrs[i]), &instrs[i + 1]) {
-                if arithmetic(op) {
-                    group = Some(Instr::Dyad { op: op.clone(), a: Operand::Top, b });
-                    width = 2;
+        if group.is_none() && load {
+            if let Some(Instr::Act(op, 2)) = instrs.get(i + 1) {
+                if arithmetic(op) && clear(2) {
+                    if let Some(b) = operand_of(&instrs[i]) {
+                        group = Some(Instr::Dyad { op: op.clone(), a: Operand::Top, b });
+                        width = 2;
+                    }
                 }
             }
         }
