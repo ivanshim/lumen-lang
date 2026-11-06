@@ -4162,6 +4162,9 @@ impl<'a> Engine<'a> {
     }
     // Validate ordinary keyword names after main's full mapping expansion.
     fn call_items_for(&mut self, args: Vec<Value>, callee: Callee) -> Flow<Vec<(Option<String>, Value)>> {
+        if args.iter().all(|value| !matches!(value, Value::Tie(_))) {
+            return Ok(args.into_iter().map(|value| (None, value)).collect());
+        }
         let items = self.expanded_call_items_for(args, callee)?;
         Ok(self.keyword_items(items)?)
     }
@@ -4170,6 +4173,9 @@ impl<'a> Engine<'a> {
         self.expanded_call_items_for(args, Callee::Unknown)
     }
     fn keyword_items(&self, items: Vec<(Option<Value>, Value)>) -> Res<Vec<(Option<String>, Value)>> {
+        if items.iter().all(|(key, _)| key.is_none()) {
+            return Ok(items.into_iter().map(|(_, value)| (None, value)).collect());
+        }
         items.into_iter().map(|(key, value)| match key {
             None => Ok((None, value)),
             Some(key) => self.word_of_key(&key).map(|word| (Some(word), value)),
