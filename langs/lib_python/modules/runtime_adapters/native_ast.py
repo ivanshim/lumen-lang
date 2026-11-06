@@ -5389,6 +5389,7 @@ def _validate_shape(node):
         if not node.handlers and not node.finalbody:
             raise ValueError(cls.__name__ + ' has neither except handlers nor finalbody')
     elif cls is arguments:
+        _validate_contexts(node)
         if len(node.defaults) > len(node.args) + len(node.posonlyargs):
             raise ValueError('more positional defaults than args')
         if len(node.kw_defaults) != len(node.kwonlyargs):
@@ -5506,8 +5507,9 @@ def _validate_node(node, active=None):
                 raise ValueError('AST node line range (' + str(lineno) + ', ' + str(end_lineno) + ') is not valid')
             if end_col_offset is not None and end_lineno == lineno and col_offset is not None and end_col_offset < col_offset:
                 raise ValueError('line ' + str(lineno) + ', column ' + str(col_offset) + '-' + str(end_col_offset) + ' is not a valid range')
-            if ((type(lineno) is int and lineno < 0) or (type(end_lineno) is int and end_lineno < 0)
-                    or (type(col_offset) is int and col_offset < 0) or (type(end_col_offset) is int and end_col_offset < 0)):
+            if (end_lineno is not None and end_col_offset is not None and
+                    ((type(lineno) is int and lineno < 0) or (type(end_lineno) is int and end_lineno < 0)
+                     or (type(col_offset) is int and col_offset < 0) or (type(end_col_offset) is int and end_col_offset < 0))):
                 raise ValueError('AST node line range (' + str(lineno) + ', ' + str(end_lineno) + ') is not valid')
     if node._fields is cls._fields:
         for field, is_list, typ, nullable in _get_field_specs(cls):
@@ -5633,7 +5635,10 @@ def _validate_contexts(node, context=Load):
         ctx = getattr(node, 'ctx')
     if ctx is not _MISSING and type(ctx) is not context and not isinstance(ctx, context):
         raise ValueError('expression must have ' + context.__name__ + ' context but has ' + type(ctx).__name__ + ' instead')
-    for field in node._fields:
+    names = node._fields
+    if isinstance(node, (ListComp, SetComp, GeneratorExp, DictComp)):
+        names = ('generators',) + tuple(field for field in names if field != 'generators')
+    for field in names:
         value = fields.get(field, _MISSING)
         if value is _MISSING:
             try:
