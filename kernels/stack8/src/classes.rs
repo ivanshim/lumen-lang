@@ -891,13 +891,13 @@ impl<'a> Engine<'a> {
     }
     pub(super) fn class_order(c: &Rc<Class>) -> Vec<Rc<Class>> {
         let ancestors = c.lineage.borrow();
-        if c.mro_adopted.get() { return c.adopted_order.borrow().iter().filter_map(std::rc::Weak::upgrade).collect(); }
+        if c.mro_adopted.get() { return c.adopted_order.borrow().iter().filter_map(crate::value::Weak::upgrade).collect(); }
         std::iter::once(c.clone()).chain(ancestors.iter().cloned()).collect()
     }
     fn instance_root_visible(&self, c: &Rc<Class>) -> bool {
         if !c.mro_adopted.get() { return true; }
         self.class_root.as_ref().is_some_and(|root| c.adopted_order.borrow().iter()
-            .filter_map(std::rc::Weak::upgrade).any(|base| Rc::ptr_eq(&base, root)))
+            .filter_map(crate::value::Weak::upgrade).any(|base| Rc::ptr_eq(&base, root)))
     }
     fn object_receiver(&mut self, value: &Value) -> Flow<(bool, String)> {
         let actual = self.class_type(vec![value.clone()])?;
@@ -2162,7 +2162,7 @@ impl<'a> Engine<'a> {
     }
     pub(super) fn ordered_lookup<T>(c: &Class, mut visit: impl FnMut(&Class) -> Option<T>) -> Option<T> {
         if c.mro_adopted.get() {
-            return c.adopted_order.borrow().iter().filter_map(std::rc::Weak::upgrade).find_map(|base| visit(&base));
+            return c.adopted_order.borrow().iter().filter_map(crate::value::Weak::upgrade).find_map(|base| visit(&base));
         }
         std::iter::once(c).chain(c.lineage.borrow().iter().map(Rc::as_ref)).find_map(visit)
     }
@@ -9036,7 +9036,7 @@ impl<'a> Engine<'a> {
                     let context = class.shared.borrow_mut().remove(at).1;
                     if let Value::Binding(cell) | Value::Bond(cell) = context {
                         *cell.borrow_mut() = Value::Faint(Rc::new(crate::faint::Faint {
-                            hold: crate::faint::Hold::Class(Rc::downgrade(&class)), bearer: std::rc::Weak::new(),
+                            hold: crate::faint::Hold::Class(Rc::downgrade(&class)), bearer: crate::value::Weak::new(),
                             told: RefCell::new(None), cached_hash: RefCell::new(None), cleared: std::cell::Cell::new(false),
                         }));
                     }

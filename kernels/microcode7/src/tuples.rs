@@ -1,7 +1,7 @@
 //! Sequence references and a bounded reserve of released Python tuple storage.
 use std::cell::{Cell, RefCell};
 use std::ops::{Deref, DerefMut};
-use std::rc::Rc;
+use crate::data::Rc;
 use crate::data::Value;
 
 // Released rows of up to this many slots are kept in a tier of their own size.

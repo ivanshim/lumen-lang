@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::rc::Rc;
+use crate::value::Rc;
 
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -15268,9 +15268,9 @@ mod prepared_proof_tests {
         let packed: &'static [u8] = Box::leak(packed.output.into_boxed_slice());
         let decoded = super::unpack_library_proof(packed).unwrap();
         assert_eq!(*decoded, proof);
-        assert!(std::rc::Rc::ptr_eq(&decoded, &super::unpack_library_proof(packed).unwrap()));
+        assert!(crate::value::Rc::ptr_eq(&decoded, &super::unpack_library_proof(packed).unwrap()));
         assert!(super::unpack_library_proof(b"invalid").is_none());
-        assert!(std::rc::Rc::ptr_eq(&decoded, &super::unpack_library_proof(packed).unwrap()));
+        assert!(crate::value::Rc::ptr_eq(&decoded, &super::unpack_library_proof(packed).unwrap()));
 
     }
 }

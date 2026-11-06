@@ -2,7 +2,7 @@
 use crate::data::{Value, worth_of_binary, nearest_binary};
 use num_bigint::BigInt;
 use num_traits::{Zero, ToPrimitive, Signed};
-use std::rc::Rc;
+use crate::data::Rc;
 use std::cell::RefCell;
 
 fn invalid(why: impl std::fmt::Display) -> String { format!("ValueError: {why}") }

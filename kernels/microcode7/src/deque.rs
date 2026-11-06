@@ -1,6 +1,6 @@
 //! Keep each deque endpoint at the top of its own native list stack.
 use std::cell::RefCell;
-use std::rc::Rc;
+use crate::data::Rc;
 use super::{Machine, Value};
 
 type ResultOf<T> = Result<T, String>;

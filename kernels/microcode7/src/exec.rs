@@ -51,7 +51,7 @@ use std::collections::HashMap;
 use std::cell::{Cell, RefCell};
 use num_bigint::BigInt;
 use num_integer::Integer;
-use std::rc::{Rc, Weak};
+use crate::data::{Rc, Weak};
 
 thread_local! {
     // What tuples holding instances were given for a hash, found by the
@@ -607,8 +607,8 @@ pub struct Machine<'a> {
     activation_kind: Option<Rc<Blueprint>>,
     locals_kind: Option<Rc<Blueprint>>,
     locals_showing: RefCell<std::collections::HashSet<usize>>,
-    memory_stream_source: Option<std::rc::Weak<Blueprint>>,
-    memory_stream_class: Option<(std::rc::Weak<Blueprint>, u64, Vec<String>)>,
+    memory_stream_source: Option<crate::data::Weak<Blueprint>>,
+    memory_stream_class: Option<(crate::data::Weak<Blueprint>, u64, Vec<String>)>,
     tool_words: RefCell<Vec<Option<String>>>,
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
     coroutine_bodies: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<Routine>, Option<Weak<Thing>>, Value, usize)>,
@@ -832,7 +832,7 @@ pub struct Machine<'a> {
     afterward: RefCell<Vec<(Value, Vec<Value>)>>,
     /// Every thing made, held loosely and in the order they were made,
     /// so that any still standing at the end can be let go.
-    things: RefCell<Vec<std::rc::Weak<Thing>>>,
+    things: RefCell<Vec<crate::data::Weak<Thing>>>,
     next_thing_sweep: std::cell::Cell<usize>,
     /// The files already read where the program asked that they be read
     /// only once, under the whole name each stands by.
@@ -14420,7 +14420,7 @@ impl<'a> Machine<'a> {
                         let Value::Wrapped(121, parts) = Self::recipe_tee_storage(thing)? else { return Err("TypeError: invalid tee data".to_owned()); };
                         let Value::Shared(cell) = &parts[4] else { return Err("TypeError: invalid tee readers".to_owned()); };
                         let mut values = match cell.borrow().settled() { Value::Vector(entries) => entries.to_vec(), _ => return Err("TypeError: invalid tee readers".to_owned()) };
-                        values.push(crate::ghost::dim(crate::ghost::Ghost::Thing(crate::data::Hold::downgrade(thing)), std::rc::Weak::new(), None));
+                        values.push(crate::ghost::dim(crate::ghost::Ghost::Thing(crate::data::Hold::downgrade(thing)), crate::data::Weak::new(), None));
                         *cell.borrow_mut() = Value::Vector(crate::tuples::Sequence::plain(values));
                         return Ok(Value::Nil);
                     }

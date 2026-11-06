@@ -25,7 +25,7 @@ fn codes_tally(hay: &[u32], needle: &[u32]) -> usize {
 // Methods belonging to the values themselves. The spelling is supplied
 // by the definition; the receiver keeps its own mutable holding place.
 
-use std::rc::Rc;
+use crate::value::Rc;
 use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{Signed, ToPrimitive, Zero};

@@ -43,7 +43,7 @@ use std::collections::HashMap;
 use std::cell::{Cell as StateCell, RefCell};
 use num_bigint::BigInt;
 use num_integer::Integer;
-use std::rc::{Rc, Weak};
+use crate::value::{Rc, Weak};
 
 use num_traits::{ToPrimitive, Signed, Zero, One};
 
@@ -122,7 +122,7 @@ fn watch_host_signals() {
 thread_local! {
     /// The hashes tuples holding instances were given, by the tuple's own
     /// place, kept beside a weak hold that tells whether it still stands.
-    static TUPLE_HASHES: RefCell<HashMap<usize, (std::rc::Weak<Vec<Value>>, Value)>> = RefCell::new(HashMap::new());
+    static TUPLE_HASHES: RefCell<HashMap<usize, (crate::value::Weak<Vec<Value>>, Value)>> = RefCell::new(HashMap::new());
 }
 
 
@@ -405,7 +405,7 @@ pub struct Engine<'a> {
     when_done: RefCell<Vec<(Value, Vec<Value>)>>,
     /// Every object made, held loosely, in the order they were made, so
     /// that those still standing when the run ends can be let go.
-    things_made: RefCell<Vec<std::rc::Weak<Instance>>>,
+    things_made: RefCell<Vec<crate::value::Weak<Instance>>>,
     objects_prune_at: std::cell::Cell<usize>,
     /// The classes made beneath each class, keyed by where the forebear
     /// stands and held loosely, so __subclasses__ names only those still
@@ -4835,7 +4835,7 @@ impl<'a> Engine<'a> {
                 let Value::Bond(peers) = &state.1[3] else { return Err("TypeError: invalid tee peers".into()); };
                 let Value::Array(old) = peers.borrow().contents() else { return Err("TypeError: invalid tee peers".into()); };
                 let mut live = old.to_vec();
-                live.push(crate::faint::make(crate::faint::Hold::Object(crate::value::Keep::downgrade(object)), std::rc::Weak::new(), None));
+                live.push(crate::faint::make(crate::faint::Hold::Object(crate::value::Keep::downgrade(object)), crate::value::Weak::new(), None));
                 *peers.borrow_mut() = Value::array(live);
                 return Ok(Value::Null);
             }
@@ -31507,7 +31507,7 @@ fn dumped(v: &Value, depth: usize, binary_reals: bool, sp: &Wording) -> String {
     // shown plainly, since a cell no other name reaches is a value like
     // any other; a value shown on its own is never marked.
     let shared = |item: &Value| match item {
-        Value::Bond(cell) if std::rc::Rc::strong_count(cell) > 1 => "&",
+        Value::Bond(cell) if crate::value::Rc::strong_count(cell) > 1 => "&",
         _ => "",
     };
     match v {

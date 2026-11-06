@@ -3,7 +3,9 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
-use std::rc::Rc;
+// The reference-counted pointer and its weak form are the atomic ones: a value
+// may be owned from more than one OS thread once worker threads arrive.
+pub use std::sync::{Arc as Rc, Weak};
 
 use crate::tuples::Sequence;
 
@@ -1386,7 +1388,7 @@ impl Value {
     pub fn ascii_letters(word: &Rc<str>) -> bool {
         if word.len() < 256 { return word.is_ascii(); }
         thread_local! {
-            static TEXT_PROPERTIES: RefCell<Vec<(std::rc::Weak<str>, bool)>> = RefCell::new(Vec::new());
+            static TEXT_PROPERTIES: RefCell<Vec<(Weak<str>, bool)>> = RefCell::new(Vec::new());
         }
         TEXT_PROPERTIES.with(|cell| {
             let mut notes = cell.borrow_mut();
@@ -2447,7 +2449,7 @@ pub struct Blueprint {
     pub order_supplied: Cell<bool>,
     // A custom order is separate from layout parents. Other entries remain
     // alive through ancestry, while this blueprint refers to itself weakly.
-    pub supplied_order: RefCell<Vec<std::rc::Weak<Blueprint>>>,
+    pub supplied_order: RefCell<Vec<Weak<Blueprint>>>,
 }
 
 impl Blueprint {
@@ -2624,11 +2626,11 @@ impl Hold {
         Rc::as_ptr(&handle.0)
     }
 
-    pub fn downgrade(handle: &Hold) -> std::rc::Weak<Thing> {
+    pub fn downgrade(handle: &Hold) -> Weak<Thing> {
         Rc::downgrade(&handle.0)
     }
 
-    pub fn upgrade(weak: &std::rc::Weak<Thing>) -> Option<Hold> {
+    pub fn upgrade(weak: &Weak<Thing>) -> Option<Hold> {
         match weak.upgrade() {
             None => None,
             Some(inner) => {

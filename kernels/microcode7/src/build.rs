@@ -4,7 +4,7 @@
 // RPLumen is read with a symbolic stack of forms.
 
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
+use crate::data::Rc;
 
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -14785,9 +14785,9 @@ mod prepared_proof_tests {
         let packed: &'static [u8] = Box::leak(packed.output.into_boxed_slice());
         let decoded = super::unpack_library_proof(packed).unwrap();
         assert_eq!(decoded.as_ref(), &proof);
-        assert!(std::rc::Rc::ptr_eq(&decoded, &super::unpack_library_proof(packed).unwrap()));
+        assert!(crate::data::Rc::ptr_eq(&decoded, &super::unpack_library_proof(packed).unwrap()));
         assert!(super::unpack_library_proof(b"invalid").is_none());
-        assert!(std::rc::Rc::ptr_eq(&decoded, &super::unpack_library_proof(packed).unwrap()));
+        assert!(crate::data::Rc::ptr_eq(&decoded, &super::unpack_library_proof(packed).unwrap()));
 
     }
 }

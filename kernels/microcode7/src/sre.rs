@@ -3,7 +3,7 @@ use crate::data::Value;
 use num_traits::ToPrimitive;
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::rc::Rc;
+use crate::data::Rc;
 
 type CachedSubject = (Rc<str>, Rc<Vec<u32>>);
 thread_local! {

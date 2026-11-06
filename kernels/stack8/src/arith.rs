@@ -4,7 +4,7 @@
 // multiply, divide, integer quotient, compare; the rest are derived here.
 
 use std::cmp::Ordering;
-use std::rc::Rc;
+use crate::value::Rc;
 
 use num_bigint::BigInt;
 use num_integer::Integer;

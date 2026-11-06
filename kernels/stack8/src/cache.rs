@@ -1,6 +1,6 @@
 // The cache stores the kernel's compiled instruction graph, never source in place of code.
 use std::cell::RefCell;
-use std::rc::Rc;
+use crate::value::Rc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Value as Json};
 use crate::value::Value;

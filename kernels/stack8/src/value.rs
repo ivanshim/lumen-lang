@@ -5,7 +5,11 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fmt::Write as _;
-use std::rc::Rc;
+// Shared ownership is counted atomically: objects, code and weak references
+// will be held from several OS threads once workers exist, so the pointer
+// types are the sync ones under the short names every call site already uses.
+pub type Rc<T> = std::sync::Arc<T>;
+pub type Weak<T> = std::sync::Weak<T>;
 
 use crate::tuples::Items;
 
@@ -1393,7 +1397,7 @@ impl Value {
     pub fn text_ascii(text: &Rc<str>) -> bool {
         if text.len() < 256 { return text.is_ascii(); }
         thread_local! {
-            static ASCII_FLAGS: RefCell<std::collections::VecDeque<(std::rc::Weak<str>, bool)>> = RefCell::new(std::collections::VecDeque::new());
+            static ASCII_FLAGS: RefCell<std::collections::VecDeque<(Weak<str>, bool)>> = RefCell::new(std::collections::VecDeque::new());
         }
         ASCII_FLAGS.with(|saved| {
             let mut entries = saved.borrow_mut();
@@ -2558,7 +2562,7 @@ pub struct Class {
     pub mro_adopted: std::cell::Cell<bool>,
     // The complete supplied order uses weak links for the owner; lineage
     // retains its other entries without introducing an owner cycle.
-    pub adopted_order: RefCell<Vec<std::rc::Weak<Class>>>,
+    pub adopted_order: RefCell<Vec<Weak<Class>>>,
 }
 
 impl Class {
@@ -2727,11 +2731,11 @@ impl Keep {
         Rc::as_ptr(&handle.0)
     }
 
-    pub fn downgrade(handle: &Keep) -> std::rc::Weak<Instance> {
+    pub fn downgrade(handle: &Keep) -> Weak<Instance> {
         Rc::downgrade(&handle.0)
     }
 
-    pub fn upgrade(weak: &std::rc::Weak<Instance>) -> Option<Keep> {
+    pub fn upgrade(weak: &Weak<Instance>) -> Option<Keep> {
         let inner = weak.upgrade()?;
         if inner.anchored.get() && Rc::strong_count(&inner) == 2 {
             crate::faint::note_anchor_shared();
