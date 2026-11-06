@@ -5587,6 +5587,12 @@ impl<'a> Machine<'a> {
         self.read_class_member_slow(value, key, direct)
     }
     fn read_class_member_slow(&mut self, value: Value, key: &str, direct: bool) -> Res {
+        // Binding a native mapping-window method needs no materialized dictionary.
+        if let Value::Window(_, 'm') = &value {
+            if matches!(key, "copy" | "items" | "values" | "keys" | "get" | "__hash__" | "__ior__" | "__ror__" | "__or__" | "__reversed__" | "__iter__" | "__len__" | "__contains__" | "__getitem__") {
+                return Ok(Value::Member(Rc::new(value), key.to_string()));
+            }
+        }
         if key.starts_with("co_") && key != "co_optimize" {
             if let Value::Thing(instance) = &value {
                 if self.code_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &instance.blueprint())) {

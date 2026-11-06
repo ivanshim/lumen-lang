@@ -1138,6 +1138,16 @@ impl Value {
         self
     }
 
+    /// Read a class proxy's ordinary text key without copying the namespace.
+    pub(super) fn proxy_text_value(&self, key: &Value) -> Option<Option<Value>> {
+        let Value::Text(name) = key else { return None; };
+        let Value::View(proxy) = self else { return None; };
+        if proxy.1 != "mapping" || name.starts_with(['\0', '#']) { return None; }
+        let Value::Class(class) = &proxy.0 else { return None; };
+        if class.shared.read("\0type-keys", true).is_some() { return None; }
+        Some(class.shared.read(name, true))
+    }
+
     pub fn proxy_dictionary(&self) -> Value {
         match self {
             Value::Bond(cell) | Value::Collection(cell, _) | Value::Binding(cell) => cell.borrow().proxy_dictionary(),

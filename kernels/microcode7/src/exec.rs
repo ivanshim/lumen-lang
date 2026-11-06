@@ -7097,9 +7097,13 @@ impl<'a> Machine<'a> {
 
     /// The proxy standing for a frame's names, where the value is one.
     pub(super) fn locals_proxy(&self, value: &Value) -> Option<Hold> {
-        let Value::Thing(held) = value.settled() else { return None };
         let known = self.locals_kind.as_ref()?;
-        Rc::ptr_eq(known, &held.blueprint()).then(|| held)
+        match value {
+            Value::Thing(held) if Rc::ptr_eq(known, &held.blueprint()) => Some(held.clone()),
+            Value::Shared(cell) | Value::Mutable(cell, _) => self.locals_proxy(&cell.borrow()),
+            // Settling a window builds a row, which cannot be a locals proxy.
+            _ => None,
+        }
     }
 
     fn locals_frame(proxy: &Hold) -> Option<Hold> {
@@ -13136,6 +13140,13 @@ impl<'a> Machine<'a> {
                 ("mapping__ror__", [other]) => { let other = Self::proxy_reading(other).unwrap_or_else(|| other.clone()); self.prim(Prim::BitsEither, "", &[other, mine]).map_err(Escape::Error) }
                 _ => Err(self.method_fault("arguments").into()),
             };
+        }
+        if name == "get" && keywords.is_empty() {
+            if let [key] | [key, _] = arguments.as_slice() {
+                if let Some(entry) = receiver.window_text_entry(key) {
+                    return Ok(entry.unwrap_or_else(|| arguments.get(1).cloned().unwrap_or(Value::Nil)));
+                }
+            }
         }
         if let Value::Window(owner, 'm') = receiver {
             if matches!(name, "get" | "keys" | "values" | "items" | "copy") {
@@ -24570,6 +24581,15 @@ impl<'a> Machine<'a> {
             }
         }
         if (op == Prim::SetAssign(0) || matches!(op, Prim::Landing(slot) if self.table.landing_working(slot) == Prim::SetAssign(0))) && v.first().and_then(Self::window_inside).is_some_and(|value| matches!(value, Value::Window(_, 'm'))) { return Err(String::from("TypeError: '|=' is not supported by mappingproxy; use '|' instead")); }
+
+        if let [left, right] = v {
+            let selected = match op {
+                Prim::At => left.window_text_entry(right).map(|entry| entry.ok_or_else(|| self.absent_key(right))),
+                Prim::Contains => right.window_text_entry(left).map(|entry| Ok(Value::Flag(entry.is_some()))),
+                _ => None,
+            };
+            if let Some(answer) = selected { return answer; }
+        }
 
         if let (Prim::At, [subject, key]) = (op, v) {
             if let Some(Value::Window(owner, 'm')) = Self::window_inside(subject) {

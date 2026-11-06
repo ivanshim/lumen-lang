@@ -981,6 +981,18 @@ impl Value {
         self
     }
 
+    /// Resolve a native string key directly in a class-backed mapping window.
+    pub(super) fn window_text_entry(&self, key: &Value) -> Option<Option<Value>> {
+        match (self, key) {
+            (Value::Window(owner, 'm'), Value::Text(word)) if !word.starts_with(['#', '\0']) => {
+                let Value::Blueprint(plan) = owner.as_ref() else { return None; };
+                if plan.shared.named("\0type-keys", true).is_some() { return None; }
+                Some(plan.shared.named(word, true))
+            }
+            _ => None,
+        }
+    }
+
     pub fn proxy_pairs(&self) -> Value {
         if let Value::Shared(cell) | Value::Mutable(cell, _) = self { return cell.borrow().proxy_pairs(); }
         if let Value::Window(owner, 'm') = self { return owner.proxy_pairs(); }
