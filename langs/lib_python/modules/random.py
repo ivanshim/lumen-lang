@@ -938,6 +938,15 @@ class SystemRandom(Random):
 # for most programs and is easier for the casual user than making them
 # instantiate their own Random() instance.
 
+# Twister binomial, choices and randrange read the native stream.
+# SystemRandom draws random() and getrandbits from the operating
+# system's disorder. Replacing one of those methods keeps its Python body.
+Random.binomialvariate = __random('method', 'binomial', Random.binomialvariate)
+Random.choices = __random('method', 'choices', Random.choices)
+Random.randrange = __random('method', 'randrange', Random.randrange)
+SystemRandom.random = __random('method', 'osunit', SystemRandom.random)
+SystemRandom.getrandbits = __random('method', 'osbits', SystemRandom.getrandbits)
+
 _inst = Random()
 seed = _inst.seed
 random = _inst.random
