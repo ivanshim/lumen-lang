@@ -11581,6 +11581,11 @@ impl<'a> Engine<'a> {
         }
         if !matches!(op, Action::Same | Action::Unsame) || self.lang.identity_not.is_empty() {
             if let Value::Fields(o) = a {
+                // One name asked of a dictionary view is found where it stands,
+                // without making the whole map of the view first.
+                if let (Action::At, Value::Text(word)) = (op, b) {
+                    if let Some(found) = self.field_standing(o, word) { return Ok(found); }
+                }
                 return self.special_dyad(op, &Value::Map(Rc::new(self.fields_entries(o).into())), b);
             }
             // The view standing on the right is also a dictionary for
@@ -13326,6 +13331,24 @@ impl<'a> Engine<'a> {
             let held = Self::interned_text(Value::text(word));
             names.borrow_mut().insert(word.to_owned(), held.clone());
             held
+        })
+    }
+
+    /// What `fields_entries` would list under a name, found alone; none where
+    /// that listing could differ (extra keys kept beside the fields) or lacks the name.
+    fn field_standing(&self, o: &Keep, word: &str) -> Option<Value> {
+        // module_holding borrows the field table, so the module question
+        // has to be answered before this function borrows it itself.
+        let module = self.module_holding(&Value::Object(o.clone())).is_some();
+        let fields = o.fields.borrow();
+        if fields.iter().any(|(key, _)| key == "\0keys") { return None; }
+        let (_, held) = fields.iter().find(|(key, _)| key == word)?;
+        if word.starts_with(['\0', '#']) || matches!(held.contents(), Value::Blank) { return None; }
+        Some(match held {
+            Value::Bond(cell) if module => {
+                if matches!(&*cell.borrow(), Value::Array(_) | Value::Map(_)) { held.clone().held(false) } else { cell.borrow().clone() }
+            },
+            _ => held.clone(),
         })
     }
 

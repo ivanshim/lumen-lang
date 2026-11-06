@@ -199,6 +199,23 @@ impl QpWrite {
     }
 }
 
+/// One byte's pass through the CRC-32 polynomial, worked out for `lead` as the low byte.
+const fn crc_pass(lead: u32, bits_left: u32) -> u32 {
+    if bits_left == 0 { return lead; }
+    let shifted = lead / 2;
+    crc_pass(if lead % 2 == 1 { shifted ^ 0xedb88320 } else { shifted }, bits_left - 1)
+}
+
+const CRC_STEPS: [u32; 256] = {
+    let mut steps = [0u32; 256];
+    let mut lead = 0usize;
+    while lead < 256 {
+        steps[lead] = crc_pass(lead as u32, 8);
+        lead += 1;
+    }
+    steps
+};
+
 fn checksum(source: &[u8], initial: u32, hqx: bool) -> u32 {
     let mut state = if hqx { initial } else { initial ^ u32::MAX };
     for octet in source {
@@ -209,11 +226,7 @@ fn checksum(source: &[u8], initial: u32, hqx: bool) -> u32 {
                 state = ((state * 2) ^ polynomial) & 65535;
             }
         } else {
-            state ^= u32::from(*octet);
-            for _bit in 0..8 {
-                let polynomial = 0xedb88320u32.wrapping_mul(state & 1);
-                state = (state / 2) ^ polynomial;
-            }
+            state = (state >> 8) ^ CRC_STEPS[((state ^ u32::from(*octet)) & 0xff) as usize];
         }
     }
     if hqx { state } else { state ^ u32::MAX }
