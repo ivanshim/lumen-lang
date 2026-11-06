@@ -5319,7 +5319,7 @@ def _check_ident(field, value):
 
 
 def _validate_value(value, typ, nullable, field, owner, active, in_list):
-    if value is None and (nullable or (not in_list and _allows_none(typ))):
+    if value is None and (typ is object or nullable or (not in_list and _allows_none(typ))):
         return
     if value is None:
         if in_list:
