@@ -8321,6 +8321,17 @@ impl<'a> Machine<'a> {
         self.call_stands(stands, target, args, frame)
     }
 
+    /// A starred call of a bound C function is not unpacked into a profiled
+    /// c_call. Direct calls of the same function still are.
+    fn spread_hides_c_call(&self, stands: &Value, values: &[Value]) -> bool {
+        let Value::Wrapped(3 | 132, parts) = stands else { return false };
+        if self.watcher.borrow().is_none() || self.watching_now.get() || self.natives_told.get() { return false; }
+        if !values.iter().any(|value| matches!(value, Value::Couple(pair) if matches!(pair.0, Value::Flag(_)))) { return false; }
+        let Some(routine) = parts.first().map(Value::settled) else { return false };
+        matches!(routine, Value::Intrinsic(..) | Value::Member(..) | Value::TextCall { .. })
+            || matches!(routine.kind_word().as_str(), "builtin_function_or_method" | "method_descriptor" | "classmethod_descriptor")
+    }
+
     /// Whether what a callee stands for is a builtin function or method
     /// that is to be told of now.
     fn native_stands(&self, stands: &Value) -> bool {
@@ -8364,9 +8375,16 @@ impl<'a> Machine<'a> {
         if let Some(answer) = self.text_called(&stands, args, frame) { return answer; }
         if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
             let mut values=self.value_list(args,frame)?;
+            let hide = self.spread_hides_c_call(&stands, &values);
             if matches!(&stands, Value::Wrapped(tag, _) if *tag != 132) {
                 let raw = self.spreads_carry_foreign_keys(&values) && self.wrapper_takes_raw_keys(&stands);
                 if !raw { values = self.opened_arguments(values)?; }
+            }
+            if hide {
+                let already = self.natives_told.replace(true);
+                let answer = self.apply_class_member(stands, values);
+                self.natives_told.set(already);
+                return answer;
             }
             return self.apply_class_member(stands,values);
         }
@@ -12494,9 +12512,16 @@ impl<'a> Machine<'a> {
                 if let Some(answer) = self.text_called(&stands, args, frame) { return Ok(Next::Value(answer?)); }
                 if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
                     let mut given=self.value_list(args,frame)?;
+                    let hide = self.spread_hides_c_call(&stands, &given);
                     if matches!(&stands, Value::Wrapped(tag, _) if *tag != 132) {
                         let raw = self.spreads_carry_foreign_keys(&given) && self.wrapper_takes_raw_keys(&stands);
                         if !raw { given = self.opened_arguments(given)?; }
+                    }
+                    if hide {
+                        let already = self.natives_told.replace(true);
+                        let answer = self.apply_class_member(stands, given);
+                        self.natives_told.set(already);
+                        return Ok(Next::Value(answer?));
                     }
                     return Ok(Next::Value(self.apply_class_member(stands,given)?));
                 }
