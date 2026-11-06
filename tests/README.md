@@ -1156,3 +1156,15 @@ written from the format description (`native/zlib/bz2.rs`, reached through
 |---|---|
 | `bz2.py` | `368b9ee55f0b6dbfc81b15e1a17c51cccddb009389eae8e9a7acf2402ca4109a` |
 | `test_bz2.py` | `f25711fabc69655cc4d4380f0e37aaf020538d6a01734b47b90a7e1add3aab0b` |
+
+## Annotationlib reference test
+
+| Directory | Source | Release / tag | Commit / release date | License |
+|---|---|---|---|---|
+| `python-3.14.8/test_annotationlib/` | `Lib/test/test_annotationlib.py`, copied byte for byte as the package's `__init__.py` (SHA-256 `ce99ad6407e4c70d289197b90590dc848696352e36b28555812225a80939b7d0`); its `__main__.py` is the suite's own package runner, not a CPython file | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/` | `Lib/test/test_inspect/{__init__,inspect_stock_annotations,inspect_stringized_annotations,inspect_stringized_annotations_2,inspect_stringized_annotations_pep695}.py`, copied byte for byte: the support modules `test_annotationlib` imports (`9b2cce72fa8c7a7e688a79d55e15ea4914078c81058b0289ceb80cd5b69821c9`, `0c9c665429a34dc1ec6832ff33d62ed05798ce0953dd681481b6330eb84a3c62`, `3100c0f9c80ee313ba939ba7870a6da629f55b3b6afc2ba2ba952706cb2bd934`, `e9ea40815a00612f56b6534c812c10766ed9ba2fc497219737d1577ecc1ccbbb`, `ebc8b2025fb8c53022db62cdb5bf37d6ad00cb641c5a1824aed3dc346b777258`); `fix/stdlib-inspect` owns the rest of the package | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+
+`Lib/test/test_annotationlib.py` is a flat module upstream and carries no
+`unittest.main()` of its own, so a plain file run executes nothing. The suite
+registers it as an executable test package, the arrangement `test_dataclasses`
+and `test_module` already use; the test body itself is unchanged.

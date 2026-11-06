@@ -10,7 +10,7 @@ class Interpolation:
     def __class_getitem__(cls, item):
         import types
         return types.GenericAlias(cls, item)
-    def __init__(self, value, expression, conversion=None, format_spec=''):
+    def __init__(self, value, expression='', conversion=None, format_spec=''):
         if not isinstance(expression, str) or not isinstance(format_spec, str):
             raise TypeError('expression and format_spec must be strings')
         if conversion not in (None, 'a', 'r', 's'):
