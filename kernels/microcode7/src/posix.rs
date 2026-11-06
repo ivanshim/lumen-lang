@@ -319,13 +319,22 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                 let capacity = int(1)?;
                 if capacity < 0 { Err(libc::EINVAL) } else {
                     let mut content = vec![0; capacity as usize];
-                    let used = libc::read(int(0)? as _, content.as_mut_ptr().cast(), content.len());
-                    if used == -1 { Err(errno()) } else { content.truncate(used as usize); Ok(octets(content)) }
+                    loop {
+                        let used = libc::read(int(0)? as _, content.as_mut_ptr().cast(), content.len());
+                        if used >= 0 {content.truncate(used as usize); break Ok(octets(content));}
+                        let code = errno();
+                        if code != libc::EINTR {break Err(code);}
+                        interrupted()?;
+                    }
                 }
             }
             "write" => {
                 let content = data_of(&params[1])?;
-                checked(libc::write(int(0)? as _, content.as_ptr().cast(), content.len()) as i64)
+                loop {
+                    let wrote = libc::write(int(0)? as _, content.as_ptr().cast(), content.len());
+                    if wrote >= 0 {break Ok(Value::Small(wrote as i64));}
+                    match errno() {libc::EINTR => interrupted()?, code => break Err(code)}
+                }
             }
             "close" => checked(libc::close(int(0)? as _) as i64),
             "lseek" => checked(libc::lseek(int(0)? as _, int(1)?, int(2)? as _)),
@@ -780,6 +789,84 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                 })
             }
             "socket_hostbyname" => Ok(forward_record(&params[0])?),
+            "epoll_create" => checked(i64::from(libc::epoll_create1(libc::EPOLL_CLOEXEC))),
+            "epoll_ctl" => {
+                let descriptor = int(2)? as i32;
+                let mut interest: libc::epoll_event = std::mem::zeroed();
+                interest.u64 = descriptor as u64;
+                interest.events = int(3)? as u32;
+                checked(i64::from(libc::epoll_ctl(int(0)? as _, int(1)? as _, descriptor, &mut interest)))
+            }
+            // Hold an absolute end time while signal handlers run between attempts.
+            "epoll_wait" | "poll_wait" => {
+                let duration = int(1)?;
+                let end = (duration >= 0).then(|| std::time::Instant::now() + std::time::Duration::from_millis(duration as u64));
+                let mut wait_ms = duration as i32;
+                let queue = operation.as_ref() == "epoll_wait";
+                let mut registrations: Vec<libc::pollfd> = Vec::new();
+                if let (false, Value::Vector(rows)) = (queue, params[0].settled()) {
+                    for item in rows.iter() {
+                        if let Value::Tuple(parts) = item.settled() {
+                            registrations.push(libc::pollfd {fd: parts[0].as_big()?.to_i32().ok_or("OverflowError: invalid fd")?,
+                                events: parts[1].as_big()?.to_u16().ok_or("OverflowError: invalid event mask")? as i16, revents: 0});
+                        }
+                    }
+                }
+                let mut notifications = Vec::<std::mem::MaybeUninit<libc::epoll_event>>::new();
+                if queue {
+                    let requested = int(2)? as usize;
+                    if notifications.try_reserve_exact(requested).is_err() {return Err("MemoryError: ".into());}
+                    // Empty slots stay unread until epoll_wait fills the returned prefix.
+                    notifications.set_len(requested);
+                }
+                loop {
+                    let count = match queue {
+                        false => libc::poll(registrations.as_mut_ptr(), registrations.len() as _, wait_ms),
+                        true => libc::epoll_wait(int(0)? as _, notifications.as_mut_ptr().cast(), notifications.len() as _, wait_ms),
+                    };
+                    if count != -1 {
+                        let mut answer = Vec::new();
+                        if queue {
+                            for initialized in &notifications[..count as usize] {let event = initialized.assume_init_read(); answer.push(Value::tuple(vec![Value::Small(event.u64 as i64), Value::Small(i64::from(event.events))]));}
+                        } else {
+                            for entry in &registrations {if entry.revents != 0 {answer.push(Value::tuple(vec![Value::Small(i64::from(entry.fd)), Value::Small(i64::from(entry.revents as u16))]));}}
+                        }
+                        break Ok(Value::Vector(crate::tuples::Sequence::plain(answer)));
+                    }
+                    let cause = errno();
+                    if cause != libc::EINTR {break Err(cause);}
+                    interrupted()?;
+                    if let Some(end) = end {
+                        let remaining = end.saturating_duration_since(std::time::Instant::now());
+                        if remaining.is_zero() {break Ok(Value::Vector(crate::tuples::Sequence::plain(Vec::new())));}
+                        wait_ms = remaining.as_millis().saturating_add(u128::from(remaining.subsec_nanos() % 1_000_000 != 0)).min(i32::MAX as u128) as i32;
+                    }
+                }
+            }
+            "getitimer" | "setitimer" => {
+                unsafe extern "C" {
+                    fn getitimer(kind: libc::c_int, result: *mut libc::itimerval) -> libc::c_int;
+                    fn setitimer(kind: libc::c_int, settings: *const libc::itimerval, result: *mut libc::itimerval) -> libc::c_int;
+                }
+                let kind = int(0)? as libc::c_int;
+                let mut settings: libc::itimerval = std::mem::zeroed();
+                let mut result: libc::itimerval = std::mem::zeroed();
+                let rc = match operation.as_ref() {
+                    "getitimer" => getitimer(kind, &mut result),
+                    _ => {
+                        settings.it_value.tv_usec = int(1)? % 1_000_000;
+                        settings.it_value.tv_sec = int(1)? / 1_000_000;
+                        settings.it_interval.tv_usec = int(2)? % 1_000_000;
+                        settings.it_interval.tv_sec = int(2)? / 1_000_000;
+                        setitimer(kind, &settings, &mut result)
+                    }
+                };
+                checked(i64::from(rc)).map(|_| {
+                    let delay = result.it_value.tv_sec * 1_000_000 + result.it_value.tv_usec;
+                    let period = result.it_interval.tv_sec * 1_000_000 + result.it_interval.tv_usec;
+                    Value::tuple(vec![Value::Small(delay), Value::Small(period)])
+                })
+            }
             "select" => {
                 let descriptor_row = |at: usize| -> Result<Vec<i32>, String> {
                     match params[at].settled() {

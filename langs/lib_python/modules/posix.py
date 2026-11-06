@@ -1055,6 +1055,13 @@ class _BuiltinFunction(staticmethod):
         return '<built-in function ' + self.__name__ + '>'
 
 
+
+
+# Reap any child using the same interruptible wait machinery.
+def wait():
+    return waitpid(-1, 0)
+
+
 for _name, _entry in list(globals().items()):
     if not _name.startswith('_') and callable(_entry) and not isinstance(_entry, type):
         globals()[_name] = _BuiltinFunction(_entry)

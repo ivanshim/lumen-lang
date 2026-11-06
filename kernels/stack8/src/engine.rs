@@ -87,9 +87,20 @@ pub(crate) static SIGNALS_PENDING: std::sync::atomic::AtomicU64 = std::sync::ato
 /// signals up between statements runs.
 static HOST_WATCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+// Keep a kernel thread number rather than a pointer to a pthread descriptor.
+static SIGNAL_OWNER: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+// Forward signals without dereferencing a thread that may already have exited.
 extern "C" fn signal_arrived(number: i32) {
-    if (1..=64).contains(&number) {
-        SIGNALS_PENDING.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+    unsafe {
+        let saved = *libc::__errno_location();
+        let owner = SIGNAL_OWNER.load(std::sync::atomic::Ordering::Relaxed);
+        let here = libc::syscall(libc::SYS_gettid) as i32;
+        if owner > 0 && owner != here {
+            libc::syscall(libc::SYS_tgkill, libc::getpid() as libc::c_long, owner as libc::c_long, number as libc::c_long);
+        } else if (1..=64).contains(&number) {
+            SIGNALS_PENDING.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+        }
+        *libc::__errno_location() = saved;
     }
 }
 
@@ -97,9 +108,15 @@ extern "C" fn signal_arrived(number: i32) {
 /// left pending; the run takes it up itself where a raised value is
 /// free to rise and be caught.
 fn watch_host_signals() {
+    SIGNAL_OWNER.store(unsafe {libc::syscall(libc::SYS_gettid)} as i32, std::sync::atomic::Ordering::Relaxed);
     if HOST_WATCHING.swap(true, std::sync::atomic::Ordering::Relaxed) { return; }
-    unsafe extern "C" { fn signal(number: i32, handler: extern "C" fn(i32)) -> usize; }
-    unsafe { signal(2, signal_arrived) };
+    // A default interrupt must break a blocked syscall rather than restart it.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = signal_arrived as *const () as usize;
+        libc::sigemptyset(&mut action.sa_mask);
+        libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
+    }
 }
 
 thread_local! {
@@ -108,19 +125,6 @@ thread_local! {
     static TUPLE_HASHES: RefCell<HashMap<usize, (std::rc::Weak<Vec<Value>>, Value)>> = RefCell::new(HashMap::new());
 }
 
-
-/// Cancel and join a timer before its interpreter thread can disappear.
-struct HostAlarm {
-    deadline: std::time::Instant,
-    cancel: std::sync::mpsc::Sender<()>,
-    worker: Option<std::thread::JoinHandle<()>>,
-}
-impl Drop for HostAlarm {
-    fn drop(&mut self) {
-        let _ = self.cancel.send(());
-        if let Some(worker) = self.worker.take() { let _ = worker.join(); }
-    }
-}
 
 pub struct Engine<'a> {
     native_protocol_positions: HashMap<String, usize, crate::value::FxBuildHasher>,
@@ -428,7 +432,6 @@ pub struct Engine<'a> {
     /// one keeps its own way. Only a language taking signals up between
     /// statements ever writes here.
     signal_handlers: HashMap<i64, Value>,
-    alarm: Option<HostAlarm>,
     /// The member last found absent, and the object it was sought on,
     /// for the attribute fault that tells of it.
     absent_member: Option<(String, Value)>,
@@ -731,6 +734,24 @@ enum Chooser {
 }
 
 include!("native_code.rs");
+
+// Release Python signal dispositions before the interpreter thread disappears.
+impl Drop for Engine<'_> {
+    fn drop(&mut self) {
+        if !self.lang.signals_between_statements {return;}
+        for (&number, handler) in &self.signal_handlers {
+            if !matches!(handler.contents(), Value::Small(0 | 1)) {
+                unsafe {libc::signal(number as i32, libc::SIG_DFL);}
+            }
+        }
+        if !self.signal_handlers.contains_key(&i64::from(libc::SIGINT)) {
+            unsafe {libc::signal(libc::SIGINT, libc::SIG_DFL);}
+        }
+        SIGNAL_OWNER.store(0, std::sync::atomic::Ordering::Relaxed);
+        HOST_WATCHING.store(false, std::sync::atomic::Ordering::Relaxed);
+        SIGNALS_PENDING.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+}
 
 impl<'a> Engine<'a> {
 
@@ -1889,7 +1910,7 @@ impl<'a> Engine<'a> {
             class_children: RefCell::new(HashMap::new()),
             read_already: RefCell::new(std::collections::HashSet::new()),
             carried: None,
-            signal_handlers: HashMap::new(), alarm: None,
+            signal_handlers: HashMap::new(),
             absent_member: None,
             absent_key: RefCell::new(None),
             complainer: RefCell::new(None),
@@ -27396,7 +27417,12 @@ impl<'a> Engine<'a> {
                     let mut bytes = Vec::new();
                     while wanted < 0 || (bytes.len() as i64) < wanted {
                         let mut byte = [0u8];
-                        match input.read(&mut byte) { Ok(0) => break, Ok(_) => (), Err(_) => return Err(self.lang.stream_failed[0].clone()) }
+                        match input.read(&mut byte) {
+                            Ok(0) => break,
+                            Ok(_) => (),
+                            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {self.signal_checkpoint()?; continue;}
+                            Err(_) => return Err(self.lang.stream_failed[0].clone()),
+                        }
                         bytes.push(byte[0]);
                         if by_line && byte[0] == b'\n' { break; }
                     }
@@ -27415,6 +27441,7 @@ impl<'a> Engine<'a> {
                     match source.read(&mut byte) {
                         Ok(0) => break,
                         Ok(_) => pending.push(byte[0]),
+                        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {self.signal_checkpoint()?; continue;}
                         Err(_) => return Err(self.lang.stream_failed[0].clone()),
                     }
                     let Ok(spelled) = std::str::from_utf8(&pending) else {
@@ -28117,6 +28144,7 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 let millionths = as_index(&args[0])?;
                 let mut requested = libc::timespec { tv_sec: (millionths / 1_000_000) as libc::time_t, tv_nsec: ((millionths % 1_000_000) * 1000) as libc::c_long };
+                let end = std::time::Instant::now() + std::time::Duration::from_micros(millionths as u64);
                 self.signal_checkpoint()?;
                 loop {
                     let mut rest = libc::timespec { tv_sec: 0, tv_nsec: 0 };
@@ -28125,7 +28153,10 @@ impl<'a> Engine<'a> {
                     self.signal_checkpoint()?;
                     if code == 0 { break; }
                     if error.raw_os_error() != Some(libc::EINTR) { return Err(format!("OSError: {error}")); }
-                    requested = rest;
+                    let left = end.saturating_duration_since(std::time::Instant::now());
+                    if left.is_zero() {break;}
+                    requested.tv_sec = left.as_secs() as libc::time_t;
+                    requested.tv_nsec = left.subsec_nanos() as libc::c_long;
                 }
                 Value::Null
             },
@@ -28330,25 +28361,7 @@ impl<'a> Engine<'a> {
                     3 => {
                         arity(2)?;
                         let seconds = args[1].as_big()?.to_i32().ok_or("OverflowError: Python int too large to convert to C int")? as u32;
-                        let previous = self.alarm.take();
-                        let remaining = previous.as_ref().map_or(0, |timer| {
-                            let duration = timer.deadline.saturating_duration_since(std::time::Instant::now());
-                            duration.as_secs() + u64::from(duration.subsec_nanos() != 0)
-                        });
-                        drop(previous);
-                        if seconds != 0 {
-                            let delay = std::time::Duration::from_secs(u64::from(seconds));
-                            let deadline = std::time::Instant::now() + delay;
-                            let target = unsafe { libc::pthread_self() };
-                            let (cancel, wait) = std::sync::mpsc::channel();
-                            let worker = std::thread::Builder::new().stack_size(131072).spawn(move || {
-                                if matches!(wait.recv_timeout(delay), Err(std::sync::mpsc::RecvTimeoutError::Timeout)) {
-                                    unsafe { libc::pthread_kill(target, libc::SIGALRM); }
-                                }
-                            }).map_err(|error| format!("OSError: {error}"))?;
-                            self.alarm = Some(HostAlarm { deadline, cancel, worker: Some(worker) });
-                        }
-                        Value::Small(remaining as i64)
+                        Value::Small(unsafe {libc::alarm(seconds)} as i64)
                     }
                     4 => {
                         arity(1)?;
@@ -28664,6 +28677,20 @@ impl<'a> Engine<'a> {
                             }
                             None => Value::Flag(false),
                         }
+                    }
+                    8 if args.len() == 3 => {
+                        arity(3)?;
+                        use std::os::fd::AsRawFd;
+                        let id = as_index(&args[1])? as i64;
+                        let channel = as_index(&args[2])?;
+                        let kept = self.beside.borrow();
+                        let process = kept.get(&id).ok_or("OSError: Bad file descriptor")?;
+                        let fd = match channel {
+                            0 => process.out_pipe.as_ref().map(AsRawFd::as_raw_fd),
+                            1 => process.err_pipe.as_ref().map(AsRawFd::as_raw_fd),
+                            _ => process.in_pipe.as_ref().map(AsRawFd::as_raw_fd),
+                        }.ok_or("OSError: Bad file descriptor")?;
+                        Value::Small(fd as i64)
                     }
                     // Drain both captures before a caller writes input or waits for exit.
                     8 => {

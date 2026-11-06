@@ -175,3 +175,45 @@ def alarm(seconds):
 
 def pause():
     return __signal(4)
+
+
+ITIMER_REAL, ITIMER_VIRTUAL, ITIMER_PROF = 0, 1, 2
+
+
+class ItimerError(OSError):
+    pass
+
+
+# Convert timer seconds into positive microseconds, rounding away from zero.
+def _timer_us(value):
+    import math
+    import operator
+    if not isinstance(value, float):
+        value = operator.index(value)
+    if math.isnan(value):
+        raise ValueError('Invalid value NaN (not a number)')
+    if value < 0:
+        raise ItimerError(22, 'Invalid argument')
+    if value >= 9223372036854:
+        raise OverflowError('timestamp out of range for platform time_t')
+    return math.ceil(value * 1000000)
+
+
+# Set one of the host's real, virtual, or profiling interval timers.
+def setitimer(which, seconds, interval=0.0, /):
+    from posix import _call, _cint
+    try:
+        previous = _call('setitimer', _cint(which), _timer_us(seconds), _timer_us(interval))
+    except OSError as error:
+        raise ItimerError(*error.args)
+    return (previous[0] / 1000000, previous[1] / 1000000)
+
+
+# Return the remaining delay and repetition interval in seconds.
+def getitimer(which, /):
+    from posix import _call, _cint
+    try:
+        current = _call('getitimer', _cint(which))
+    except OSError as error:
+        raise ItimerError(*error.args)
+    return (current[0] / 1000000, current[1] / 1000000)
