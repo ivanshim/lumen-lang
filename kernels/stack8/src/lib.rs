@@ -37,6 +37,7 @@ mod crypto;
 mod context;
 pub mod capsule;
 pub mod datetime_api;
+mod thread_state;
 pub mod tuples;
 
 use lang::Lang;

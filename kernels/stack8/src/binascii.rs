@@ -165,14 +165,14 @@ impl Engine<'_> {
                     match self.class_get(held.clone(), "c_contiguous", false) {
                         Ok(value) if !self.truth(&value) => return Err("BufferError: memoryview: underlying buffer is not C-contiguous".into()),
                         Ok(_) => {},
-                        Err(fault) => { self.carried = Some(fault); return Err(String::new()); }
+                        Err(fault) => { self.thread.carried = Some(fault); return Err(String::new()); }
                     }
                 }
                 let method = self.class_value(&actual, method_name).ok_or_else(|| "TypeError: buffer has no byte export".to_string())?;
                 match self.class_apply(method, vec![held.clone()]) {
                     Ok(Value::Bytes(row, ..)) => return Ok(row.borrow().clone()),
                     Ok(_) => return Err("TypeError: buffer export is not bytes".into()),
-                    Err(fault) => { self.carried = Some(fault); return Err(String::new()); }
+                    Err(fault) => { self.thread.carried = Some(fault); return Err(String::new()); }
                 }
             }
         }

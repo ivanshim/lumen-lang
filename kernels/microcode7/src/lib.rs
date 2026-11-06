@@ -39,6 +39,7 @@ mod crypto;
 mod context;
 pub mod capsule;
 pub mod datetime_api;
+mod activation;
 pub mod tuples;
 
 use std::cell::RefCell;
