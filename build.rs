@@ -63,6 +63,15 @@ fn prepared_libraries(versions: &serde_json::Map<String, Value>) {
                 if let Some((key, proof, encoded)) = prepared {
                     let packed = lumen_lzma::encode(&proof, 6, 4).expect("bundled token proof compression");
                     let octets = packed.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
+                    // Scope maps and membership sets have no ordering; keep their
+                    // serialized bytes stable without reordering lexical name vectors.
+                    let mut ordered: Value = serde_json::from_str(&encoded).expect("bundled scope metadata");
+                    let sets: &[&str] = if kernel == "stack8" { &["bound", "exports"] } else { &["natives"] };
+                    for field in sets {
+                        ordered[*field].as_array_mut().expect("scope membership set")
+                            .sort_by(|a, b| a.as_str().unwrap().cmp(b.as_str().unwrap()));
+                    }
+                    let encoded = ordered.to_string();
                     let metadata = lumen_lzma::encode(encoded.as_bytes(), 6, 4).expect("bundled scope compression");
                     let metadata_bytes = metadata.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
                     records.push_str(&format!("({key}, b\"{octets}\", b\"{metadata_bytes}\"),\n"));
