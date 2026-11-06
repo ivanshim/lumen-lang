@@ -3013,6 +3013,14 @@ class _Parser:
                 # A comment between decorators is its own newline token.
                 while self.toks[self.at].kind == 'newline':
                     self.pop()
+                # Blank lines and comments do not relax the decorator's indent.
+                following = self.peek()
+                if following.kind != 'end':
+                    column = self.indent_col(following)
+                    if column != self.indent_col(first):
+                        _indent('unexpected indent' if column > self.indent_col(first) else 'unexpected unindent')
+                    if self.alt_indent_col(following) != self.alt_indent_col(first):
+                        _tab('inconsistent use of tabs and spaces in indentation')
             node = self.parse_stmt()
             if not isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef)):
                 _syntax('invalid syntax')
