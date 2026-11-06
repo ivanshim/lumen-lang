@@ -38,6 +38,7 @@ mod context;
 pub mod capsule;
 pub mod datetime_api;
 mod thread_state;
+mod gil;
 pub mod tuples;
 
 use lang::Lang;
@@ -149,6 +150,7 @@ fn settle_brief(lang: &mut Lang, request: &[(String, String, String, bool)]) {
 
 fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let _tuple_scope = tuples::Scope::enter(lang.builtins.values().any(|b| *b == code::Builtin::Tuple));
+    let _lock = gil::Gil::new().acquire().map_err(|why| format!("interpreter lock refused: {why:?}"))?;
     go_inner(lang, source, program_args, request).map_err(|e| {
         if !lang.exceptions.is_empty() {
             if let Some(told) = e.strip_prefix('\0') { return told.to_string(); }

@@ -40,6 +40,7 @@ mod context;
 pub mod capsule;
 pub mod datetime_api;
 mod activation;
+mod turn;
 pub mod tuples;
 
 use std::cell::RefCell;
@@ -312,6 +313,7 @@ fn import_rejoined(text: &str, table: &Table, added: u32) -> Option<String> {
 
 fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let _tuple_scope = tuples::Scope::enter(table.has_any("ext.builtin.tuple"));
+    let _turn = turn::Turn::fresh().take().map_err(|why| format!("interpreter turn refused: {why:?}"))?;
     // A file reader ends a line at a CRLF pair or a lone CR before
     // passing its contents on.
     let file_text = if source.contains('\r') && table.syntax_exceptions {
