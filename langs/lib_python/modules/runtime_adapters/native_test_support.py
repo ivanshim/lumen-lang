@@ -1884,6 +1884,17 @@ def patch(test_instance, object_to_patch, attr_name, new_value):
     # actually override the attribute
     setattr(object_to_patch, attr_name, new_value)
 
+
+# From CPython v3.14.8 (8e6e75d9102e), Lib/test/support/__init__.py; PSF License.
+@contextlib.contextmanager
+def patch_list(orig):
+    """Like unittest.mock.patch.dict, but for lists."""
+    try:
+        saved = orig[:]
+        yield
+    finally:
+        orig[:] = saved
+
 _buggy_ucrt = None
 def skip_if_buggy_ucrt_strfptime(test):
     """

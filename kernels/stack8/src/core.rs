@@ -417,7 +417,7 @@ impl Value {
             // kind's word and the member's name -- so two readings of the
             // same member, and of the same member on the same kind, hash
             // alike, and one may be a key in a map or a member of a set.
-            Value::Adapter(bound) if bound.0 == 3 && bound.1.len() == 2 => {
+            Value::Adapter(bound) if matches!(bound.0, 3 | 131) && bound.1.len() == 2 => {
                 let owner = &bound.1[1];
                 let identity = match owner {
                     Value::Object(object) => (crate::value::Keep::as_ptr(object) as usize >> 4) as i64,

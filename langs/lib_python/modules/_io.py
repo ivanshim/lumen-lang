@@ -1801,6 +1801,9 @@ def _buffered_impl(kind):
         base = getattr(_pyio, kind)
         class _Impl(base):
             raw = None
+            # Finalization also enters through the native facade.
+            def __del__(self):
+                base.__del__(self)
             def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
                 base.__init__(self, raw, buffer_size)
                 self.raw = raw

@@ -444,7 +444,7 @@ struct Alongside {
     in_pipe: Option<std::process::ChildStdin>,
     out_pipe: Option<std::process::ChildStdout>,
     err_pipe: Option<std::process::ChildStderr>,
-    collecting: [Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>>; 2],
+    collecting: [Option<(std::thread::JoinHandle<std::io::Result<()>>, std::sync::Arc<std::sync::Mutex<Vec<u8>>>)>; 2],
 }
 
 /// Rules fixed by the table for the entire execution. Reading them once
@@ -600,7 +600,13 @@ pub struct Machine<'a> {
     symbolic_annotation: Option<(Rc<Routine>, Option<Rc<Blueprint>>, Vec<(Weak<Thing>, String)>)>,
     agen_callbacks: (Value, Value),
     tracing_function: Value,
+    /// The routine told of monitoring events (sys.monitoring), and whether it wants every step.
+    monitor_function: Value,
+    monitor_steps: bool,
     tracing_busy: bool,
+    /// Raised once a program has asked a frame for per-step events; the evaluator
+    /// looks for them only after that.
+    step_events: bool,
     omitted_trace_fault: Option<(Weak<Thing>, Weak<Thing>)>,
     gathering_locals: Option<(usize, Vec<String>, Rc<Env>)>,
     extent: Option<(u32, u32, u32, u32)>,
@@ -901,6 +907,7 @@ pub struct Machine<'a> {
     /// one in its way, and whether it is being told one just now.
     watcher: RefCell<Option<Value>>,
     watching_now: Cell<bool>,
+    for_stepping: Cell<bool>,
     /// Whether a builtin already stands told of, so that its own inner
     /// workings are not told again; the program's routines start afresh.
     natives_told: Cell<bool>,
@@ -2358,7 +2365,10 @@ impl<'a> Machine<'a> {
             agen_callbacks: (Value::Nil, Value::Nil),
             shutting_down: false,
             tracing_function: Value::Nil,
+            monitor_function: Value::Nil,
+            monitor_steps: false,
             tracing_busy: false,
+            step_events: false,
             omitted_trace_fault: None,
             gathering_locals: None,
             extent: None,
@@ -2416,6 +2426,7 @@ impl<'a> Machine<'a> {
             untaken: RefCell::new(None),
             watcher: RefCell::new(None),
             watching_now: Cell::new(false),
+            for_stepping: Cell::new(false),
             natives_told: Cell::new(false),
             written_out: std::cell::Cell::new(false),
             unheard: RefCell::new(Vec::new()),
@@ -2671,7 +2682,10 @@ impl<'a> Machine<'a> {
             Prim::MoreYet => {
                 n(2)?;
                 if let Value::Generator(state) = &v[0] {
-                    let item = self.resume(state, Value::Nil)?;
+                    self.for_stepping.set(true);
+                    let item = self.resume(state, Value::Nil);
+                    self.for_stepping.set(false);
+                    let item = item?;
                     let more = item.is_some();
                     state.borrow_mut().ready = item;
                     return Ok(Value::Flag(more));
@@ -3167,6 +3181,7 @@ impl<'a> Machine<'a> {
             }
         }
         self.tracing_function = Value::Nil;
+        self.monitor_function = Value::Nil;
         if self.table.has_any("ext.system.warnings") {
             // A completed program cannot remain the caller of finalization.
             self.active_trace.take(); self.extent.take();
@@ -3271,9 +3286,10 @@ impl<'a> Machine<'a> {
     /// raises is written on the error channel and let go, since no
     /// clause of the program stands where it could be taken.
     fn attend_to_gone(&mut self) {
+        let suspended_error = self.got_away.take();
         loop {
             let (farewells, walks, notices) = crate::ghost::gather();
-            if farewells.is_empty() && walks.is_empty() && notices.is_empty() { return; }
+            if farewells.is_empty() && walks.is_empty() && notices.is_empty() { break; }
             for (notify, bearer) in notices {
                 self.call_unheard(notify, vec![bearer], "callback");
             }
@@ -3287,6 +3303,8 @@ impl<'a> Machine<'a> {
                 }
             }
         }
+        // Finalizers report their own failures without claiming the caller's parked escape.
+        self.got_away = suspended_error;
     }
 
     fn warn_unstarted(&mut self, walk: &Rc<RefCell<Suspension>>) -> Res<Value> {
@@ -3573,7 +3591,7 @@ impl<'a> Machine<'a> {
         let bookkeeping = self.routine_members.iter().map(|(_, holder)| Knot::Held(Value::Thing(holder.clone())))
             .chain(books).chain(crate::ghost::anchored_values()).chain(original).collect();
         let live = if !whole { Vec::new() } else { self.imported.values().chain(self.memo.values()).chain(self.fault_kinds.values())
-            .chain(&self.holding_fault).chain(std::iter::once(&self.tracing_function)).cloned().map(Knot::Held)
+            .chain(&self.holding_fault).chain([&self.tracing_function, &self.monitor_function]).cloned().map(Knot::Held)
             .chain(std::iter::once(Knot::Frame(self.outermost.clone())))
             .chain(self.world_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
             .chain(self.supplied_books.iter().flatten().cloned().map(|book| Knot::Held(Value::Shared(book))))
@@ -4490,12 +4508,24 @@ impl<'a> Machine<'a> {
     /// A call made while the routine is being told is not told again;
     /// a routine that fails is dropped and its failure goes on up.
     fn tell_watcher(&mut self, event: &str, standing: &Option<Hold>, given: Value) -> Result<(), Escape> {
+        if !matches!(self.monitor_function, Value::Nil) && !self.tracing_busy && !self.watching_now.get() && !self.inside_library_native() {
+            if let Some(frame) = standing {
+                let named = match event { "c_call" => "call", "c_return" => "c_return", "c_exception" => "c_raise", _ => "" };
+                if !named.is_empty() { self.tell_monitor(named, frame, Value::tuple(vec![given.clone()]))?; }
+            }
+        }
+        // Monitoring sees constructors too, but C profiling is reserved for functions and methods.
+        if event.starts_with("c_") && matches!(&given, Value::Intrinsic(operation, _) if Self::names_a_kind(operation)) { return Ok(()); }
         if self.watching_now.get() { return Ok(()); }
         let Some(frame) = standing else { return Ok(()) };
         let Some(put) = self.watcher.borrow().clone() else { return Ok(()) };
         let Value::Bound(listener, env) = self.what_it_spells(put) else { return Ok(()) };
         self.watching_now.set(true);
+        let aside = crate::ghost::walks_aside();
         let told = self.invoke(listener, env, vec![Value::Thing(frame.clone()), Value::text(event), given]);
+        // What the routine let go of is seen to while it is still being told of, unheard.
+        if crate::ghost::stirred(&self.ghost_tap) { self.attend_to_gone(); }
+        crate::ghost::walks_back(aside);
         self.watching_now.set(false);
         if told.is_err() { *self.watcher.borrow_mut() = None; }
         told.map(|_| ())
@@ -4504,7 +4534,7 @@ impl<'a> Machine<'a> {
     /// Whether a primitive named by a word of the language is a builtin
     /// function or method that is to be told of now.
     fn native_spoken(&self, op: Prim, name: &str) -> bool {
-        self.watcher.borrow().is_some() && !self.watching_now.get() && !self.natives_told.get()
+        (self.watcher.borrow().is_some() || !matches!(self.monitor_function, Value::Nil)) && !self.watching_now.get() && !self.natives_told.get()
             && name.starts_with(|c: char| c.is_alphabetic()) && self.table.prims.get(name) == Some(&op)
     }
 
@@ -5852,6 +5882,7 @@ impl<'a> Machine<'a> {
             } else { self.generator_words("unstarted") };
             return Err(words.into());
         }
+        let first_step = !state.begun;
         state.begun = true;
         if state.ready.is_some() { return Ok(state.ready.take()); }
         // A walk taken backwards over a map reads its places afresh each
@@ -5913,6 +5944,7 @@ impl<'a> Machine<'a> {
             state.ended = next.is_none();
             return Ok(next);
         }
+        let stepped_by_loop = self.for_stepping.replace(false);
         let row = self.row;
         // The body picks up where it left off, so while it runs the run
         // stands in the routine it was written in and not in whichever
@@ -5943,14 +5975,17 @@ impl<'a> Machine<'a> {
             if let Value::Small(line) = held[0].1 { self.row = line as u32; }
         }
         self.extent = state.resume_extent;
-        let outcome = if matches!(self.tracing_function, Value::Nil) { self.unfold(&mut state, sent, hurled) } else { match self.emit_trace("call", Value::Nil) {
+        let listened = self.watcher.borrow().is_some();
+        let listening_frame = self.active_trace.clone();
+        let opened = if listened { self.tell_watcher("call", &listening_frame, Value::Nil) } else { Ok(()) };
+        let outcome = if let Err(refused) = opened { Err(refused) } else if matches!(self.tracing_function, Value::Nil) { self.unfold(&mut state, sent, hurled) } else { match self.emit_trace_named("call", if hurled.is_some() { "throw" } else if first_step { "start" } else { "resume" }, Value::Nil, None) {
             Ok(()) => self.unfold(&mut state, sent, hurled),
             Err(callback) => Err(callback),
         } };
         let outcome = self.traced_result(outcome);
         let outcome = if matches!(self.tracing_function, Value::Nil) { outcome } else {
             let returned = match &outcome { Ok(Some(yielded)) => yielded.clone(), Ok(None) => state.result.clone(), Err(_) => Value::Nil };
-            match self.emit_trace("return", returned) {
+            match self.emit_trace_named("return", if matches!(outcome, Ok(Some(_))) { "yield" } else { "return" }, returned, None) {
                 Ok(()) => outcome,
                 Err(Escape::Thrown(fault)) if matches!(outcome, Ok(Some(_))) => {
                     let unwound = self.unfold(&mut state, Value::Nil, Some(fault));
@@ -5961,6 +5996,13 @@ impl<'a> Machine<'a> {
                     Err(failed)
                 }
         } };
+        let outcome = if !listened { outcome } else {
+            let handed = match &outcome { Ok(Some(yielded)) => yielded.clone(), Ok(None) => state.result.clone(), Err(_) => Value::Nil };
+            match (self.tell_watcher("return", &listening_frame, handed), outcome) {
+                (Err(refused), Ok(kept)) => { let _ = kept; Err(refused) }
+                (_, original) => original,
+            }
+        };
         state.resume_extent = self.extent;
         self.extent = caller_extent;
         self.update_watched_locals();
@@ -5991,6 +6033,13 @@ impl<'a> Machine<'a> {
             Err(Escape::Error(said)) if self.rules.has_any_ext_stmt_yield_escaped && self.table.strings("ext.builtin.core.exhausted").first().map(String::as_str) == Some(said.as_str()) => { let original = self.as_raised(&said).unwrap_or(Value::Nil); Err(self.stop_got_out(original)) },
             other => other,
         };
+        if stepped_by_loop && matches!(outcome, Ok(None)) && !matches!(state.result, Value::Nil) && !matches!(self.tracing_function, Value::Nil) {
+            let stop = self.rules.words_ext_stmt_class_special_stop.first().and_then(|word| self.fault_kinds.get(word.as_str())).cloned();
+            if let Some(Value::Blueprint(kind)) = stop {
+                let raised = self.make_fault(kind.clone(), vec![state.result.clone()], Value::Nil);
+                self.emit_trace_named("exception", "stop_iteration", Value::tuple(vec![Value::Blueprint(kind), raised.clone(), Value::Nil]), Some(raised))?;
+            }
+        }
         if outcome.is_err() || matches!(outcome, Ok(None)) {
             state.ended = true;
             if !Rc::ptr_eq(&state.frame, &self.outermost)
@@ -6759,8 +6808,50 @@ impl<'a> Machine<'a> {
         handle
     }
 
+    /// The built-in modules the runtime writes in its own library are native
+    /// in the reference, so a tracer is not shown the frames running them.
+    fn inside_library_native(&self) -> bool {
+        self.frames_named.last().is_some_and(|body| Self::library_native_routine(body))
+            || self.active_trace.as_ref().is_some_and(|frame| frame.holds.borrow().get(8).is_some_and(|(key, value)| key == "\0native" && matches!(value, Value::Flag(true))))
+    }
+
+    fn library_native_routine(body: &Rc<Routine>) -> bool {
+        const HIDDEN: [&str; 11] = ["sys", "builtins", "_io", "posix", "_imp", "_thread", "_weakref", "marshal", "_warnings", "_runtime_import", "_zipimport_path"];
+        let Some(path) = body.written_in.as_deref() else { return false };
+        let mut parts = path.rsplit('/');
+        let file = parts.next().unwrap_or("");
+        let folder = parts.next() == Some("modules") && parts.next() == Some("lib_python");
+        folder && file.strip_suffix(".py").is_some_and(|stem| HIDDEN.contains(&stem))
+    }
+
+    /// An expression read by eval holds no statement to announce its line,
+    /// so the tracer is told of its first line before it is worked out.
+    fn expression_line(&mut self, mode: usize) -> Result<(), Escape> {
+        if mode != 1 || self.rules.trace_words.is_empty() { return Ok(()); }
+        self.row = 1;
+        if let Some(activation) = &self.active_trace { activation.holds.borrow_mut()[0].1 = Value::Small(1); }
+        self.emit_trace("line", Value::Nil)
+    }
+
+    /// Text run by exec, eval or compile is a frame of its own to a tracer:
+    /// it hears the return once the text is done, with what it left.
+    fn leave_traced_text(&mut self, ran: Result<Value, Escape>) -> Result<Value, Escape> {
+        match ran {
+            Ok(answer) => self.emit_trace("return", answer.clone()).map(|()| answer),
+            Err(error) => self.emit_trace("return", Value::Nil).and(Err(error)),
+        }
+    }
+
     fn emit_trace(&mut self, kind: &str, value: Value) -> Result<(), Escape> {
-        if self.tracing_busy || matches!(self.tracing_function, Value::Nil) { return Ok(()); }
+        self.emit_trace_named(kind, kind, value, None)
+    }
+
+    /// Tell the program's tracer of an event, and the monitoring routine of it under
+    /// the name monitoring knows it by; `monitored` stands for the value where the
+    /// monitoring routine is given another than the tracer.
+    fn emit_trace_named(&mut self, kind: &str, named: &str, value: Value, monitored: Option<Value>) -> Result<(), Escape> {
+        if self.tracing_busy || matches!(self.tracing_function, Value::Nil) || self.inside_library_native() { return Ok(()); }
+        self.park_cursor();
         let Some(activation) = self.active_trace.clone() else { return Ok(()) };
         if kind == "line" {
             let pending = &self.holding_fault;
@@ -6769,6 +6860,12 @@ impl<'a> Machine<'a> {
         else if kind == "exception" {
             if let Value::Tuple(parts) = &value { activation.holds.borrow_mut().push(("\0traced_fault".to_owned(), parts[1].clone())); }
         }
+        if !matches!(self.monitor_function, Value::Nil) && (named != "instruction" || self.monitor_steps) {
+            self.tell_monitor(named, &activation, monitored.unwrap_or_else(|| value.clone()))?;
+        }
+        // With only monitoring on, the tracing function is a mere marker: no tracer is called.
+        if matches!(self.tracing_function, Value::Flag(_)) { return Ok(()); }
+        if kind == "opcode" && !activation.holds.borrow().iter().any(|(name, item)| name == "f_trace_opcodes" && matches!(item, Value::Flag(true))) { return Ok(()); }
         let lines_disabled = kind == "line" && activation.holds.borrow().iter().any(|(name, item)| name == "f_trace_lines" && matches!(item, Value::Flag(false)));
         if lines_disabled { return Ok(()); }
         let handler = match kind {
@@ -6778,13 +6875,16 @@ impl<'a> Machine<'a> {
         if matches!(handler, Value::Nil) { return Ok(()); }
         let saved = (self.row, self.extent);
         self.tracing_busy = true;
+        let aside = crate::ghost::walks_aside();
         let answer = self.apply_held(handler, vec![Value::Thing(activation.clone()), Value::text(kind), value]);
+        if crate::ghost::stirred(&self.ghost_tap) { self.attend_to_gone(); }
+        crate::ghost::walks_back(aside);
         self.tracing_busy = false;
         (self.row, self.extent) = saved;
         let callback = match answer {
             Ok(callback) => callback,
             Err(error) => {
-                self.tracing_function = Value::Nil;
+                self.tracing_function = if matches!(self.monitor_function, Value::Nil) { Value::Nil } else { Value::Flag(true) };
                 for (name, handler) in activation.holds.borrow_mut().iter_mut() {
                     if name == "f_trace" { *handler = Value::Nil; break; }
                 }
@@ -6800,6 +6900,26 @@ impl<'a> Machine<'a> {
             None => namespace.push(("f_trace".to_owned(), callback)),
         }
         Ok(())
+    }
+
+    /// Hand a monitoring event to the routine sys.monitoring put in the way: the frame,
+    /// the event's name and what it carries. What the routine raises goes on up.
+    fn tell_monitor(&mut self, name: &str, activation: &Hold, argument: Value) -> Result<(), Escape> {
+        self.park_cursor();
+        let handler = self.monitor_function.clone();
+        let saved = (self.row, self.extent);
+        self.tracing_busy = true;
+        let aside = crate::ghost::walks_aside();
+        let position = Value::Small(2 * Self::activation_instruction(activation).max(0));
+        let answer = self.apply_held(handler, vec![Value::Thing(activation.clone()), Value::text(name), argument, position]);
+        if crate::ghost::stirred(&self.ghost_tap) { self.attend_to_gone(); }
+        crate::ghost::walks_back(aside);
+        self.tracing_busy = false;
+        (self.row, self.extent) = saved;
+        match answer {
+            Ok(_) => Ok(()),
+            Err(error) => Err(self.raised_if_error::<()>(Err(error)).expect_err("failed monitoring callback")),
+        }
     }
 
     fn exclude_trace_origin(&mut self, escape: &Escape) {
@@ -6878,7 +6998,16 @@ impl<'a> Machine<'a> {
         // A routine marked native has no frame of its own on the Python
         // frame chain: its own link is the caller's frame, and a child
         // reaches past it the same way, as a walk past a C routine does.
-        let hidden = self.native_frame_routines.contains(&(Rc::as_ptr(routine) as usize));
+        // Pure I/O stands in for native I/O only while called through its
+        // facade; a user callback starts a visible Python frame again.
+        let delegated_io = routine.written_in.as_deref().is_some_and(|file| file.ends_with("/lib_python/modules/_pyio.py"))
+            && parent.as_ref().is_some_and(|frame| {
+                let entries = frame.holds.borrow();
+                let native = entries.get(8).is_some_and(|(key, value)| key == "\0native" && matches!(value, Value::Flag(true)));
+                matches!(entries.get(5), Some((_, Value::Bound(caller, _))) if caller.written_in.as_deref().is_some_and(|file|
+                    file.ends_with("/lib_python/modules/_io.py") || native && file.ends_with("/lib_python/modules/_pyio.py")))
+            });
+        let hidden = delegated_io || self.native_frame_routines.contains(&(Rc::as_ptr(routine) as usize));
         let parent = match parent {
             Some(p) if p.holds.borrow().get(8).is_some_and(|(word, held)| word == "\0native" && matches!(held, Value::Flag(true))) => {
                 match p.holds.borrow()[2].1.clone() { Value::Thing(grand) => Some(grand), _ => None }
@@ -6902,6 +7031,7 @@ impl<'a> Machine<'a> {
         if !matches!(self.tracing_function, Value::Nil) {
             entries.push(("f_trace".to_owned(), Value::Nil));
             entries.push(("f_trace_lines".to_owned(), Value::Flag(true)));
+            entries.push(("f_trace_opcodes".to_owned(), Value::Flag(false)));
         }
         self.made += 1;
         Some(Hold::new(Thing {tethered: std::cell::Cell::new(false),  reclassified: RefCell::new(None), of: self.activation_kind.as_ref().unwrap().clone(), turn: self.made, holds: RefCell::new(entries) }))
@@ -7006,6 +7136,18 @@ impl<'a> Machine<'a> {
                         if let Some(row) = program.retained_row(Self::activation_instruction(item)) { return Some(row); }
                         if program.lineless { return Some(Value::Nil); }
                     }
+                }
+                if index == 11 {
+                    // A caller that is one of the runtime's own stand-ins for a native routine
+                    // is no frame the reference would show: the one behind it is the caller.
+                    let mut back = item.holds.borrow()[2].1.clone();
+                    while let Value::Thing(caller) = &back {
+                        let hidden = matches!(&caller.holds.borrow()[5].1, Value::Bound(body, _) if Self::library_native_routine(body));
+                        if !hidden { break; }
+                        let behind = caller.holds.borrow()[2].1.clone();
+                        back = behind;
+                    }
+                    return Some(back);
                 }
                 if index != 12 { return None; }
                 Some(self.locals_make(item))
@@ -7858,9 +8000,13 @@ impl<'a> Machine<'a> {
         // every still-living owner here, on each value, kept long runs from
         // finishing once many owners stayed anchored.
         if self.ghost_tap.state.get() & (crate::ghost::G_STIRRED | crate::ghost::G_POLL) != 0
+            && !self.watching_now.get() && !self.tracing_busy
             && crate::ghost::stirred_light(&self.ghost_tap)
         {
             self.attend_to_gone();
+        }
+        if (self.step_events || self.monitor_steps) && !matches!(node, Form::OnLine(..)) && !matches!(self.tracing_function, Value::Nil) {
+            self.emit_trace_named("opcode", "instruction", Value::Nil, None)?;
         }
         match node {
             Form::Const(Value::Routine(p)) => self.bind_program(p, frame),
@@ -8218,9 +8364,9 @@ impl<'a> Machine<'a> {
         if let Some(answer) = self.text_called(&stands, args, frame) { return answer; }
         if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
             let mut values=self.value_list(args,frame)?;
-            if matches!(&stands,Value::Wrapped(..)) {
+            if matches!(&stands, Value::Wrapped(tag, _) if *tag != 132) {
                 let raw = self.spreads_carry_foreign_keys(&values) && self.wrapper_takes_raw_keys(&stands);
-                if !raw { values=self.opened_arguments(values)?; }
+                if !raw { values = self.opened_arguments(values)?; }
             }
             return self.apply_class_member(stands,values);
         }
@@ -10203,7 +10349,7 @@ impl<'a> Machine<'a> {
                             // no key but a whole number or a run of
                             // places, and refuses any other by the two
                             // kinds rather than becoming a map.
-                            if self.works_sequences() && !matches!(index, Value::Span(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                            if self.works_sequences() && !matches!(index.settled(), Value::Span(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
                                 let beneath = cell.borrow().settled();
                                 if matches!(beneath, Value::Vector(_)) { return Err(self.key_refused(&beneath, index).into()); }
                             }
@@ -10291,16 +10437,19 @@ impl<'a> Machine<'a> {
                     if self.works_sequences() {
                         let standing = { let cells = f.cells.borrow(); cells[i].settled() };
                         if let Value::Vector(items) = &standing {
-                            match key.as_ref().and_then(|named| row_position(items.len(), named)) {
+                            // A shared cell is the number or span it holds.
+                            // The place itself is still reckoned by the row.
+                            let named = key.as_ref().map(Value::settled);
+                            match named.as_ref().and_then(|named| row_position(items.len(), named)) {
                                 Some(Some(position)) => key = Some(Value::Small(position as i64)),
                                 Some(None) => return Err(self.place_written_beyond(&standing).into()),
-                                None => if let Some(named) = key.as_ref() {
+                                None => if let Some(original) = key.as_ref() {
                                     // A key of some other kind names no place in
                                     // a row. Writing at one is refused by the two
                                     // kinds, as reading at one is, and the row
                                     // stays a row rather than becoming a map
                                     // whose keys are its places.
-                                    if !matches!(named, Value::Span(_)) { return Err(self.key_refused(&standing, named).into()); }
+                                    if !matches!(original.settled(), Value::Span(_)) { return Err(self.key_refused(&standing, original).into()); }
                                 },
                             }
                         }
@@ -12345,9 +12494,9 @@ impl<'a> Machine<'a> {
                 if let Some(answer) = self.text_called(&stands, args, frame) { return Ok(Next::Value(answer?)); }
                 if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
                     let mut given=self.value_list(args,frame)?;
-                    if matches!(&stands,Value::Wrapped(..)) {
+                    if matches!(&stands, Value::Wrapped(tag, _) if *tag != 132) {
                         let raw = self.spreads_carry_foreign_keys(&given) && self.wrapper_takes_raw_keys(&stands);
-                        if !raw { given=self.opened_arguments(given)?; }
+                        if !raw { given = self.opened_arguments(given)?; }
                     }
                     return Ok(Next::Value(self.apply_class_member(stands,given)?));
                 }
@@ -15845,8 +15994,8 @@ impl<'a> Machine<'a> {
     /// Whether a wrapped bound method stands on a routine that takes the
     /// call's keyword mapping as it stands. Such a wrapper is handed the
     /// call whole so the routine's own binding can weigh the keys.
-    fn wrapper_takes_raw_keys(&self, value: &Value) -> bool {
-        let Value::Wrapped(3, parts) = value else { return false };
+    pub(super) fn wrapper_takes_raw_keys(&self, value: &Value) -> bool {
+        let Value::Wrapped(3 | 132, parts) = value else { return false };
         match parts.first() {
             Some(Value::Routine(code)) | Some(Value::Bound(code, _)) | Some(Value::Method(code, _, _)) => self.routine_takes_raw_keys(code),
             _ => false,
@@ -16556,6 +16705,15 @@ impl<'a> Machine<'a> {
             if program.flags & 512 != 0 { self.code_handle(&program); }
             return Ok(Value::Generator(self.spawn_walk(&program, frame.clone(), None, self.reading_now)));
         }
+        // Monitoring hears of a call from the caller's side, before anything is entered.
+        if !matches!(self.monitor_function, Value::Nil) && !self.tracing_busy && !program.frameless && program.ident != "<gathering>"
+            && !self.inside_library_native() {
+            if let Some(caller) = self.active_trace.clone() {
+                let mut call = vec![Value::Bound(program.clone(), frame.clone())];
+                if let Some(slot) = program.formal_slots.first() { call.push(frame.cells.borrow()[*slot].settled()); }
+                self.tell_monitor("call", &caller, Value::tuple(call))?;
+            }
+        }
         // A call that would stand deeper than the table allows is refused
         // before it runs, in the table's own words, so that a clause may
         // take the fault and the run go on beneath the limit. An arm of
@@ -16640,7 +16798,7 @@ impl<'a> Machine<'a> {
                 caller_trace.as_ref().map(|parent| (crate::data::Hold::as_ptr(parent) as usize, program.idents.clone(), frame.clone()))))
         } else { None };
         if mine && !self.rules.trace_words.is_empty() { self.row = program.declared_on; }
-        let trace_started = if mine && !matches!(self.tracing_function, Value::Nil) { self.emit_trace("call", Value::Nil) } else { Ok(()) };
+        let trace_started = if mine && !matches!(self.tracing_function, Value::Nil) { self.emit_trace_named("call", "start", Value::Nil, None) } else { Ok(()) };
         let outcome: Res = if let Err(error) = trace_started { Err(error) } else if let Err(refused) = arrival { Err(refused) } else { loop {
             caught |= match program.traps {
                 Traps::Naught => 0,
@@ -16736,7 +16894,8 @@ impl<'a> Machine<'a> {
                 Err(e) => break Err(e),
             }
         } };
-        let outcome = if mine && !matches!(self.tracing_function, Value::Nil) { match outcome { Ok(value) => self.emit_trace("return", value.clone()).map(|()| value), Err(error) => match self.emit_trace("return", Value::Nil) { Ok(()) => Err(error), Err(callback) => { self.exclude_trace_origin(&callback); Err(callback) } } } } else { outcome };
+        if crate::ghost::stirred(&self.ghost_tap) && !self.watching_now.get() && !self.tracing_busy { self.attend_to_gone(); }
+        let outcome = if mine && !matches!(self.tracing_function, Value::Nil) { match outcome { Ok(value) => self.emit_trace("return", value.clone()).map(|()| value), Err(error) => match self.emit_trace_named("return", "unwind", Value::Nil, Some(match &error { Escape::Thrown(raised) => raised.clone(), _ => Value::Nil })) { Ok(()) => Err(error), Err(callback) => { self.exclude_trace_origin(&callback); Err(callback) } } } } else { outcome };
         self.natives_told.set(natives_were_told);
         let mut outcome = outcome;
         if arrived {
@@ -22855,7 +23014,7 @@ impl<'a> Machine<'a> {
         if let (Prim::At, [Value::Window(owner, 'm'), key]) = (operation, operands) {
             return self.prim(operation, "", &[owner.proxy_pairs(), key.clone()]).map(Some);
         }
-        if let (Prim::Hashed, [method @ (Value::Method(..) | Value::Wrapped(3, _) | Value::Intrinsic(..) | Value::Member(..))]) = (operation, operands) {
+        if let (Prim::Hashed, [method @ (Value::Method(..) | Value::Wrapped(3 | 132, _) | Value::Intrinsic(..) | Value::Member(..))]) = (operation, operands) {
             return Ok(method.hash_number().map(Value::Small));
         }
         if !self.rules.specials.is_empty() && matches!(operation, Prim::Eq | Prim::Ne) {
@@ -28728,8 +28887,9 @@ impl<'a> Machine<'a> {
                     // Writing at one is refused by the two kinds, just
                     // as reading at one is, and the row stays a row
                     // instead of becoming a map keyed by its places.
-                    match row_position(items.len(), &v[1]) {
-                        None if !matches!(&v[1], Value::Span(_)) => return Err(self.key_refused(&standing, &v[1])),
+                    let index = v[1].settled();
+                    match row_position(items.len(), &index) {
+                        None if !matches!(&index, Value::Span(_)) => return Err(self.key_refused(&standing, &v[1])),
                         Some(None) => return Err(self.place_written_beyond(&standing)),
                         Some(Some(position)) => {
                             let mut all = items.as_ref().clone();
@@ -29797,9 +29957,11 @@ impl<'a> Machine<'a> {
                         {
                             if let Some(kept) = self.alongside.get_mut(&mark) {
                                 let slot = usize::from(which != 0);
-                                match kept.collecting[slot].take().map(|worker| worker.join()) {
-                                    Some(Ok(Ok(data))) => { all.extend(data); piped = true; }
-                                    Some(_) => broken = true,
+                                match kept.collecting[slot].take() {
+                                    Some((worker, bytes)) => match worker.join() {
+                                        Ok(Ok(())) => match bytes.lock() { Ok(mut bytes) => { all = std::mem::take(&mut *bytes); piped = true; }, Err(_) => broken = true },
+                                        _ => broken = true,
+                                    },
                                     None if slot == 0 => empty_pipe(&mut kept.out_pipe, &mut all, &mut piped, &mut broken),
                                     None => empty_pipe(&mut kept.err_pipe, &mut all, &mut piped, &mut broken),
                                 }
@@ -29869,6 +30031,20 @@ impl<'a> Machine<'a> {
                                 Value::Flag(true)
                             }
                         }
+                    }
+                    9 => {
+                        n(2)?;
+                        let id = as_index(&v[1])? as i64;
+                        let job = self.alongside.get(&id).ok_or("OSError: Bad file descriptor")?;
+                        let mut ready = Vec::new();
+                        for capture in &job.collecting {
+                            let bytes = match capture {
+                                Some((_, bytes)) => std::mem::take(&mut *bytes.lock().map_err(|_| "OSError: capture lock poisoned")?),
+                                None => Vec::new(),
+                            };
+                            ready.push(self.octets(bytes, false));
+                        }
+                        Value::Tuple(Rc::new(ready).into())
                     }
                     _ => return Err(format!("{}() unknown step {}", name, step)),
                 }
@@ -31030,7 +31206,8 @@ impl<'a> Machine<'a> {
                     // it does not hold in the words for one.
                     held @ Value::Vector(_) if self.works_sequences() => {
                         let Value::Vector(items) = held else { unreachable!() };
-                        let Some(found) = row_position(items.len(), &v[1]) else { return Err(self.key_refused(held, &v[1]).into()) };
+                        let index = v[1].settled();
+                        let Some(found) = row_position(items.len(), &index) else { return Err(self.key_refused(held, &v[1]).into()) };
                         let Some(position) = found else { return Err(self.place_written_beyond(held).into()) };
                         let retained: Vec<_> = items.iter().enumerate().filter(|(j, _)| *j != position).map(|(_, x)| x.clone()).collect();
                         Value::Vector(crate::tuples::Sequence::plain(retained))
@@ -34450,13 +34627,21 @@ impl<'a> Machine<'a> {
 }
 
 /// Collect a child's output independently of writes and waits in its parent.
-fn read_capture<P>(pipe: P) -> std::thread::JoinHandle<std::io::Result<Vec<u8>>>
-where P: std::io::Read + Send + 'static {
-    std::thread::spawn(move || {
-        let mut source = pipe;
-        let mut result = Vec::<u8>::new();
-        source.read_to_end(&mut result).map(|_| result)
-    })
+fn read_capture<R: std::io::Read + Send + 'static>(mut pipe: R) -> (std::thread::JoinHandle<std::io::Result<()>>, std::sync::Arc<std::sync::Mutex<Vec<u8>>>) {
+    let bytes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let output = bytes.clone();
+    let worker = std::thread::spawn(move || {
+        let mut chunk = [0u8; 8192];
+        loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) => return Ok(()),
+                Ok(n) => output.lock().map_err(|_| std::io::Error::other("capture lock poisoned"))?.extend_from_slice(&chunk[..n]),
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            }
+        }
+    });
+    (worker, bytes)
 }
 
 /// Empty a pipe of all it has to say, into `into`. `had_pipe` records
@@ -39074,7 +39259,7 @@ impl<'a> Machine<'a> {
                 }
             }
             if let Some(Value::Thing(local)) = v.get(2).map(Value::settled) {
-                let maps = self.inherited_entry(&local.blueprint(), "__getitem__").is_some() || Self::underlying(&Value::Thing(local.clone())).map_or(false, |inner| matches!(inner.settled(), Value::Dict(_)));
+                let maps = self.locals_proxy(&Value::Thing(local.clone())).is_some() || self.inherited_entry(&local.blueprint(), "__getitem__").is_some() || Self::underlying(&Value::Thing(local.clone())).map_or(false, |inner| matches!(inner.settled(), Value::Dict(_)));
                 if !maps {
                     return Err(if weighing { "TypeError: locals must be a mapping".to_owned() } else { format!("TypeError: locals must be a mapping or None, not {}", local.blueprint().name) });
                 }
@@ -39281,8 +39466,12 @@ impl<'a> Machine<'a> {
         let outer_trace = self.active_trace.take();
         self.active_trace = self.activation(&built.program, &mine, outer_trace.clone());
         self.wake_cursor();
-        let ran = self.value_of(&built.program.body, &mine);
+        let ran = match self.emit_trace_named("call", "start", Value::Nil, None) {
+            Ok(()) => self.expression_line(mode).and_then(|()| self.value_of(&built.program.body, &mine)),
+            Err(refused) => Err(refused),
+        };
         let ran = self.traced_result(ran);
+        let ran = self.leave_traced_text(ran);
         self.park_cursor();
         self.active_trace = outer_trace;
         self.wake_cursor();
@@ -39401,7 +39590,12 @@ impl<'a> Machine<'a> {
         }
         self.wake_cursor();
         self.frames_named.push(built.program.clone());
-        let ran = if built.program.generator { self.invoke(built.program.clone(), top.clone(), Vec::new()) } else { self.value_of(&built.program.body, &top) };
+        let ran = if built.program.generator { self.invoke(built.program.clone(), top.clone(), Vec::new()) } else {
+            match self.emit_trace_named("call", "start", Value::Nil, None) {
+                Ok(()) => self.expression_line(mode).and_then(|()| self.value_of(&built.program.body, &top)).and_then(|answer| self.leave_traced_text(Ok(answer))),
+                Err(refused) => Err(refused),
+            }
+        };
         let ran = self.traced_result(ran);
         self.frames_named.pop();
         self.park_cursor();
@@ -40950,8 +41144,22 @@ impl Machine<'_> {
             TraceBridge => {
                 require(1, 2)?;
                 match input.as_slice() {
-                    [Value::Small(0)] => Ok(self.tracing_function.clone()),
-                    [Value::Small(1), callback] => { self.tracing_function = callback.clone(); Ok(Value::Nil) }
+                    [Value::Small(0)] => Ok(if matches!(self.tracing_function, Value::Flag(_)) { Value::Nil } else { self.tracing_function.clone() }),
+                    [Value::Small(1), callback] => {
+                        self.tracing_function = if matches!(callback, Value::Nil) && !matches!(self.monitor_function, Value::Nil) { Value::Flag(true) } else { callback.clone() };
+                        Ok(Value::Nil)
+                    }
+                    [Value::Small(13), callback] => {
+                        self.monitor_function = callback.clone();
+                        if matches!(self.monitor_function, Value::Nil) {
+                            self.monitor_steps = false;
+                            if matches!(self.tracing_function, Value::Flag(_)) { self.tracing_function = Value::Nil; }
+                        } else if matches!(self.tracing_function, Value::Nil) {
+                            self.tracing_function = Value::Flag(true);
+                        }
+                        Ok(Value::Nil)
+                    }
+                    [Value::Small(14), wanted] => { self.monitor_steps = wanted.settled().is_true(); Ok(Value::Nil) }
                     [Value::Small(2), target] => {
                         let program = match target.settled() {
                             Value::Bound(body, _) | Value::Routine(body) => body,

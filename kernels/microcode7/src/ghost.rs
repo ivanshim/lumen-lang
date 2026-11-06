@@ -483,6 +483,18 @@ pub fn thing_departing(going: &mut Thing) {
     departing_at(here);
 }
 
+/// The walks waiting to be shut are put aside while a hook runs, so that the
+/// hook shuts only those it lets go of; the others come back after it.
+pub fn walks_aside() -> Vec<Rc<RefCell<Suspension>>> {
+    HALF_WALKS.try_with(|h| std::mem::take(&mut *h.borrow_mut())).unwrap_or_default()
+}
+
+pub fn walks_back(mut aside: Vec<Rc<RefCell<Suspension>>>) {
+    if aside.is_empty() { return; }
+    let _ = HALF_WALKS.try_with(|h| { let mut h = h.borrow_mut(); aside.append(&mut h); *h = aside; });
+    stir();
+}
+
 /// A walk asleep inside a try is going: the machine rebuilt it around
 /// its own frame, and hands it here to be shut in its turn.
 pub fn walk_departing(again: Rc<RefCell<Suspension>>) {

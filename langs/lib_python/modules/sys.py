@@ -801,8 +801,20 @@ def _profile_dispatch(frame, event, arg):
     # setprofile itself is native in the reference, so the routine
     # standing here for it is not a call the program made.
     code = frame.f_code
-    if code.co_name == 'setprofile' and code.co_filename == _profile_home[0]:
-        return
+    if code.co_filename == _profile_home[0]:
+        # Routines of this module are C functions in the reference: the
+        # program's own call to one is reported as a C call, and anything
+        # such a routine calls in turn is not a call the program made.
+        caller = frame.f_back
+        if caller is None or caller.f_code.co_filename == _profile_home[0]:
+            return
+        if event == 'call':
+            event, arg, frame = 'c_call', globals().get(code.co_name), caller
+        elif event == 'return':
+            event, frame = 'c_return', caller
+            arg = globals().get(code.co_name)
+        else:
+            return
     try:
         function(frame, event, arg)
     except BaseException:
@@ -955,3 +967,221 @@ def is_finalizing():
 
 # The builtin interface has no filesystem origin after bridge initialization.
 globals().pop('__file__', None)
+
+# sys.monitoring (PEP 669). The kernels hand one routine, _hook, every event of
+# a running program (call, return, line, raise ...) while any tool has events
+# on; it picks out the tools that asked for each and calls their callbacks.
+# Routines of this file are native in the reference, so a callback sees the
+# monitored frame, not this routine's, as its caller. BRANCH_LEFT, BRANCH_RIGHT,
+# RERAISE and EXCEPTION_HANDLED are not delivered: the kernels do not tell of them.
+def _make_monitoring():
+    module = type(__import__('builtins'))('sys.monitoring')
+    _names = ('PY_START', 'PY_RESUME', 'PY_RETURN', 'PY_YIELD', 'CALL', 'LINE',
+              'INSTRUCTION', 'JUMP', 'BRANCH_LEFT', 'BRANCH_RIGHT',
+              'STOP_ITERATION', 'RAISE', 'EXCEPTION_HANDLED', 'PY_UNWIND',
+              'PY_THROW', 'RERAISE', 'C_RETURN', 'C_RAISE')
+
+    class events:
+        pass
+
+    for _shift, _name in enumerate(_names):
+        setattr(events, _name, 1 << _shift)
+    events.BRANCH = 1 << len(_names)
+    events.NO_EVENTS = 0
+    _branch = events.BRANCH_LEFT | events.BRANCH_RIGHT
+    _valid = (1 << len(_names)) - 1 | events.BRANCH
+    _c_events = events.C_RETURN | events.C_RAISE
+    # Events a tool may ask for on one code object only, and those it may not disable.
+    _global_only = (events.PY_THROW | events.PY_UNWIND | events.RAISE
+                    | events.RERAISE | events.EXCEPTION_HANDLED)
+    _tool_names = [None] * 6
+    _tool_events = [0] * 6
+    # Code objects compare by content; instrumentation belongs to each individual object.
+    _local_events = {}
+    _callbacks = {}
+    _disabled = {}
+    _last_line = {}
+    _state = [False, False]
+    DISABLE = object()
+    MISSING = object()
+
+    def _tool(tool_id):
+        if not isinstance(tool_id, int):
+            raise TypeError("'%s' object cannot be interpreted as an integer"
+                            % type(tool_id).__name__)
+        if not 0 <= tool_id < 6:
+            raise ValueError('invalid tool %d (must be between 0 and 5)' % tool_id)
+        return tool_id
+
+    def _active(tool_id):
+        _tool(tool_id)
+        if _tool_names[tool_id] is None:
+            raise ValueError('tool %d is not in use' % tool_id)
+
+    def _mask(event_set, local=False):
+        if not isinstance(event_set, int):
+            raise TypeError("'%s' object cannot be interpreted as an integer"
+                            % type(event_set).__name__)
+        if event_set < 0 or event_set & ~_valid or (local and event_set & _global_only):
+            raise ValueError('invalid %sevent set 0x%x' % ('local ' if local else '', event_set))
+        if event_set & _c_events:
+            raise ValueError('cannot set C_RETURN or C_RAISE events independently')
+        if event_set & events.BRANCH:
+            event_set = event_set & ~events.BRANCH | _branch
+        return event_set
+
+    def _refresh():
+        wanted = any(_tool_events) or bool(_local_events)
+        steps = (any(mask & events.INSTRUCTION for mask in _tool_events)
+                 or any(entry[1] & events.INSTRUCTION for entry in _local_events.values()))
+        if wanted != _state[0]:
+            __trace_native__(13, _hook if wanted else None)
+            _state[0] = wanted
+        if wanted and steps != _state[1] or not wanted and _state[1]:
+            __trace_native__(14, steps and wanted)
+            _state[1] = steps and wanted
+
+    def use_tool_id(tool_id, name, /):
+        _tool(tool_id)
+        if not isinstance(name, str):
+            raise ValueError('tool name must be a str')
+        if _tool_names[tool_id] is not None:
+            raise ValueError('tool %d is already in use' % tool_id)
+        _tool_names[tool_id] = name
+
+    def clear_tool_id(tool_id, /):
+        _tool(tool_id)
+        _tool_events[tool_id] = 0
+        for key in [key for key in _local_events if key[0] == tool_id]:
+            del _local_events[key]
+        for key in [key for key in _callbacks if key[0] == tool_id]:
+            del _callbacks[key]
+        for key in [key for key in _disabled if key[0] == tool_id]:
+            del _disabled[key]
+        _refresh()
+
+    def free_tool_id(tool_id, /):
+        clear_tool_id(tool_id)
+        _tool_names[tool_id] = None
+
+    def get_tool(tool_id, /):
+        return _tool_names[_tool(tool_id)]
+
+    def register_callback(tool_id, event, func, /):
+        _tool(tool_id)
+        if not isinstance(event, int):
+            raise TypeError("'%s' object cannot be interpreted as an integer"
+                            % type(event).__name__)
+        if event <= 0 or event & (event - 1):
+            raise ValueError('The callback can only be set for one event at a time')
+        if event & ~_valid:
+            raise ValueError('invalid event %d' % event)
+        old = _callbacks.get((tool_id, event))
+        if func is None:
+            _callbacks.pop((tool_id, event), None)
+        else:
+            _callbacks[(tool_id, event)] = func
+        return old
+
+    def get_events(tool_id, /):
+        return _tool_events[_tool(tool_id)]
+
+    def set_events(tool_id, event_set, /):
+        _active(tool_id)
+        _tool_events[tool_id] = _mask(event_set)
+        _refresh()
+
+    def get_local_events(tool_id, code, /):
+        _tool(tool_id)
+        if type(code) is not type(_make_monitoring.__code__):
+            raise TypeError('code must be a code object')
+        return _local_events.get((tool_id, id(code)), (None, 0))[1]
+
+    def set_local_events(tool_id, code, event_set, /):
+        _active(tool_id)
+        if type(code) is not type(_make_monitoring.__code__):
+            raise TypeError('code must be a code object')
+        mask = _mask(event_set, True)
+        if mask:
+            _local_events[(tool_id, id(code))] = (code, mask)
+        else:
+            _local_events.pop((tool_id, id(code)), None)
+        _refresh()
+
+    def restart_events():
+        _disabled.clear()
+
+    def _event_name(event):
+        return _names[event.bit_length() - 1]
+
+    def _dispatch(event, code, args, offset):
+        for tool in range(6):
+            local = _local_events.get((tool, id(code)), (None, 0))[1]
+            mask = _tool_events[tool] | local
+            if mask & events.CALL:
+                mask |= _c_events
+            if not mask & event:
+                continue
+            callback = _callbacks.get((tool, event))
+            if callback is None:
+                continue
+            place = (tool, id(code), event, offset)
+            if place in _disabled:
+                continue
+            if callback(*args) is DISABLE:
+                if event & _global_only:
+                    del _callbacks[(tool, event)]
+                    raise ValueError('Cannot disable %s events. Callback removed.' % _event_name(event))
+                _disabled[place] = code
+
+    def _line(frame, code, offset):
+        line = frame.f_lineno
+        key = id(frame)
+        before = _last_line.get(key)
+        _last_line[key] = (line, offset)
+        if before is not None and line <= before[0]:
+            here = before[1]
+            _dispatch(events.JUMP, code, (code, here, offset), here)
+        if before is None or line != before[0]:
+            _dispatch(events.LINE, code, (code, line), offset)
+
+    def _hook(frame, name, argument, offset):
+        code = frame.f_code
+        if name == 'line':
+            _line(frame, code, offset)
+            return
+        if name == 'start' or name == 'resume' or name == 'throw':
+            event = {'start': events.PY_START, 'resume': events.PY_RESUME,
+                     'throw': events.PY_THROW}[name]
+            _dispatch(event, code, (code, offset), offset)
+        elif name == 'instruction':
+            _dispatch(events.INSTRUCTION, code, (code, offset), offset)
+        elif name == 'return' or name == 'yield' or name == 'unwind':
+            _last_line.pop(id(frame), None)
+            event = {'return': events.PY_RETURN, 'yield': events.PY_YIELD,
+                     'unwind': events.PY_UNWIND}[name]
+            _dispatch(event, code, (code, offset, argument), offset)
+        elif name == 'exception':
+            _dispatch(events.RAISE, code, (code, offset, argument[1]), offset)
+        elif name == 'stop_iteration':
+            _dispatch(events.STOP_ITERATION, code, (code, offset, argument), offset)
+        elif name == 'call' or name == 'c_return' or name == 'c_raise':
+            event = {'call': events.CALL, 'c_return': events.C_RETURN,
+                     'c_raise': events.C_RAISE}[name]
+            first = argument[1] if len(argument) > 1 else MISSING
+            _dispatch(event, code, (code, offset, argument[0], first), offset)
+
+    module.DEBUGGER_ID = 0
+    module.COVERAGE_ID = 1
+    module.PROFILER_ID = 2
+    module.OPTIMIZER_ID = 5
+    module.DISABLE = DISABLE
+    module.MISSING = MISSING
+    module.events = events
+    for _function in (use_tool_id, clear_tool_id, free_tool_id, get_tool,
+                      register_callback, get_events, set_events,
+                      get_local_events, set_local_events, restart_events):
+        setattr(module, _function.__name__, _function)
+    return module
+
+monitoring = _make_monitoring()

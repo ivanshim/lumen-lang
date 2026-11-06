@@ -234,6 +234,7 @@ class Popen:
         self._stderr_to_stdout = stderr == STDOUT
         self.args = args
         self.returncode = None
+        self._communication_output = ([], [])
         self.stdin = _Writable(handle, self._text, self._encoding, self._errors) if in_mode == 1 else None
         self.stdout = _Readable(handle, 0, self._text, self._encoding, self._errors) if out_mode == 1 else None
         self.stderr = None if self._stderr_to_stdout else (_Readable(handle, 1, self._text, self._encoding, self._errors) if err_mode in (1, 3) else None)
@@ -268,18 +269,50 @@ class Popen:
                 raise TimeoutExpired(self.args, timeout)
             _wait(10000)
 
+
+    # Bytes a wrapper already pulled from the child, before communicate
+    # moves the pipe into the kernel capture.
+    def _take_buffered(self, stream):
+        if stream is None or stream.closed:
+            return b''
+        raw = stream._stream.buffer if stream._text else stream._stream
+        buffered = raw._read_buf[raw._read_pos:]
+        raw._reset_read_buf()
+        return buffered
+
+    # Decode one finished capture with the wrapper's own decoder, so a
+    # read that already began keeps its pending characters.
+    def _text_captured(self, stream, data):
+        if not self._text or data is None:
+            return data
+        if stream is not None and not stream.closed:
+            decoder = stream._stream._decoder
+            if decoder is not None:
+                text = stream._stream._get_decoded_chars() + decoder.decode(data, final=True)
+                stream._stream._set_decoded_chars('')
+                stream._stream._snapshot = None
+                return text
+            pending = stream._stream._get_decoded_chars()
+            stream._stream._set_decoded_chars('')
+            if pending:
+                return pending + _text_of(data, stream.encoding or self._encoding, stream.errors or self._errors)
+        return _text_of(data, self._encoding, self._errors)
+
     # Drain merged stderr from the capture communicate started.
     def _read_stream(self, which):
         result = _subprocess(3, self._handle, which)
         if result is None or result is False:
             result = b''
-        return _text_of(result, self._encoding, self._errors) if self._text else result
+        return result
 
     # Drain open captures and tolerate streams already closed by the caller.
     def communicate(self, input=None, timeout=None):
         if input is not None and self.stdin is None:
             raise ValueError('stdin is not a pipe')
-        # Read both output pipes while writing stdin and waiting for termination.
+        # Bytes already sitting in the stream wrapper were read before
+        # collection starts. Take them first, then let the kernel capture
+        # own the pipes. A later read goes through that capture.
+        held = [self._take_buffered(self.stdout), self._take_buffered(self.stderr)]
         _subprocess(8, self._handle)
         for stream in (self.stdout, self.stderr):
             if stream is not None and not stream.closed:
@@ -294,33 +327,42 @@ class Popen:
         if self.stdin is not None:
             self.stdin.close()
             self.stdin = None
-        if timeout is not None:
-            import time
-            deadline = time.monotonic() + timeout
-            while True:
-                code = _subprocess(5, self._handle)
-                if code is not None and code is not False:
-                    self.returncode = code
-                    break
-                if time.monotonic() >= deadline:
-                    self.kill()
-                    raise TimeoutExpired(self.args, timeout)
-                _wait(10000)
-        empty = '' if self.text_mode else b''
-        out = (empty if self.stdout.closed else self.stdout.read()) if self.stdout is not None else None
+        import time
+        deadline = None if timeout is None else time.monotonic() + timeout
+        captures = self._communication_output
+        while self.returncode is None:
+            ready = _subprocess(9, self._handle)
+            if ready[0]:
+                captures[0].append(ready[0])
+            if ready[1]:
+                captures[1].append(ready[1])
+            code = _subprocess(5, self._handle)
+            if code is not None and code is not False:
+                self.returncode = code
+                break
+            if deadline is not None and time.monotonic() >= deadline:
+                out = b''.join(captures[0]) if self.stdout is not None else None
+                if self._stderr_to_stdout and out is not None:
+                    out += b''.join(captures[1])
+                err = b''.join(captures[1]) if self.stderr is not None else None
+                raise TimeoutExpired(self.args, timeout, output=out or None, stderr=err or None)
+            _wait(10000)
+        if self.stdout is not None and not self.stdout.closed:
+            captures[0].append(self._read_stream(0))
+        out = (b'' if self.stdout.closed else held[0] + b''.join(captures[0])) if self.stdout is not None else None
         if self._stderr_to_stdout:
             if self.stdout is not None:
-                out = out + self._read_stream(1)
+                captures[1].append(self._read_stream(1))
+                out += b''.join(captures[1])
             err = None
         else:
-            err = (empty if self.stderr.closed else self.stderr.read()) if self.stderr is not None else None
+            if self.stderr is not None and not self.stderr.closed:
+                captures[1].append(self._read_stream(1))
+            err = (b'' if self.stderr.closed else held[1] + b''.join(captures[1])) if self.stderr is not None else None
         if self.returncode is None:
             self.returncode = self.wait()
-        if self._text:
-            if isinstance(out, bytes):
-                out = _text_of(out, self._encoding, self._errors)
-            if isinstance(err, bytes):
-                err = _text_of(err, self._encoding, self._errors)
+        out = self._text_captured(self.stdout, out)
+        err = self._text_captured(self.stderr, err)
         return (out, err)
 
     def kill(self):

@@ -141,6 +141,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("asyncio.windows_utils", include_str!("asyncio/windows_utils.py"), "asyncio/windows_utils.py"),
     ("atexit", include_str!("atexit.py"), "atexit.py"),
     ("base64", include_str!("base64.py"), "base64.py"),
+    ("bdb", include_str!("bdb.py"), "bdb.py"),
     ("binascii", include_str!("binascii.py"), "binascii.py"),
     ("bisect", include_str!("bisect.py"), "bisect.py"),
     ("builtins", concat!(include_str!("builtins.py"), "\n", include_str!("runtime_adapters/builtins.py")), "builtins.py"),
