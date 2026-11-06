@@ -38944,7 +38944,8 @@ fn civil_picture(args: &[Value]) -> Result<Value, String> {
 mod capsule_native_checks {
     use crate::capsule::NativeCapsule;
     use std::ffi::{c_void, CString};
-    use std::{cell::Cell, rc::Rc};
+    use std::{cell::Cell};
+    use crate::value::Rc;
     struct Payload(Rc<Cell<usize>>);
     impl Drop for Payload { fn drop(&mut self) { self.0.set(self.0.get() + 1); } }
     unsafe extern "C" fn release(pointer: *mut c_void) { drop(unsafe { Box::from_raw(pointer.cast::<Payload>()) }); }

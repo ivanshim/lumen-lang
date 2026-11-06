@@ -1,7 +1,8 @@
 // Native character tables for the released multibyte codec wrappers.
 use crate::data::Value;
 use num_traits::ToPrimitive;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell};
+use crate::data::Rc;
 fn uint(table: &[u8], offset: usize) -> u32 {
     let part = &table[offset..offset+4];
     u32::from_le_bytes([part[0], part[1], part[2], part[3]])

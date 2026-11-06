@@ -1,5 +1,6 @@
 use crate::value::{Instance, Value};
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell};
+use crate::value::Rc;
 
 // Read a private adapter state field without Python descriptor dispatch.
 fn field(object: &Instance, name: &str) -> Value {

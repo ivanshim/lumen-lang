@@ -42214,7 +42214,8 @@ fn paint_host_picture(given: &[Value]) -> Result<Value, String> {
 #[cfg(test)]
 mod capsule_resource_checks {
     use crate::capsule::PointerCapsule;
-    use std::{cell::Cell, ffi::c_void, rc::Rc};
+    use std::{cell::Cell, ffi::c_void};
+    use crate::data::Rc;
     struct Counted { drops: Rc<Cell<u8>> }
     impl Drop for Counted { fn drop(&mut self) { self.drops.set(self.drops.get() + 1); } }
     unsafe extern "C" fn dispose(held: *mut c_void) { let owned = unsafe { Box::from_raw(held.cast::<Counted>()) }; drop(owned); }

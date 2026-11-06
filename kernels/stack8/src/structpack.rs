@@ -2,7 +2,8 @@
 use crate::value::Value;
 use num_bigint::{BigInt, Sign};
 use num_traits::{ToPrimitive, Zero};
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell};
+use crate::value::Rc;
 
 #[derive(Clone)]
 struct Field { code: u8, at: usize, count: usize, width: usize }
