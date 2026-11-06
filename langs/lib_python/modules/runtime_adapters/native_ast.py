@@ -3605,6 +3605,9 @@ class _Parser:
                                 lineno=tok.srow, col_offset=tok.scol,
                                 end_lineno=tok.erow, end_col_offset=tok.ecol)
                     return node, (tok.srow, tok.scol), (tok.erow, tok.ecol)
+                # A delimited string cannot take a postfix or binary operator.
+                if tok.kind in ('str', 'fstr', 'tstr'):
+                    return self.parse_string()
         node, ls, le = self.parse_or()
         if self.at_op(':='):
             if not isinstance(node, Name):
