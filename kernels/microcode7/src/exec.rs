@@ -6812,12 +6812,12 @@ impl<'a> Machine<'a> {
     /// in the reference, so a tracer is not shown the frames running them.
     fn inside_library_native(&self) -> bool {
         self.frames_named.last().is_some_and(|body| Self::library_native_routine(body))
-            || self.active_trace.as_ref().is_some_and(|frame| frame.holds.borrow().get(8).is_some_and(|(key, value)| key == "\0native" && matches!(value, Value::Flag(true))))
     }
 
     fn library_native_routine(body: &Rc<Routine>) -> bool {
         const HIDDEN: [&str; 11] = ["sys", "builtins", "_io", "posix", "_imp", "_thread", "_weakref", "marshal", "_warnings", "_runtime_import", "_zipimport_path"];
         let Some(path) = body.written_in.as_deref() else { return false };
+        if path == "<native _io>" { return true; }
         let mut parts = path.rsplit('/');
         let file = parts.next().unwrap_or("");
         let folder = parts.next() == Some("modules") && parts.next() == Some("lib_python");
@@ -6998,16 +6998,8 @@ impl<'a> Machine<'a> {
         // A routine marked native has no frame of its own on the Python
         // frame chain: its own link is the caller's frame, and a child
         // reaches past it the same way, as a walk past a C routine does.
-        // Pure I/O stands in for native I/O only while called through its
-        // facade; a user callback starts a visible Python frame again.
-        let delegated_io = routine.written_in.as_deref().is_some_and(|file| file.ends_with("/lib_python/modules/_pyio.py"))
-            && parent.as_ref().is_some_and(|frame| {
-                let entries = frame.holds.borrow();
-                let native = entries.get(8).is_some_and(|(key, value)| key == "\0native" && matches!(value, Value::Flag(true)));
-                matches!(entries.get(5), Some((_, Value::Bound(caller, _))) if caller.written_in.as_deref().is_some_and(|file|
-                    file.ends_with("/lib_python/modules/_io.py") || native && file.ends_with("/lib_python/modules/_pyio.py")))
-            });
-        let hidden = delegated_io || self.native_frame_routines.contains(&(Rc::as_ptr(routine) as usize));
+        let hidden = routine.written_in.as_deref() == Some("<native _io>")
+            || self.native_frame_routines.contains(&(Rc::as_ptr(routine) as usize));
         let parent = match parent {
             Some(p) if p.holds.borrow().get(8).is_some_and(|(word, held)| word == "\0native" && matches!(held, Value::Flag(true))) => {
                 match p.holds.borrow()[2].1.clone() { Value::Thing(grand) => Some(grand), _ => None }
@@ -8321,17 +8313,6 @@ impl<'a> Machine<'a> {
         self.call_stands(stands, target, args, frame)
     }
 
-    /// A starred call of a bound C function is not unpacked into a profiled
-    /// c_call. Direct calls of the same function still are.
-    fn spread_hides_c_call(&self, stands: &Value, values: &[Value]) -> bool {
-        let Value::Wrapped(3 | 132, parts) = stands else { return false };
-        if self.watcher.borrow().is_none() || self.watching_now.get() || self.natives_told.get() { return false; }
-        if !values.iter().any(|value| matches!(value, Value::Couple(pair) if matches!(pair.0, Value::Flag(_)))) { return false; }
-        let Some(routine) = parts.first().map(Value::settled) else { return false };
-        matches!(routine, Value::Intrinsic(..) | Value::Member(..) | Value::TextCall { .. })
-            || matches!(routine.kind_word().as_str(), "builtin_function_or_method" | "method_descriptor" | "classmethod_descriptor")
-    }
-
     /// Whether what a callee stands for is a builtin function or method
     /// that is to be told of now.
     fn native_stands(&self, stands: &Value) -> bool {
@@ -8375,16 +8356,9 @@ impl<'a> Machine<'a> {
         if let Some(answer) = self.text_called(&stands, args, frame) { return answer; }
         if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
             let mut values=self.value_list(args,frame)?;
-            let hide = self.spread_hides_c_call(&stands, &values);
             if matches!(&stands, Value::Wrapped(tag, _) if *tag != 132) {
                 let raw = self.spreads_carry_foreign_keys(&values) && self.wrapper_takes_raw_keys(&stands);
                 if !raw { values = self.opened_arguments(values)?; }
-            }
-            if hide {
-                let already = self.natives_told.replace(true);
-                let answer = self.apply_class_member(stands, values);
-                self.natives_told.set(already);
-                return answer;
             }
             return self.apply_class_member(stands,values);
         }
@@ -12512,16 +12486,9 @@ impl<'a> Machine<'a> {
                 if let Some(answer) = self.text_called(&stands, args, frame) { return Ok(Next::Value(answer?)); }
                 if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
                     let mut given=self.value_list(args,frame)?;
-                    let hide = self.spread_hides_c_call(&stands, &given);
                     if matches!(&stands, Value::Wrapped(tag, _) if *tag != 132) {
                         let raw = self.spreads_carry_foreign_keys(&given) && self.wrapper_takes_raw_keys(&stands);
                         if !raw { given = self.opened_arguments(given)?; }
-                    }
-                    if hide {
-                        let already = self.natives_told.replace(true);
-                        let answer = self.apply_class_member(stands, given);
-                        self.natives_told.set(already);
-                        return Ok(Next::Value(answer?));
                     }
                     return Ok(Next::Value(self.apply_class_member(stands,given)?));
                 }

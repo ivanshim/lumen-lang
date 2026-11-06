@@ -621,8 +621,21 @@ _pyio_module = None
 def _text_runtime():
     global _pyio_module
     if _pyio_module is None:
-        import _pyio as module
+        # Native implementation frames must stay distinct from public _pyio callbacks.
+        path = __load_module('_pyio', True)
+        with FileIO(path, 'r') as source:
+            code = compile(source.readall(), '<native _io>', 'exec')
+        module = type(sys)('_io_backend')
+        module.__file__ = path
+        module.__package__ = ''
         _pyio_module = module
+        sys.modules['_io_backend'] = module
+        try:
+            exec(code, module.__dict__)
+        except BaseException:
+            _pyio_module = None
+            sys.modules.pop('_io_backend', None)
+            raise
     return _pyio_module
 
 def _method(instance, kind, name):
@@ -1801,9 +1814,6 @@ def _buffered_impl(kind):
         base = getattr(_pyio, kind)
         class _Impl(base):
             raw = None
-            # Finalization also enters through the native facade.
-            def __del__(self):
-                base.__del__(self)
             def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
                 base.__init__(self, raw, buffer_size)
                 self.raw = raw

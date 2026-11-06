@@ -2499,15 +2499,6 @@ impl<'a> Machine<'a> {
             if let Some(fault) = self.symbolic_access(&f) { return Err(fault.into()); }
             if matches!(f, Value::Shared(_)) { f = self.what_it_spells(f); }
             match f {
-                Value::Wrapped(3 | 132, kept) => {
-                    values.insert(0, kept[1].clone());
-                    if !self.rules.words_ext_stmt_class_builder.is_empty()
-                        && matches!(kept[0].settled(), Value::Intrinsic(..) | Value::OctetKind { .. } | Value::Text(_))
-                    {
-                        return self.apply_held(kept[0].clone(), values);
-                    }
-                    f = kept[0].clone();
-                }
                 Value::Bound(code, environment) => return self.invoke(code, environment, values),
                 Value::Routine(code) => return self.invoke(code, self.outermost.clone(), values),
                 Value::Method(code, thing, _) => {

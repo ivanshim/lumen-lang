@@ -6990,11 +6990,11 @@ impl<'a> Engine<'a> {
     /// these are native, so a tracer never sees their frames.
     fn running_in_native_stand_in(&self) -> bool {
         Self::stand_in_routine(self.running_routine.as_ref())
-            || self.trace_frame.as_ref().is_some_and(|frame| frame.fields.borrow().get(9).is_some_and(|(key, value)| key == "\0native" && matches!(value, Value::Flag(true))))
     }
 
     fn stand_in_routine(routine: Option<&Rc<Routine>>) -> bool {
         let Some(file) = routine.and_then(|routine| routine.written_in.as_deref()) else { return false };
+        if file == "<native _io>" { return true; }
         let Some((home, name)) = file.rsplit_once('/') else { return false };
         home.ends_with("lib_python/modules")
             && ["sys", "builtins", "_io", "posix", "_imp", "_thread", "_weakref", "marshal", "_warnings", "_runtime_import", "_zipimport_path"]
@@ -7584,16 +7584,8 @@ impl<'a> Engine<'a> {
         // A routine marked native has no frame of its own on the Python
         // frame chain: its own link is the caller's frame, and a child
         // reaches past it the same way, as a walk past a C routine does.
-        // Only the native facade's delegation is invisible; direct pure I/O
-        // calls and callbacks into user code retain their Python frames.
-        let delegated_io = program.written_in.as_deref().is_some_and(|file| file.ends_with("/lib_python/modules/_pyio.py"))
-            && back.as_ref().is_some_and(|frame| {
-                let fields = frame.fields.borrow();
-                let native = fields.get(9).is_some_and(|(key, value)| key == "\0native" && matches!(value, Value::Flag(true)));
-                matches!(fields.get(6), Some((_, Value::Routine(caller))) if caller.written_in.as_deref().is_some_and(|file|
-                    file.ends_with("/lib_python/modules/_io.py") || native && file.ends_with("/lib_python/modules/_pyio.py")))
-            });
-        let hidden = delegated_io || self.native_frame_routines.contains(&(Rc::as_ptr(program) as usize));
+        let hidden = program.written_in.as_deref() == Some("<native _io>")
+            || self.native_frame_routines.contains(&(Rc::as_ptr(program) as usize));
         let back = match back {
             Some(parent) if parent.fields.borrow().get(9).is_some_and(|(word, held)| word == "\0native" && matches!(held, Value::Flag(true))) => {
                 match parent.fields.borrow()[2].1.clone() { Value::Object(grand) => Some(grand), _ => None }

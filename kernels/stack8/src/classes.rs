@@ -2388,25 +2388,6 @@ impl<'a> Engine<'a> {
                 answer
             },
             Value::Class(c) => self.class_make(c,args),
-            Value::Adapter(w) if matches!(w.0, 3 | 131) => {
-                // A starred call does not unpack a bound C function, so the
-                // profile sees no c_call around it. A direct call still does.
-                let spread = args.iter().any(|arg| matches!(arg, Value::Tie(pair) if matches!(pair.0, Value::Flag(_))));
-                let function = w.1[0].contents();
-                let native = matches!(&function, Value::Native(..) | Value::ValueMethod(_) | Value::TextMethod(..))
-                    || matches!(&function, Value::Adapter(_) if function.core_kind() == "builtin_function_or_method");
-                let descriptor = matches!(&function, Value::Adapter(_) if matches!(function.core_kind().as_str(), "method_descriptor" | "classmethod_descriptor"));
-                args.insert(0, w.1[1].clone());
-                let callable = w.1[0].clone();
-                if spread && (native || descriptor) && self.profiler.borrow().is_some() && !self.profiling.get() && !self.native_open.get() {
-                    let previous = self.native_open.replace(true);
-                    let result = self.descriptor_apply(callable, args);
-                    self.native_open.set(previous);
-                    result
-                } else {
-                    self.descriptor_apply(callable, args)
-                }
-            }
             Value::Adapter(w) => self.class_apply_adapter(w, args),
             Value::Text(word) => {
                 let Some(op) = self.lang.builtins.get(word.as_ref()).copied() else { return Err(self.class_refusal()); };
