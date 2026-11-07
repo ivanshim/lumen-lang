@@ -28705,9 +28705,9 @@ impl<'a> Engine<'a> {
                     6 => {
                         arity(2)?;
                         let which = as_index(&args[1])? as i64;
-                        match self.beside.borrow_mut().remove(&which) {
+                        match self.beside.borrow_mut().get_mut(&which) {
                             None => Value::Flag(false),
-                            Some(mut kept) => {
+                            Some(kept) => {
                                 let _ = kept.child.kill();
                                 let _ = kept.child.wait();
                                 Value::Flag(true)
@@ -28749,6 +28749,16 @@ impl<'a> Engine<'a> {
                             if let Some(pipe) = process.err_pipe.take() { process.err_capture = Some(capture_pipe(pipe)); }
                             Value::Flag(true)
                         } else { Value::Flag(false) }
+                    }
+                    // Readers finish only after EOF, including inherited descendant pipes.
+                    9 => {
+                        arity(2)?;
+                        let which = as_index(&args[1])? as i64;
+                        let kept = self.beside.borrow();
+                        Value::Flag(kept.get(&which).is_some_and(|process| {
+                            process.out_capture.as_ref().is_none_or(|reader| reader.is_finished())
+                                && process.err_capture.as_ref().is_none_or(|reader| reader.is_finished())
+                        }))
                     }
                     _ => return Err(format!("{}() unknown step {}", name, step)),
                 }

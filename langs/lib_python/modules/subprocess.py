@@ -297,15 +297,16 @@ class Popen:
         if timeout is not None:
             import time
             deadline = time.monotonic() + timeout
-            while True:
-                code = _subprocess(5, self._handle)
-                if code is not None and code is not False:
-                    self.returncode = code
-                    break
-                if time.monotonic() >= deadline:
-                    self.kill()
-                    raise TimeoutExpired(self.args, timeout)
-                _wait(10000)
+        else:
+            deadline = None
+        while True:
+            code = self.poll()
+            if code is not None and _subprocess(9, self._handle):
+                break
+            if deadline is not None and time.monotonic() >= deadline:
+                self.kill()
+                raise TimeoutExpired(self.args, timeout)
+            _wait(10000)
         empty = '' if self.text_mode else b''
         out = (empty if self.stdout.closed else self.stdout.read()) if self.stdout is not None else None
         if self._stderr_to_stdout:

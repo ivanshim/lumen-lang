@@ -29751,7 +29751,14 @@ impl<'a> Machine<'a> {
                     6 => {
                         if v.len() != 2 { return Err(format!("{}() expects 2 arguments, got {}", name, v.len())); }
                         let mark = as_index(&v[1])? as i64;
-                        self.child_laid(mark)
+                        match self.alongside.get_mut(&mark) {
+                            None => Value::Flag(false),
+                            Some(kept) => {
+                                let _ = kept.child.kill();
+                                let _ = kept.child.wait();
+                                Value::Flag(true)
+                            }
+                        }
                     }
                     7 if v.len() == 3 => {
                         let token = as_index(&v[1])? as i64;
@@ -29784,6 +29791,14 @@ impl<'a> Machine<'a> {
                                 Value::Flag(true)
                             }
                         }
+                    }
+                    // A collector is done at pipe EOF, not merely at direct-child exit.
+                    9 => {
+                        n(2)?;
+                        let id = as_index(&v[1])? as i64;
+                        Value::Flag(self.alongside.get(&id).is_some_and(|job| {
+                            job.collecting.iter().all(|worker| worker.as_ref().is_none_or(|reader| reader.is_finished()))
+                        }))
                     }
                     _ => return Err(format!("{}() unknown step {}", name, step)),
                 }
