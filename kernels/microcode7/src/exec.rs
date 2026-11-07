@@ -3518,6 +3518,7 @@ impl<'a> Machine<'a> {
             self.outermost.collector_skipping.set(!self.quiet_module_slots.2.is_empty());
             drop(skips);
             drop(cells);
+            self.keep_initializing_module_cells();
             return self.skipped_module_cells();
         }
         // Active inventory bindings already have module roots. Retain their
@@ -3549,7 +3550,23 @@ impl<'a> Machine<'a> {
         self.outermost.collector_skipping.set(!self.quiet_module_slots.2.is_empty());
         drop(skips);
         drop(cells);
+        self.keep_initializing_module_cells();
         self.skipped_module_cells()
+    }
+
+    // An initializing module still needs compiler temporaries outside its public bindings.
+    fn keep_initializing_module_cells(&self) {
+        let mut skips = self.outermost.collector_skips.borrow_mut();
+        for path in &self.importing {
+            let Some(Value::Thing(module)) = self.imported.get(path) else { continue };
+            let holds = module.holds.borrow();
+            let Some((_, Value::Small(first))) = holds.iter().find(|(name, _)| name == "\0slot-start") else { continue };
+            let first = *first as usize;
+            let prefix = format!("\0import/{path}/");
+            let count = self.idents[first..].iter().take_while(|name| name.starts_with(&prefix)).count();
+            skips[first..first + count].fill(false);
+        }
+        self.outermost.collector_skipping.set(skips.iter().any(|skip| *skip));
     }
 
     /// Copies of the frame slots discounted for this collection.
@@ -36027,6 +36044,7 @@ impl Machine<'_> {
         // very slot the module's own code reads through.
         let slot_links = exported.iter().enumerate().map(|(position, name)|
             (Value::text(name), self.outermost.cells.borrow()[beginning + position].clone())).collect::<Vec<_>>();
+        members.push(("\0slot-start".to_owned(), Value::Small(beginning as i64)));
         members.push(("\0bindings".to_owned(), Value::Dict(Rc::new(slot_links.into()))));
         members.push(("\0loaded-module".to_owned(), Value::text(path)));
         let kind = Rc::new(Blueprint::bare(path.into(), None, None, Vec::new(), Vec::new(), Vec::new(), crate::data::BlueprintEntries::new(Vec::new())));

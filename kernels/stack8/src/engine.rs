@@ -2622,6 +2622,14 @@ impl<'a> Engine<'a> {
     /// Discount every retired version, including versions already absent
     /// from the inventory; current modules retain ordinary world roots.
     fn quiet_replaced_modules(&mut self) -> Vec<usize> {
+        // Compiler temporaries remain live until their module body finishes.
+        let initializing: Vec<_> = self.module_slots.values().filter_map(|(offset, path)| {
+            if !self.importing.contains(path) { return None; }
+            let prefix = format!("\0module:{offset}:{path}:");
+            let count = self.registry.idents[*offset..].iter().take_while(|name| name.starts_with(&prefix)).count();
+            Some(*offset..*offset + count)
+        }).collect();
+        let retired = |slots: Vec<usize>| slots.into_iter().filter(|at| !initializing.iter().any(|range| range.contains(at))).collect();
         let Some(owner) = self.lang.module_cache.first().cloned() else { return Vec::new() };
         if self.cached_module_address("\0").is_none() { return Vec::new(); }
         let paths: Vec<String> = self.modules.keys().cloned().collect();
@@ -2667,7 +2675,7 @@ impl<'a> Engine<'a> {
         // collections. Reuse the classification instead of scanning every
         // namespace and reserved slot again for each weak-reference round.
         if !changed && self.quiet_module_slots.0 == self.world.len() && self.quiet_module_slots.1 == inventory {
-            return self.quiet_module_slots.2.clone();
+            return retired(self.quiet_module_slots.2.clone());
         }
         // Current inventory bindings already have real module roots. Keep
         // their world slots in the ordinary path instead of expanding the
@@ -2693,7 +2701,7 @@ impl<'a> Engine<'a> {
                 (!current).then_some(at)
             }).collect();
         self.quiet_module_slots = (self.world.len(), inventory, quiet.clone());
-        quiet
+        retired(quiet)
     }
 
     /// Build ownership including any nodes retained by this collection.

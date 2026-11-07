@@ -2388,6 +2388,11 @@ impl<'a> Engine<'a> {
                 answer
             },
             Value::Class(c) => self.class_make(c,args),
+            Value::Adapter(w) if matches!(w.0, 3 | 131) && self.profiler.borrow().is_none()
+                && !args.iter().any(|arg| matches!(arg, Value::Tie(pair) if matches!(pair.0, Value::Flag(_)))) => {
+                args.insert(0, w.1[1].clone());
+                self.descriptor_apply(w.1[0].clone(), args)
+            }
             Value::Adapter(w) => self.class_apply_adapter(w, args),
             Value::Text(word) => {
                 let Some(op) = self.lang.builtins.get(word.as_ref()).copied() else { return Err(self.class_refusal()); };
