@@ -855,6 +855,14 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
                     return Ok(items[0].clone());
                 }
             }
+            if items.iter().all(|item| matches!(item, Value::Text(_))) {
+                let mut text = String::new();
+                for (at, item) in items.iter().enumerate() {
+                    if at > 0 { text.push_str(s); }
+                    if let Value::Text(part) = item { text.push_str(part); }
+                }
+                return Ok(Value::text(&text));
+            }
             let separator: Vec<u32> = s.chars().map(u32::from).collect();
             let mut joined = Vec::new();
             for (i, item) in items.iter().enumerate() {

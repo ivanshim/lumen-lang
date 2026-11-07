@@ -788,6 +788,10 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
                     _ => (),
                 }
             }
+            let words: Option<Vec<&str>> = row.iter().map(|entry| match entry {
+                Value::Text(word) => Some(word.as_ref()), _ => None,
+            }).collect();
+            if let Some(words) = words { return Ok(Value::text(&words.join(source))); }
             let mut result: Vec<u32> = Vec::new();
             for (position, item) in row.into_iter().enumerate() {
                 let numbers = item.character_numbers().ok_or_else(|| g.bad("join"))?;
