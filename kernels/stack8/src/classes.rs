@@ -5576,7 +5576,7 @@ impl<'a> Engine<'a> {
             // The walk of a class's own line, and the initialiser told
             // to subclasses, both take nothing the caller supplies.
             Value::Adapter(w) if w.0 == 0 && matches!(w.1.first(), Some(Value::Tuple(_))) => Some("()"),
-            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(entry)) if (entry.0 == 0 && matches!(entry.1.first(), Some(Value::Tuple(_)))) || (entry.0 == 2 && entry.1.first().is_some_and(|name| name.plain() == self.class_word("subclass"))) || entry.0 == 29 && entry.1.first().is_some_and(|owner| owner.plain() == "type") && entry.1.get(1).is_some_and(|name| name.plain() == self.class_word("order"))) => Some("()"),
+            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(entry)) if (entry.0 == 0 && matches!(entry.1.first(), Some(Value::Tuple(_)))) || (entry.0 == 2 && entry.1.first().is_some_and(|name| name.plain() == self.class_word("subclass"))) || entry.0 == 29 && ((entry.1.first().is_some_and(|owner| owner.plain() == "type") && entry.1.get(1).is_some_and(|name| name.plain() == self.class_word("order"))) || (entry.1.len() == 3 && entry.1[0].plain() == self.class_word("root") && entry.1[1].plain() == self.class_word("subclass")))) => Some("()"),
             Value::Adapter(w) if w.0 == 2 && w.1.first().is_some_and(|entry| entry.plain() == self.class_word("subclass")) => Some("()"),
             _ => None,
         }

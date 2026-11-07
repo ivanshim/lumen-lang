@@ -6252,7 +6252,7 @@ impl<'a> Machine<'a> {
             // The walk of a class's own line, and the initialiser told
             // to subclasses, both take nothing the caller supplies.
             Value::Wrapped(0, parts) if matches!(parts.first(), Some(Value::Tuple(_))) => Some("()"),
-            Value::Wrapped(3, parts) if matches!(parts.first(), Some(Value::Wrapped(tag, entry)) if (*tag == 0 && matches!(entry.first(), Some(Value::Tuple(_)))) || (*tag == 2 && entry.first().is_some_and(|name| name.bare() == self.detail("subclass"))) || *tag == 60 && entry.first().is_some_and(|owner| owner.bare() == "type") && entry.get(1).is_some_and(|name| name.bare() == self.detail("order"))) => Some("()"),
+            Value::Wrapped(3, parts) if matches!(parts.first(), Some(Value::Wrapped(tag, entry)) if (*tag == 0 && matches!(entry.first(), Some(Value::Tuple(_)))) || (*tag == 2 && entry.first().is_some_and(|name| name.bare() == self.detail("subclass"))) || *tag == 60 && (matches!(entry.as_slice(), [owner, name, _] if owner.bare() == self.detail("root") && name.bare() == self.detail("subclass")) || (entry.first().is_some_and(|owner| owner.bare() == "type") && entry.get(1).is_some_and(|name| name.bare() == self.detail("order"))))) => Some("()"),
             Value::Wrapped(2, parts) if parts.first().is_some_and(|entry| entry.bare() == self.detail("subclass")) => Some("()"),
             _ => None,
         }
