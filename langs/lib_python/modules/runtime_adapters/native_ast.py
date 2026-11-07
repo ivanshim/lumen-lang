@@ -3013,6 +3013,14 @@ class _Parser:
                 # A comment between decorators is its own newline token.
                 while self.toks[self.at].kind == 'newline':
                     self.pop()
+                # Blank lines and comments do not relax the decorator's indent.
+                following = self.peek()
+                if following.kind != 'end':
+                    column = self.indent_col(following)
+                    if column != self.indent_col(first):
+                        _indent('unexpected indent' if column > self.indent_col(first) else 'unexpected unindent')
+                    if self.alt_indent_col(following) != self.alt_indent_col(first):
+                        _tab('inconsistent use of tabs and spaces in indentation')
             node = self.parse_stmt()
             if not isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef)):
                 _syntax('invalid syntax')
@@ -3597,6 +3605,11 @@ class _Parser:
                                 lineno=tok.srow, col_offset=tok.scol,
                                 end_lineno=tok.erow, end_col_offset=tok.ecol)
                     return node, (tok.srow, tok.scol), (tok.erow, tok.ecol)
+                # One delimited string cannot take a postfix or binary operator.
+                # The next literal is implicit concatenation and may continue.
+                if (tok.kind in ('str', 'fstr', 'tstr')
+                        and nxt.kind not in ('str', 'fstr', 'tstr')):
+                    return self.parse_string()
         node, ls, le = self.parse_or()
         if self.at_op(':='):
             if not isinstance(node, Name):
