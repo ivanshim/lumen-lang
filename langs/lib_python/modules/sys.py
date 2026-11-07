@@ -720,7 +720,8 @@ def displayhook(value):
         return
     import builtins
     builtins._ = None
-    stdout.write(repr(value) + '\n')
+    stdout.write(repr(value))
+    stdout.write('\n')
     builtins._ = value
 
 

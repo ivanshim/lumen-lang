@@ -40,6 +40,8 @@ thread_local! {
     /// The most figures a decimal whole number may spell in text being
     /// read for a language that limits them; nothing when it does not.
     static FIGURE_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// How many prefixes stand open while one piece is read.
+    static PREFIX_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Say how many figures the text about to be read may spell in a
@@ -11438,6 +11440,23 @@ impl<'a> Compiler<'a> {
     /// A piece of an expression, with a step written before or after it
     /// where the language spells one.
     fn prefix(&mut self) -> Res<()> {
+        // Only a language that names the incomplete-source fault beside
+        // the reference keeps a bound on how deep its reader may go.
+        if self.lang.compile_incomplete.is_empty() { return self.prefix_under(); }
+        let deep = PREFIX_DEPTH.with(|cell| { let next = cell.get() + 1; cell.set(next); next });
+        if deep > 6000 {
+            PREFIX_DEPTH.with(|cell| cell.set(cell.get() - 1));
+            return Err("RecursionError: maximum recursion depth exceeded".into());
+        }
+        let answer = self.prefix_under();
+        PREFIX_DEPTH.with(|cell| cell.set(cell.get() - 1));
+        answer
+    }
+
+    /// A run of prefixes longer than the reference would read is named
+    /// with the reference's own fault rather than pressing the stack
+    /// flat.
+    fn prefix_under(&mut self) -> Res<()> {
         if let Some(starts) = &mut self.ast_expression_starts { starts.push(self.pos); }
         let result = self.prefix_read();
         if let Some(starts) = &mut self.ast_expression_starts { starts.pop(); }
