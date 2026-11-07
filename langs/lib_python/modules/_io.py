@@ -453,6 +453,8 @@ class StringIO(_TextIOBase):
             self._text += ''.join(self._chunks)
             self._chunks = []
     def _translate(self, text):
+        if type(text) is str and '\r' not in text and '\n' not in text:
+            return text
         if self._newline in (None, ''):
             crlf = text.count('\r\n')
             if crlf:
@@ -495,7 +497,7 @@ class StringIO(_TextIOBase):
         n = len(text)
         if not n:
             return 0
-        data = self._translate(text)
+        data = text if self._newline == '\n' else self._translate(text)
         if self._pos == self._length:
             self._chunks.append(data)
             self._length += len(data)
@@ -561,6 +563,25 @@ class StringIO(_TextIOBase):
             stop = min(stop, start + size)
         self._pos = stop
         return self._text[start:stop]
+    def readlines(self, hint=-1):
+        hint = _size(hint)
+        if type(self) is not StringIO:
+            return super().readlines(hint)
+        if getattr(self, '_closed', False):
+            raise ValueError('I/O operation on closed file.')
+        if hint > 0:
+            return super().readlines(hint)
+        self._checkClosed()
+        self._materialize()
+        text = self._text[self._pos:]
+        if self._newline not in (None, '', '\n') or self._newline == '\n' and '\r' in text:
+            return super().readlines(hint)
+        if any(mark in text for mark in ('\v', '\f', '\x1c', '\x1d', '\x1e', '\x85', '\u2028', '\u2029')):
+            return super().readlines(hint)
+        lines = text.splitlines(True)
+        if lines:
+            self._pos = self._length
+        return lines
     def seek(self, pos, whence=0):
         pos = _ssize(pos)
         whence = _whence(whence)
