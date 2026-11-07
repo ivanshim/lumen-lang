@@ -90,6 +90,10 @@ static HOST_WATCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 // Keep a kernel thread number rather than a pointer to a pthread descriptor.
 static SIGNAL_OWNER: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 // Forward signals without dereferencing a thread that may already have exited.
+static WAKEUP_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static WAKEUP_WARN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static WAKEUP_ERROR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
 extern "C" fn signal_arrived(number: i32) {
     unsafe {
         let saved = *libc::__errno_location();
@@ -99,6 +103,14 @@ extern "C" fn signal_arrived(number: i32) {
             libc::syscall(libc::SYS_tgkill, libc::getpid() as libc::c_long, owner as libc::c_long, number as libc::c_long);
         } else if (1..=64).contains(&number) {
             SIGNALS_PENDING.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+            let fd = WAKEUP_FD.load(std::sync::atomic::Ordering::Relaxed);
+            let byte = number as u8;
+            if fd >= 0 && libc::write(fd, (&byte as *const u8).cast(), 1) < 0 {
+                let error = *libc::__errno_location();
+                if error != libc::EAGAIN || WAKEUP_WARN.load(std::sync::atomic::Ordering::Relaxed) {
+                    WAKEUP_ERROR.store(error, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
         }
         *libc::__errno_location() = saved;
     }
@@ -432,6 +444,7 @@ pub struct Engine<'a> {
     /// one keeps its own way. Only a language taking signals up between
     /// statements ever writes here.
     signal_handlers: HashMap<i64, Value>,
+    wakeup_reporter: Option<Value>,
     /// The member last found absent, and the object it was sought on,
     /// for the attribute fault that tells of it.
     absent_member: Option<(String, Value)>,
@@ -1911,6 +1924,7 @@ impl<'a> Engine<'a> {
             read_already: RefCell::new(std::collections::HashSet::new()),
             carried: None,
             signal_handlers: HashMap::new(),
+            wakeup_reporter: None,
             absent_member: None,
             absent_key: RefCell::new(None),
             complainer: RefCell::new(None),
@@ -20859,6 +20873,12 @@ impl<'a> Engine<'a> {
     /// waits for the next edge instead.
     fn deliver_signals(&mut self) -> Flow<()> {
         let pending = SIGNALS_PENDING.swap(0, std::sync::atomic::Ordering::Relaxed);
+        let error = WAKEUP_ERROR.swap(0, std::sync::atomic::Ordering::Relaxed);
+        if error != 0 {
+            if let Some(reporter) = self.wakeup_reporter.clone() {
+                let _ = self.call_held(reporter, vec![Value::Small(error as i64)]);
+            }
+        }
         if pending == 0 { return Ok(()); }
         let mut handled = 0u64;
         for number in 1..=64u32 {
@@ -28390,7 +28410,7 @@ impl<'a> Engine<'a> {
                         arity(2)?;
                         let which = as_index(&args[1])?;
                         if (1..=64).contains(&which) {
-                            SIGNALS_PENDING.fetch_or(1u64 << (which - 1), std::sync::atomic::Ordering::Relaxed);
+                            unsafe { libc::raise(which as i32); }
                         }
                         Value::Null
                     }
@@ -28411,6 +28431,13 @@ impl<'a> Engine<'a> {
                         }
                         self.signal_checkpoint()?;
                         Value::Null
+                    }
+                    5 => {
+                        arity(4)?;
+                        let fd = args[1].as_big()?.to_i32().ok_or("OverflowError: Python int too large to convert to C int")?;
+                        self.wakeup_reporter = Some(args[3].clone());
+                        WAKEUP_WARN.store(as_index(&args[2])? != 0, std::sync::atomic::Ordering::Relaxed);
+                        Value::Small(WAKEUP_FD.swap(fd, std::sync::atomic::Ordering::Relaxed) as i64)
                     }
                     _ => return Err(format!("{name}() knows no step {step}")),
                 }
