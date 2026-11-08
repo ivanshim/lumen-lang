@@ -15031,11 +15031,13 @@ impl<'a> Machine<'a> {
                     if matches!(item.settled(), Value::Unpaired(_)) { deliver = true; break; }
                 }
                 if deliver {
-                    deliver = match self.read_class_member(sink.clone(), "encoding", false) {
-                        Ok(found) => matches!(found.settled(), Value::Nil),
-                        Err(_) if self.attribute(&sink, "encoding").is_none() => true,
-                        Err(err) => return Err(err),
-                    };
+                    deliver = if let Some(name) = table.single("ext.builtin.print.stream.encoding") {
+                        match self.read_class_member(sink.clone(), name, false) {
+                            Ok(found) => matches!(found.settled(), Value::Nil),
+                            Err(_) if self.attribute(&sink, name).is_none() => true,
+                            Err(err) => return Err(err),
+                        }
+                    } else { false };
                 }
                 if !deliver {
                     for item in positional.iter() { self.written_surrogate_check(item)?; }

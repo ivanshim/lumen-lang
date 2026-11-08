@@ -1627,6 +1627,9 @@
     "TypeError: print option must be a string or None"
   ],
   "ext.builtin.print.real_point": true,
+  "ext.builtin.print.stream.encoding": [
+    "encoding"
+  ],
   "ext.builtin.print.redirect": [
     "sys",
     "stdout",

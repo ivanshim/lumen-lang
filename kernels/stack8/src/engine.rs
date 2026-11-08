@@ -21143,11 +21143,14 @@ impl<'a> Engine<'a> {
                 // io.StringIO stores characters. Its encoding is missing or
                 // None, so a surrogate has to reach write() intact. An
                 // encoded stream still refuses one, as utf-8 strict would.
-                let keeps_raw = args.iter().any(|value| matches!(value.contents(), Value::Codepoints(_)))
-                    && match self.member_of(destination.clone(), "encoding")? {
-                        None => true,
-                        Some(encoding) => matches!(encoding.contents(), Value::Null),
-                    };
+                let encoding_name = self.lang.print_stream_encoding.first().cloned();
+                let keeps_raw = if let Some(name) = encoding_name {
+                    args.iter().any(|value| matches!(value.contents(), Value::Codepoints(_)))
+                        && match self.member_of(destination.clone(), &name)? {
+                            None => true,
+                            Some(encoding) => matches!(encoding.contents(), Value::Null),
+                        }
+                } else { false };
                 if !keeps_raw {
                     for value in &args { self.printed_surrogate_check(value)?; }
                 }
