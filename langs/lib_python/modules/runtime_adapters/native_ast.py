@@ -652,24 +652,39 @@ class AST:
         return _node_repr(self, 0)
 
 
+_REPR_SEEN = set()
+
+
 def _node_repr(value, depth):
     if isinstance(value, AST):
-        if depth >= 3:
+        obj_id = id(value)
+        if depth >= 3 or obj_id in _REPR_SEEN:
             return type(value).__name__ + '(...)'
-        parts = []
-        for field in value._fields:
-            try:
-                item = getattr(value, field)
-            except AttributeError:
-                continue
-            parts.append(field + '=' + _node_repr(item, depth + 1))
-        return type(value).__name__ + '(' + ', '.join(parts) + ')'
+        _REPR_SEEN.add(obj_id)
+        try:
+            parts = []
+            for field in value._fields:
+                try:
+                    item = getattr(value, field)
+                except AttributeError:
+                    continue
+                parts.append(field + '=' + _node_repr(item, depth + 1))
+            return type(value).__name__ + '(' + ', '.join(parts) + ')'
+        finally:
+            _REPR_SEEN.remove(obj_id)
     if isinstance(value, list):
         if not value:
             return '[]'
-        if len(value) <= 2:
-            return '[' + ', '.join(_node_repr(item, depth) for item in value) + ']'
-        return '[' + _node_repr(value[0], depth) + ', ..., ' + _node_repr(value[-1], depth) + ']'
+        obj_id = id(value)
+        if obj_id in _REPR_SEEN:
+            return '[...]'
+        _REPR_SEEN.add(obj_id)
+        try:
+            if len(value) <= 2:
+                return '[' + ', '.join(_node_repr(item, depth) for item in value) + ']'
+            return '[' + _node_repr(value[0], depth) + ', ..., ' + _node_repr(value[-1], depth) + ']'
+        finally:
+            _REPR_SEEN.remove(obj_id)
     return repr(value)
 
 
