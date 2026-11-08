@@ -1,3 +1,1003 @@
+"""Marshal binary values with versions 0 through 5 and shared references.
+
+Built-in data uses CPython's type tags and binary layouts. Code records
+use this interpreter's immutable compilation input and complete constant
+state; they are private to this runtime and are not CPython bytecode.
+Compilation input is stored once per stream. Both directions honor
+allow_code=False. No source file is reopened.
+"""
+
+import struct
+import sys
+import types
+import io
+
+version = 5
+
+_MAX_DEPTH = 2000
+_READ_STEP = 131072
+_SIZE32_MAX = 0x7FFFFFFF
+_FLAG_REF = 0x80
+_code_prefix = b"\x00LumenCode\x01"
+
+_TYPE_NULL = 0x30
+_TYPE_NONE = 0x4E
+_TYPE_FALSE = 0x46
+_TYPE_TRUE = 0x54
+_TYPE_STOPITER = 0x53
+_TYPE_ELLIPSIS = 0x2E
+_TYPE_INT = 0x69
+_TYPE_INT64 = 0x49
+_TYPE_FLOAT = 0x66
+_TYPE_BINARY_FLOAT = 0x67
+_TYPE_COMPLEX = 0x78
+_TYPE_BINARY_COMPLEX = 0x79
+_TYPE_LONG = 0x6C
+_TYPE_STRING = 0x73
+_TYPE_INTERNED = 0x74
+_TYPE_REF = 0x72
+_TYPE_TUPLE = 0x28
+_TYPE_SMALL_TUPLE = 0x29
+_TYPE_LIST = 0x5B
+_TYPE_DICT = 0x7B
+_TYPE_CODE = 0x63
+_TYPE_UNICODE = 0x75
+_TYPE_SET = 0x3C
+_TYPE_FROZENSET = 0x3E
+_TYPE_SLICE = 0x3A
+_TYPE_ASCII = 0x61
+_TYPE_ASCII_INTERNED = 0x41
+_TYPE_SHORT_ASCII = 0x7A
+_TYPE_SHORT_ASCII_INTERNED = 0x5A
+
+
+def _pack_long(value):
+    return (value & 0xFFFFFFFF).to_bytes(4, "little")
+
+
+def _pack_short(value):
+    return (value & 0xFFFF).to_bytes(2, "little")
+
+
+def _pack_size(value):
+    if value > _SIZE32_MAX:
+        raise ValueError("unmarshallable object")
+    return _pack_long(value)
+
+
+def _pack_double(value):
+    return struct.pack("<d", value)
+
+
+def _float_text(value):
+    # The reference lays a float out with seventeen significant figures
+    # in the shortest spelling that keeps them; `%.17g` is that spelling
+    # at every magnitude, and reads back to the very same float.
+    return ("%.17g" % value).encode("ascii")
+
+
+def _long_digits(value):
+    negative = value < 0
+    remaining = -value if negative else value
+    digits = []
+    while remaining:
+        digits.append(remaining & 0x7FFF)
+        remaining >>= 15
+    if not digits:
+        digits.append(0)
+    size = len(digits)
+    if negative:
+        size = -size
+    written = bytearray(_pack_long(size))
+    for digit in digits:
+        written.extend(_pack_short(digit))
+    return written
+
+
+def _is_ascii(text):
+    return text.isascii()
+
+
+def _is_interned(text):
+    if len(text) >= 256:
+        return False
+    try:
+        return sys.intern(text) is text
+    except Exception:
+        return False
+
+
+_MODE_NAMES = ("exec", "eval", "single")
+
+
+def _fresh_whole(value):
+    """A number of its own: the reference's unmarshalling makes a new
+    whole number for each occurrence outside its small cache, and one
+    shared number inside it."""
+    return __trace_native__(13, value)
+
+
+# Capture a live code object's reconstruction input and full constant state.
+def _code_pieces(value):
+    source, boundary, private, features, optimize, lineless = __trace_native__(14, value)
+    constants = []
+    for at, const in enumerate(value.co_consts):
+        constants.append(None if at in private else const)
+    return (boundary, source, value.co_filename, getattr(value, "mode", 0),
+            value.co_flags, value.co_firstlineno,
+            getattr(value, "co_name", ""), getattr(value, "co_qualname", ""),
+            tuple(constants), private, optimize, features, lineless)
+
+
+# Index compiled bodies once before applying mutable code metadata.
+def _code_index(block):
+    bodies = {}
+    pending = [block]
+    while pending:
+        parent = pending.pop()
+        for const in getattr(parent, "co_consts", ()) or ():
+            if isinstance(const, types.CodeType):
+                locator = __trace_native__(14, const)[1]
+                if locator not in bodies:
+                    bodies[locator] = const
+                    pending.append(const)
+    return bodies
+
+
+class _Pending:
+    """The place a tuple takes before its contents are known.
+
+    A tuple has no empty form that can be filled in, so while its
+    elements are being read the reference table keeps this marker; a
+    reference meeting it gets the marker and the real tuple is put in
+    its place, and in every place the marker reached, once the elements
+    are all in.
+    """
+
+    __slots__ = ("locations",)
+
+    def __init__(self):
+        self.locations = []
+
+
+class _Writer:
+    def __init__(self, written_version, allow_code):
+        self.version = written_version
+        self.allow_code = allow_code
+        self.memo = {}
+        self.kept = []
+        self.pending = set()
+        self.out = bytearray()
+        self.sources = {}
+        self.depth = 0
+
+    def write(self, value):
+        stack = [("value", value)]
+        while stack:
+            action, payload = stack.pop()
+            if action == "pop":
+                self.depth -= 1
+                continue
+            if action == "raw":
+                self.out.extend(payload)
+                continue
+            if action == "unpend":
+                self.pending.discard(payload)
+                continue
+            self.depth += 1
+            if self.depth > _MAX_DEPTH:
+                raise ValueError("object too deeply nested to marshal")
+            self._one(payload, stack)
+
+    def _one(self, value, stack):
+        out = self.out
+        written_version = self.version
+        if value is None:
+            out.append(_TYPE_NONE)
+            self.depth -= 1
+            return
+        if value is True:
+            out.append(_TYPE_TRUE)
+            self.depth -= 1
+            return
+        if value is False:
+            out.append(_TYPE_FALSE)
+            self.depth -= 1
+            return
+        if value is StopIteration:
+            out.append(_TYPE_STOPITER)
+            self.depth -= 1
+            return
+        if value is Ellipsis:
+            out.append(_TYPE_ELLIPSIS)
+            self.depth -= 1
+            return
+
+        flag = 0
+        if written_version >= 3:
+            where = self.memo.get(id(value))
+            if where is not None:
+                if id(value) in self.pending:
+                    raise ValueError(
+                        "cannot marshal recursion in %s objects"
+                        % type(value).__name__
+                    )
+                out.append(_TYPE_REF)
+                out.extend(_pack_long(where))
+                self.depth -= 1
+                return
+            self.memo[id(value)] = len(self.kept)
+            self.kept.append(value)
+            flag = _FLAG_REF
+
+        kind = type(value)
+        if kind is int:
+            if -0x80000000 <= value <= 0x7FFFFFFF:
+                out.append(_TYPE_INT | flag)
+                out.extend(_pack_long(value))
+            else:
+                out.append(_TYPE_LONG | flag)
+                out.extend(_long_digits(value))
+            self.depth -= 1
+        elif kind is float:
+            if written_version > 1:
+                out.append(_TYPE_BINARY_FLOAT | flag)
+                out.extend(_pack_double(value))
+            else:
+                out.append(_TYPE_FLOAT | flag)
+                self._string_piece(_float_text(value))
+            self.depth -= 1
+        elif kind is complex:
+            if written_version > 1:
+                out.append(_TYPE_BINARY_COMPLEX | flag)
+                out.extend(_pack_double(value.real))
+                out.extend(_pack_double(value.imag))
+            else:
+                out.append(_TYPE_COMPLEX | flag)
+                self._string_piece(_float_text(value.real))
+                self._string_piece(_float_text(value.imag))
+            self.depth -= 1
+        elif kind is bytes:
+            out.append(_TYPE_STRING | flag)
+            out.extend(_pack_size(len(value)))
+            out.extend(value)
+            self.depth -= 1
+        elif kind is str:
+            self._write_text(value, flag)
+            self.depth -= 1
+        elif kind is tuple:
+            count = len(value)
+            if written_version >= 4 and count < 256:
+                out.append(_TYPE_SMALL_TUPLE | flag)
+                out.append(count)
+            else:
+                out.append(_TYPE_TUPLE | flag)
+                out.extend(_pack_size(count))
+            stack.append(("pop", None))
+            for index in range(count - 1, -1, -1):
+                stack.append(("value", value[index]))
+        elif kind is list:
+            out.append(_TYPE_LIST | flag)
+            out.extend(_pack_size(len(value)))
+            stack.append(("pop", None))
+            for index in range(len(value) - 1, -1, -1):
+                stack.append(("value", value[index]))
+        elif kind is dict:
+            out.append(_TYPE_DICT | flag)
+            stack.append(("pop", None))
+            stack.append(("raw", bytes([_TYPE_NULL])))
+            items = list(value.items())
+            for index in range(len(items) - 1, -1, -1):
+                key, item = items[index]
+                stack.append(("value", item))
+                stack.append(("value", key))
+        elif kind is set or kind is frozenset:
+            out.append((_TYPE_SET if kind is set else _TYPE_FROZENSET) | flag)
+            out.extend(_pack_size(len(value)))
+            order = sorted(value, key=self._sort_key)
+            stack.append(("pop", None))
+            for index in range(len(order) - 1, -1, -1):
+                stack.append(("value", order[index]))
+        elif isinstance(value, types.CodeType):
+            if not self.allow_code:
+                raise ValueError("marshalling code objects is disallowed")
+            out.append(_TYPE_CODE | flag)
+            parts = _code_pieces(value)
+            source = parts[1]
+            unit = self.sources.get(source)
+            if unit is None:
+                unit = len(self.sources)
+                self.sources[source] = unit
+                out.extend(_pack_size(unit))
+                encoded = source.encode("utf-8", "surrogatepass")
+                out.extend(_pack_size(len(encoded)))
+                out.extend(encoded)
+            else:
+                out.extend(_pack_size(unit))
+            self.pending.add(id(value))
+            stack.append(("unpend", id(value)))
+            stack.append(("pop", None))
+            stack.append(("value", parts[:1] + parts[2:]))
+        elif kind is slice:
+            if written_version < 5:
+                raise ValueError("unmarshallable object")
+            out.append(_TYPE_SLICE | flag)
+            self.pending.add(id(value))
+            stack.append(("unpend", id(value)))
+            stack.append(("pop", None))
+            stack.append(("value", value.step))
+            stack.append(("value", value.stop))
+            stack.append(("value", value.start))
+        else:
+            try:
+                view = memoryview(value)
+            except TypeError:
+                raise ValueError("unmarshallable object")
+            data = view.tobytes()
+            out.append(_TYPE_STRING | flag)
+            out.extend(_pack_size(len(data)))
+            out.extend(data)
+            self.depth -= 1
+
+    def _string_piece(self, data):
+        self.out.append(len(data))
+        self.out.extend(data)
+
+    def _sort_key(self, element):
+        fresh = _Writer(self.version, self.allow_code)
+        fresh.write(element)
+        return bytes(fresh.out)
+
+    def _write_text(self, value, flag):
+        out = self.out
+        interned = _is_interned(value)
+        if self.version >= 4 and _is_ascii(value):
+            text = value.encode("ascii")
+            if len(value) < 256:
+                out.append(
+                    (_TYPE_SHORT_ASCII_INTERNED if interned else _TYPE_SHORT_ASCII)
+                    | flag
+                )
+                out.append(len(value))
+            else:
+                out.append(
+                    (_TYPE_ASCII_INTERNED if interned else _TYPE_ASCII) | flag
+                )
+                out.extend(_pack_size(len(value)))
+            out.extend(text)
+            return
+        try:
+            text = value.encode("utf-8", "surrogatepass")
+        except Exception:
+            try:
+                text = value.encode("utf-8")
+            except Exception:
+                raise ValueError("unmarshallable object")
+        if self.version >= 3 and interned:
+            out.append(_TYPE_INTERNED | flag)
+        else:
+            out.append(_TYPE_UNICODE | flag)
+        out.extend(_pack_size(len(text)))
+        out.extend(text)
+
+
+class _ListFrame:
+    __slots__ = ("box", "left", "result")
+
+    def __init__(self, box, count):
+        self.box = box
+        self.left = count
+        self.result = box
+
+    def feed(self, value):
+        if value is _NULL:
+            raise TypeError("NULL object in marshal data for list")
+        self.box.append(value)
+        if isinstance(value, _Pending):
+            value.locations.append((self.box, len(self.box) - 1))
+        self.left -= 1
+        return self.left == 0
+
+
+class _TupleFrame:
+    __slots__ = ("memo", "index", "pending", "collected", "left", "result")
+
+    def __init__(self, memo, index, pending, count):
+        self.memo = memo
+        self.index = index
+        self.pending = pending
+        self.collected = []
+        self.left = count
+        self.result = None
+
+    def feed(self, value):
+        if value is _NULL:
+            raise TypeError("NULL object in marshal data for tuple")
+        self.collected.append(value)
+        self.left -= 1
+        if self.left:
+            return False
+        for element in self.collected:
+            if element is self.pending:
+                raise ValueError("bad marshal data (recursive tuple)")
+        made = tuple(self.collected)
+        for box, key in self.pending.locations:
+            box[key] = made
+        if self.index is not None:
+            self.memo[self.index] = made
+        self.result = made
+        return True
+
+
+class _DictFrame:
+    __slots__ = ("box", "expecting_key", "key", "result")
+
+    def __init__(self, box):
+        self.box = box
+        self.expecting_key = True
+        self.key = None
+        self.result = box
+
+    def feed(self, value):
+        if self.expecting_key:
+            if value is _NULL:
+                self.result = self.box
+                return True
+            if isinstance(value, _Pending):
+                raise ValueError("bad marshal data (recursive dict key)")
+            self.key = value
+            self.expecting_key = False
+            return False
+        if value is _NULL:
+            self.result = self.box
+            return True
+        self.box[self.key] = value
+        if isinstance(value, _Pending):
+            value.locations.append((self.box, self.key))
+        self.expecting_key = True
+        return False
+
+
+class _SetFrame:
+    __slots__ = ("box", "left", "result")
+
+    def __init__(self, box, count):
+        self.box = box
+        self.left = count
+        self.result = box
+
+    def feed(self, value):
+        if value is _NULL:
+            raise TypeError("NULL object in marshal data for set")
+        if isinstance(value, _Pending):
+            raise ValueError("bad marshal data (recursive set)")
+        self.box.add(value)
+        self.left -= 1
+        return self.left == 0
+
+
+class _FrozenFrame:
+    __slots__ = ("memo", "index", "collected", "left", "result")
+
+    def __init__(self, memo, index, count):
+        self.memo = memo
+        self.index = index
+        self.collected = []
+        self.left = count
+        self.result = None
+
+    def feed(self, value):
+        if value is _NULL:
+            raise TypeError("NULL object in marshal data for set")
+        if isinstance(value, _Pending):
+            raise ValueError("bad marshal data (recursive set)")
+        self.collected.append(value)
+        self.left -= 1
+        if self.left:
+            return False
+        made = frozenset(self.collected)
+        if self.index is not None:
+            self.memo[self.index] = made
+        self.result = made
+        return True
+
+
+class _SliceFrame:
+    __slots__ = ("memo", "index", "parts", "left", "result")
+
+    def __init__(self, memo, index):
+        self.memo = memo
+        self.index = index
+        self.parts = []
+        self.left = 3
+        self.result = None
+
+    def feed(self, value):
+        if value is _NULL:
+            raise ValueError("bad marshal data (NULL in slice)")
+        if isinstance(value, _Pending):
+            raise ValueError("bad marshal data (invalid reference)")
+        self.parts.append(value)
+        self.left -= 1
+        if self.left:
+            return False
+        made = slice(self.parts[0], self.parts[1], self.parts[2])
+        if self.index is not None:
+            self.memo[self.index] = made
+        self.result = made
+        return True
+
+
+class _CodeFrame:
+    __slots__ = ("memo", "index", "codes", "source", "result")
+
+    def __init__(self, memo, index, codes, source):
+        self.memo = memo
+        self.index = index
+        self.codes = codes
+        self.source = source
+        self.result = None
+
+    # Rebuild the retained body, then restore every serialized constant and flag.
+    def feed(self, value):
+        if not isinstance(value, tuple) or len(value) != 12:
+            raise ValueError("bad marshal data (code object)")
+        boundary, filename, mode, flags, firstlineno, name, qualname, consts, private, optimize, features, lineless = value
+        source = self.source
+        if (mode not in (0, 1, 2) or not isinstance(source, str)
+                or not isinstance(consts, tuple) or not isinstance(private, tuple)
+                or not isinstance(lineless, bool)):
+            raise ValueError("bad marshal data (code object)")
+        compile_flags = features
+        key = (source, filename, mode, optimize, compile_flags)
+        compiled = self.codes.get(key)
+        if compiled is None:
+            block = compile(source, filename, _MODE_NAMES[mode], flags=compile_flags,
+                            dont_inherit=True, optimize=optimize)
+            compiled = (block, _code_index(block))
+            self.codes[key] = compiled
+        block, bodies = compiled
+        result = block if boundary == -1 else bodies.get(boundary)
+        if result is None:
+            raise ValueError("bad marshal data (code object)")
+        restored = list(consts)
+        for at in private:
+            if (not isinstance(at, int) or at < 0 or at >= len(restored)
+                    or at >= len(result.co_consts) or restored[at] is not None
+                    or not isinstance(result.co_consts[at], type)):
+                raise ValueError("bad marshal data (code object)")
+            restored[at] = result.co_consts[at]
+        if boundary == -1:
+            result = result.replace(co_consts=tuple(restored), co_flags=flags)
+        else:
+            result = result.replace(co_consts=tuple(restored), co_flags=flags,
+                                    co_name=name, co_qualname=qualname,
+                                    co_firstlineno=firstlineno)
+        if lineless:
+            result = result.replace(co_linetable=b"")
+        if self.index is not None:
+            self.memo[self.index] = result
+        self.result = result
+        return True
+
+
+_NULL = object()
+_NO_RESULT = object()
+
+
+class _Reader:
+    def __init__(self, data, file, allow_code):
+        self.data = data
+        self.file = file
+        # Native binary streams already return exact bytes; subclasses keep readinto validation.
+        self.read_bytes = file.read if type(file) in (io.FileIO, io.BufferedReader, io.BufferedRandom, io.BytesIO) else None
+        self.allow_code = allow_code
+        self.at = 0
+        self.memo = []
+        self.frames = []
+        self.codes = {}
+        self.sources = []
+        self.depth = 0
+
+    def _bytes(self, count):
+        if self.data is not None:
+            end = self.at + count
+            if end > len(self.data):
+                raise EOFError("marshal data too short")
+            piece = self.data[self.at:end]
+            self.at = end
+            return piece
+        if count == 0:
+            return b""
+        if self.read_bytes is not None:
+            piece = self.read_bytes(count)
+            if len(piece) != count:
+                raise EOFError("EOF read where not expected")
+            return piece
+        buffer = bytearray(count)
+        try:
+            before = self.file.tell()
+        except (AttributeError, OSError):
+            before = None
+        if not hasattr(self.file, "readinto"):
+            piece = self.file.read(count)
+            if not isinstance(piece, bytes):
+                raise TypeError("file.read() returned not bytes but " + type(piece).__name__)
+            if len(piece) > count:
+                raise ValueError("read() returned too much data: %d bytes requested, %d returned" % (count, len(piece)))
+            if len(piece) != count:
+                raise EOFError("EOF read where not expected")
+            return piece
+        try:
+            read = self.file.readinto(memoryview(buffer))
+        except ValueError as fault:
+            # A buffered stream handed a target that only part of one
+            # refill can fill may copy more than the target can take,
+            # though the bytes it was to copy are all there.  What it
+            # did copy stands at the front of the target and the stream
+            # now stands just past it, so the rest is taken through
+            # read, which hands back what was asked for and no more: a
+            # load still leaves the stream where the object it read
+            # ended.
+            if before is None or "memoryview" not in str(fault):
+                raise
+            copied = self.file.tell() - before
+            if copied < 0 or copied > count:
+                raise
+            rest = self.file.read(count - copied)
+            if rest is None or len(rest) != count - copied:
+                raise EOFError("EOF read where not expected")
+            return bytes(buffer[:copied]) + bytes(rest)
+        if read is None:
+            raise EOFError("EOF read where not expected")
+        if read > count:
+            raise ValueError(
+                "read() returned too much data: %d bytes requested, %d returned"
+                % (count, read)
+            )
+        if read != count:
+            raise EOFError("EOF read where not expected")
+        return bytes(buffer)
+
+    def _byte(self):
+        if self.data is not None:
+            if self.at >= len(self.data):
+                raise EOFError("EOF read where object expected")
+            value = self.data[self.at]
+            self.at += 1
+            return value
+        piece = self._bytes(1)
+        return piece[0]
+
+    def _long(self):
+        raw = self._bytes(4)
+        value = raw[0] | (raw[1] << 8) | (raw[2] << 16) | (raw[3] << 24)
+        if value & 0x80000000:
+            value -= 0x100000000
+        return value
+
+    def _short(self):
+        raw = self._bytes(2)
+        value = raw[0] | (raw[1] << 8)
+        if value & 0x8000:
+            value -= 0x10000
+        return value
+
+    def _pylong(self):
+        size = self._long()
+        if size == 0:
+            return 0
+        negative = size < 0
+        digits = -size if negative else size
+        if digits > _SIZE32_MAX:
+            raise ValueError("bad marshal data (long size out of range)")
+        value = 0
+        shift = 0
+        for index in range(digits):
+            digit = self._short()
+            if digit < 0 or digit > 0x8000:
+                raise ValueError("bad marshal data (digit out of range in long)")
+            if index == digits - 1 and digit == 0:
+                raise ValueError("bad marshal data (unnormalized long data)")
+            value |= digit << shift
+            shift += 15
+        return -value if negative else value
+
+    def _float_text(self):
+        count = self._byte()
+        return float(self._bytes(count).decode("latin-1"))
+
+    def _ref(self, flag, value):
+        if flag:
+            self.memo.append(value)
+
+    def _step(self):
+        code = self._byte()
+        tag = code & 0x7F
+        flag = code & _FLAG_REF
+        self.depth += 1
+        if self.depth > _MAX_DEPTH:
+            self.depth -= 1
+            raise ValueError("recursion limit exceeded")
+
+        if tag == 0 and not flag and self.file is not None and not self.frames:
+            try:
+                prefix = self._bytes(len(_code_prefix) - 1)
+            except EOFError:
+                raise ValueError("bad marshal data (unknown type code)")
+            if prefix != _code_prefix[1:]:
+                raise ValueError("bad marshal data (unknown type code)")
+            if not self.allow_code:
+                raise ValueError("unmarshalling code objects is disallowed")
+            # Legacy native cache envelopes occupy the remainder of the stream.
+            value = _code_unpack(self.file.read())
+            self.depth -= 1
+            return value
+        if tag == _TYPE_NULL:
+            self.depth -= 1
+            return _NULL
+        if tag == _TYPE_NONE:
+            self.depth -= 1
+            return None
+        if tag == _TYPE_TRUE:
+            self.depth -= 1
+            return True
+        if tag == _TYPE_FALSE:
+            self.depth -= 1
+            return False
+        if tag == _TYPE_STOPITER:
+            self.depth -= 1
+            return StopIteration
+        if tag == _TYPE_ELLIPSIS:
+            self.depth -= 1
+            return Ellipsis
+        if tag == _TYPE_INT:
+            value = _fresh_whole(self._long())
+            self._ref(flag, value)
+            self.depth -= 1
+            return value
+        if tag == _TYPE_INT64:
+            value = _fresh_whole(int.from_bytes(self._bytes(8), "little", signed=True))
+            self._ref(flag, value)
+            self.depth -= 1
+            return value
+        if tag == _TYPE_LONG:
+            value = _fresh_whole(self._pylong())
+            self._ref(flag, value)
+            self.depth -= 1
+            return value
+        if tag == _TYPE_FLOAT:
+            value = self._float_text()
+            self._ref(flag, value)
+            self.depth -= 1
+            return value
+        if tag == _TYPE_BINARY_FLOAT:
+            value = struct.unpack("<d", self._bytes(8))[0]
+            self._ref(flag, value)
+            self.depth -= 1
+            return value
+        if tag == _TYPE_COMPLEX:
+            real = self._float_text()
+            imaginary = self._float_text()
+            value = complex(real, imaginary)
+            self._ref(flag, value)
+            self.depth -= 1
+            return value
+        if tag == _TYPE_BINARY_COMPLEX:
+            real = struct.unpack("<d", self._bytes(8))[0]
+            imaginary = struct.unpack("<d", self._bytes(8))[0]
+            value = complex(real, imaginary)
+            self._ref(flag, value)
+            self.depth -= 1
+            return value
+        if tag == _TYPE_STRING:
+            count = self._long()
+            if count < 0 or count > _SIZE32_MAX:
+                raise ValueError("bad marshal data (bytes object size out of range)")
+            value = self._bytes(count)
+            self._ref(flag, value)
+            self.depth -= 1
+            return value
+        if tag == _TYPE_SHORT_ASCII or tag == _TYPE_SHORT_ASCII_INTERNED:
+            count = self._byte()
+            value = self._bytes(count).decode("latin-1")
+            if tag == _TYPE_SHORT_ASCII_INTERNED:
+                value = sys.intern(value)
+            self._ref(flag, value)
+            self.depth -= 1
+            return value
+        if tag == _TYPE_ASCII or tag == _TYPE_ASCII_INTERNED:
+            count = self._long()
+            if count < 0 or count > _SIZE32_MAX:
+                raise ValueError("bad marshal data (string size out of range)")
+            value = self._bytes(count).decode("latin-1")
+            if tag == _TYPE_ASCII_INTERNED:
+                value = sys.intern(value)
+            self._ref(flag, value)
+            self.depth -= 1
+            return value
+        if tag == _TYPE_INTERNED or tag == _TYPE_UNICODE:
+            count = self._long()
+            if count < 0 or count > _SIZE32_MAX:
+                raise ValueError("bad marshal data (string size out of range)")
+            if count == 0:
+                value = ""
+            else:
+                raw = self._bytes(count)
+                value = raw.decode("utf-8", "surrogatepass")
+            if tag == _TYPE_INTERNED:
+                value = sys.intern(value)
+            self._ref(flag, value)
+            self.depth -= 1
+            return value
+        if tag == _TYPE_SMALL_TUPLE or tag == _TYPE_TUPLE:
+            if tag == _TYPE_SMALL_TUPLE:
+                count = self._byte()
+            else:
+                count = self._long()
+                if count < 0 or count > _SIZE32_MAX:
+                    raise ValueError("bad marshal data (tuple size out of range)")
+            if count == 0:
+                value = ()
+                self._ref(flag, value)
+                self.depth -= 1
+                return value
+            if flag:
+                index = len(self.memo)
+                pending = _Pending()
+                self.memo.append(pending)
+            else:
+                index = None
+                pending = _Pending()
+            self.frames.append(_TupleFrame(self.memo, index, pending, count))
+            return _NO_RESULT
+        if tag == _TYPE_LIST:
+            count = self._long()
+            if count < 0 or count > _SIZE32_MAX:
+                raise ValueError("bad marshal data (list size out of range)")
+            box = []
+            if flag:
+                self.memo.append(box)
+            if count == 0:
+                self.depth -= 1
+                return box
+            self.frames.append(_ListFrame(box, count))
+            return _NO_RESULT
+        if tag == _TYPE_DICT:
+            box = {}
+            if flag:
+                self.memo.append(box)
+            self.frames.append(_DictFrame(box))
+            return _NO_RESULT
+        if tag == _TYPE_SET:
+            count = self._long()
+            if count < 0 or count > _SIZE32_MAX:
+                raise ValueError("bad marshal data (set size out of range)")
+            box = set()
+            if flag:
+                self.memo.append(box)
+            if count == 0:
+                self.depth -= 1
+                return box
+            self.frames.append(_SetFrame(box, count))
+            return _NO_RESULT
+        if tag == _TYPE_FROZENSET:
+            count = self._long()
+            if count < 0 or count > _SIZE32_MAX:
+                raise ValueError("bad marshal data (set size out of range)")
+            if count == 0:
+                value = frozenset()
+                self._ref(flag, value)
+                self.depth -= 1
+                return value
+            if flag:
+                index = len(self.memo)
+                self.memo.append(None)
+            else:
+                index = None
+            self.frames.append(_FrozenFrame(self.memo, index, count))
+            return _NO_RESULT
+        if tag == _TYPE_SLICE:
+            if flag:
+                index = len(self.memo)
+                self.memo.append(None)
+            else:
+                index = None
+            self.frames.append(_SliceFrame(self.memo, index))
+            return _NO_RESULT
+        if tag == _TYPE_CODE:
+            if not self.allow_code:
+                raise ValueError("unmarshalling code objects is disallowed")
+            if flag:
+                index = len(self.memo)
+                self.memo.append(None)
+            else:
+                index = None
+            unit = self._long()
+            if unit == len(self.sources):
+                size = self._long()
+                if size < 0:
+                    raise ValueError("bad marshal data (code source size out of range)")
+                source = self._bytes(size).decode("utf-8", "surrogatepass")
+                self.sources.append(source)
+            elif 0 <= unit < len(self.sources):
+                source = self.sources[unit]
+            else:
+                raise ValueError("bad marshal data (code source index out of range)")
+            self.frames.append(_CodeFrame(self.memo, index, self.codes, source))
+            return _NO_RESULT
+        if tag == _TYPE_REF:
+            index = self._long()
+            if index < 0 or index >= len(self.memo):
+                raise ValueError("bad marshal data (invalid reference)")
+            value = self.memo[index]
+            if value is None:
+                raise ValueError("bad marshal data (invalid reference)")
+            self.depth -= 1
+            return value
+        raise ValueError("bad marshal data (unknown type code)")
+
+    def read(self):
+        value = _NO_RESULT
+        while True:
+            if value is _NO_RESULT:
+                value = self._step()
+                if value is _NO_RESULT:
+                    continue
+            while self.frames:
+                frame = self.frames[-1]
+                if frame.feed(value):
+                    self.frames.pop()
+                    self.depth -= 1
+                    value = frame.result
+                    continue
+                value = _NO_RESULT
+                break
+            else:
+                if value is _NULL:
+                    raise TypeError("NULL object in marshal data for object")
+                return value
+
+
+def dumps(value, version=version, /, *, allow_code=True):
+    writer = _Writer(version, allow_code)
+    writer.write(value)
+    return bytes(writer.out)
+
+
+def dump(value, file, version=version, /, *, allow_code=True):
+    writer = _Writer(version, allow_code)
+    writer.write(value)
+    file.write(bytes(writer.out))
+
+
+def loads(data, /, *, allow_code=True):
+    if isinstance(data, str):
+        raise TypeError("a bytes-like object is required, not 'str'")
+    if isinstance(data, (bytes, bytearray)):
+        raw = bytes(data)
+    else:
+        try:
+            raw = bytes(memoryview(data))
+        except TypeError:
+            raise TypeError(
+                "a bytes-like object is required, not %r" % type(data).__name__
+            )
+    return _Reader(raw, None, allow_code).read()
+
+
+def load(file, /, *, allow_code=True):
+    probe = file.read(0)
+    if not isinstance(probe, bytes):
+        raise TypeError("file.read() returned not bytes but " + type(probe).__name__)
+    return _Reader(None, file, allow_code).read()
+
+
+def __getattr__(name):
+    raise AttributeError("module 'marshal' has no attribute '" + name + "'")
+
+
+# Private envelope retained for pickle callers.
 # A value handed out as bytes and taken back as itself. The writing is
 # this runtime's own and not the reference implementation's marshal
 # format, so what is written here is read back only here; it says so
@@ -13,7 +1013,7 @@
 import struct
 
 
-class _Writer:
+class _PickleWriter:
     def __init__(self, slices, refuse):
         self.pieces = []
         self.memo = {}
@@ -140,7 +1140,7 @@ class _Writer:
             self.refuse(value)
 
 
-class _Reader:
+class _PickleReader:
     def __init__(self, text):
         self.text = text
         self.at = 0
@@ -275,7 +1275,7 @@ def _slice_parts(value):
 
 
 def _write(value, slices, refuse):
-    writer = _Writer(slices, refuse)
+    writer = _PickleWriter(slices, refuse)
     writer.put(value)
     return writer.text().encode()
 
@@ -285,454 +1285,4 @@ def _read(data):
         raise TypeError('a str is not written-out bytes')
     if not data:
         raise EOFError('EOF read where object expected')
-    return _Reader(data.decode()).get()
-
-
-def _unwritable(value):
-    raise ValueError('unmarshallable object')
-
-
-# What is written and read by dumps, loads, dump and load below is the
-# reference implementation's marshal format (Python/marshal.c), so data
-# the reference wrote, such as the statistics file pstats reads, is read
-# here and data written here is read by the reference. The writing above
-# stays the private envelope that pickle builds on.
-#
-# Differences from the reference writer, none of which changes what
-# comes back: only objects that stand more than once in the data are
-# marked for later reference (the reference also marks small integers and
-# interned strings, whose reference counts this runtime does not keep),
-# and no string is written as interned. Code objects are not written.
-
-version = 5
-
-_FLAG_REF = 0x80
-_MAX_DEPTH = 2000
-
-
-def _unmarshallable():
-    raise ValueError('unmarshallable object')
-
-
-def _int32(number):
-    return (number & 0xffffffff).to_bytes(4, 'little')
-
-
-class _Counter:
-    # A first walk over the data finding the objects that stand twice.
-    def __init__(self):
-        self.seen = {}
-        self.kept = []
-
-    def walk(self, value, depth):
-        if depth > _MAX_DEPTH:
-            raise ValueError('object too deeply nested to marshal')
-        kind = type(value)
-        if kind is tuple or kind is list or kind is dict or kind is set or kind is frozenset \
-                or kind is str or kind is bytes:
-            where = id(value)
-            if where in self.seen:
-                self.seen[where] += 1
-                return
-            self.seen[where] = 1
-            self.kept.append(value)
-        else:
-            return
-        if kind is tuple or kind is list or kind is set or kind is frozenset:
-            for item in value:
-                self.walk(item, depth + 1)
-        elif kind is dict:
-            for key in value:
-                self.walk(key, depth + 1)
-                self.walk(value[key], depth + 1)
-
-
-class _Out:
-    def __init__(self, edition):
-        self.edition = edition
-        self.parts = []
-        self.places = {}
-        self.counts = {}
-        self.kept = []
-
-    def result(self):
-        return b''.join(self.parts)
-
-    def mark(self, value):
-        # True when the object was written before and is now written as
-        # a reference to it; otherwise its type byte gets the flag if it
-        # will be wanted again, and the caller writes the object.
-        if self.edition < 3:
-            return 0
-        where = id(value)
-        if self.counts.get(where, 0) < 2:
-            return 0
-        if where in self.places:
-            self.parts.append(b'r' + _int32(self.places[where]))
-            return -1
-        self.places[where] = len(self.places)
-        return _FLAG_REF
-
-    def put(self, value, depth):
-        parts = self.parts
-        if depth > _MAX_DEPTH:
-            raise ValueError('object too deeply nested to marshal')
-        if value is None:
-            parts.append(b'N')
-            return
-        if value is True:
-            parts.append(b'T')
-            return
-        if value is False:
-            parts.append(b'F')
-            return
-        if value is Ellipsis:
-            parts.append(b'.')
-            return
-        if value is StopIteration:
-            parts.append(b'S')
-            return
-        kind = type(value)
-        if kind is int:
-            if -2147483648 <= value <= 2147483647:
-                parts.append(b'i' + _int32(value))
-                return
-            self.put_long(value)
-            return
-        if kind is float:
-            if self.edition > 1:
-                parts.append(b'g' + struct.pack('<d', value))
-            else:
-                text = repr(value).encode('ascii')
-                parts.append(b'f' + bytes([len(text)]) + text)
-            return
-        if kind is complex:
-            if self.edition > 1:
-                parts.append(b'y' + struct.pack('<d', value.real) + struct.pack('<d', value.imag))
-            else:
-                one = repr(value.real).encode('ascii')
-                two = repr(value.imag).encode('ascii')
-                parts.append(b'x' + bytes([len(one)]) + one + bytes([len(two)]) + two)
-            return
-        if kind is str:
-            flag = self.mark(value)
-            if flag < 0:
-                return
-            try:
-                data = value.encode('utf-8', 'surrogatepass')
-            except Exception:
-                _unmarshallable()
-            if self.edition >= 4 and value.isascii():
-                if len(data) < 256:
-                    parts.append(bytes([ord('z') | flag, len(data)]) + data)
-                else:
-                    parts.append(bytes([ord('a') | flag]) + _int32(len(data)) + data)
-            else:
-                parts.append(bytes([ord('u') | flag]) + _int32(len(data)) + data)
-            return
-        if kind is bytes or kind is bytearray or kind is memoryview:
-            flag = self.mark(value) if kind is bytes else 0
-            if flag < 0:
-                return
-            data = bytes(value)
-            parts.append(bytes([ord('s') | flag]) + _int32(len(data)) + data)
-            return
-        if kind is tuple:
-            flag = self.mark(value)
-            if flag < 0:
-                return
-            if self.edition >= 4 and len(value) < 256:
-                parts.append(bytes([ord(')') | flag, len(value)]))
-            else:
-                parts.append(bytes([ord('(') | flag]) + _int32(len(value)))
-            for item in value:
-                self.put(item, depth + 1)
-            return
-        if kind is list:
-            flag = self.mark(value)
-            if flag < 0:
-                return
-            parts.append(bytes([ord('[') | flag]) + _int32(len(value)))
-            for item in value:
-                self.put(item, depth + 1)
-            return
-        if kind is dict:
-            flag = self.mark(value)
-            if flag < 0:
-                return
-            parts.append(bytes([ord('{') | flag]))
-            for key in value:
-                self.put(key, depth + 1)
-                self.put(value[key], depth + 1)
-            parts.append(b'0')
-            return
-        if kind is set or kind is frozenset:
-            flag = self.mark(value)
-            if flag < 0:
-                return
-            parts.append(bytes([ord('<' if kind is set else '>') | flag]) + _int32(len(value)))
-            for item in value:
-                self.put(item, depth + 1)
-            return
-        if kind is slice and self.edition >= 5:
-            parts.append(b':')
-            self.put(value.start, depth + 1)
-            self.put(value.stop, depth + 1)
-            self.put(value.step, depth + 1)
-            return
-        _unmarshallable()
-
-    def put_long(self, number):
-        negative = number < 0
-        rest = -number if negative else number
-        digits = []
-        while rest:
-            digits.append(rest & 0x7fff)
-            rest >>= 15
-        size = len(digits)
-        self.parts.append(b'l' + _int32(-size if negative else size)
-                          + b''.join(digit.to_bytes(2, 'little') for digit in digits))
-
-
-def dumps(value, version=version, /, *, allow_code=True):
-    """Return the bytes object that would be written to a file by dump(value, file).
-
-    The value must be a supported type.  Raise a ValueError exception if
-    value has (or contains an object that has) an unsupported type.
-    """
-    if not isinstance(version, int):
-        raise TypeError("'" + type(version).__name__ + "' object cannot be interpreted as an integer")
-    out = _Out(version)
-    if version >= 3:
-        counter = _Counter()
-        counter.walk(value, 0)
-        out.counts = counter.seen
-        out.kept = counter.kept
-    out.put(value, 0)
-    return out.result()
-
-
-def dump(value, file, version=version, /, *, allow_code=True):
-    """Write the value on the open file.
-
-    The value must be a supported type.  The file must be a writeable
-    binary file.
-    """
-    file.write(dumps(value, version))
-
-
-class _In:
-    # `buf` holds the bytes taken so far and `at` the place read up to;
-    # a reader over a file takes from it only what is wanted, so that
-    # the file stands just after the object that was read.
-    def __init__(self, buf, source):
-        self.buf = buf
-        self.at = 0
-        self.source = source
-        self.refs = []
-        self.interned = []
-
-    def need(self, size):
-        end = self.at + size
-        if end > len(self.buf):
-            if self.source is not None:
-                more = self.source(end - len(self.buf))
-                if more:
-                    self.buf = self.buf + bytes(more)
-            if end > len(self.buf):
-                if self.at == 0 and size == 1:
-                    raise EOFError('EOF read where object expected')
-                raise EOFError('marshal data too short')
-
-    def read(self, size):
-        self.need(size)
-        start = self.at
-        self.at = start + size
-        return self.buf[start:self.at]
-
-    def byte(self):
-        self.need(1)
-        self.at += 1
-        return self.buf[self.at - 1]
-
-    def int32(self):
-        return int.from_bytes(self.read(4), 'little', signed=True)
-
-    def size32(self):
-        count = self.int32()
-        if count < 0:
-            raise ValueError('bad marshal data (size out of range)')
-        return count
-
-    def text_float(self):
-        size = self.byte()
-        return float(self.read(size).decode('ascii'))
-
-    def get(self, depth, closing=False):
-        if depth > _MAX_DEPTH:
-            raise ValueError('recursion limit exceeded')
-        code = self.byte()
-        flag = code & _FLAG_REF
-        tag = chr(code & 0x7f)
-        refs = self.refs
-        if tag == '0':
-            if closing:
-                return _UNSET
-            raise TypeError('NULL object in marshal data for object')
-        if tag == 'N':
-            return None
-        if tag == 'T':
-            return True
-        if tag == 'F':
-            return False
-        if tag == '.':
-            return Ellipsis
-        if tag == 'S':
-            return StopIteration
-        if tag == 'r':
-            index = self.int32()
-            if index < 0 or index >= len(refs):
-                raise ValueError('bad marshal data (invalid reference)')
-            if refs[index] is _UNSET:
-                raise ValueError('bad marshal data (invalid reference)')
-            return refs[index]
-        if tag == '(' or tag == '[' or tag == '<' or tag == '>':
-            return self.sequence(tag, self.size32(), flag, depth)
-        if tag == ')':
-            return self.sequence('(', self.byte(), flag, depth)
-        if tag == '{':
-            place = self.reserve(flag)
-            made = {}
-            if place >= 0:
-                refs[place] = made
-            while True:
-                key = self.get(depth + 1, True)
-                if key is _UNSET:
-                    break
-                made[key] = self.get(depth + 1)
-            return made
-        if tag == ':':
-            place = self.reserve(flag)
-            start = self.get(depth + 1)
-            stop = self.get(depth + 1)
-            step = self.get(depth + 1)
-            made = slice(start, stop, step)
-            if place >= 0:
-                refs[place] = made
-            return made
-        if tag == 'i':
-            made = self.int32()
-        elif tag == 'I':
-            made = int.from_bytes(self.read(8), 'little', signed=True)
-        elif tag == 'l':
-            count = self.int32()
-            size = -count if count < 0 else count
-            number = 0
-            shift = 0
-            for _ in range(size):
-                digit = int.from_bytes(self.read(2), 'little')
-                if digit > 0x7fff:
-                    raise ValueError('bad marshal data (digit out of range in long)')
-                number |= digit << shift
-                shift += 15
-            if size and number >> (shift - 15) == 0:
-                raise ValueError('bad marshal data (unnormalized long data)')
-            made = -number if count < 0 else number
-        elif tag == 'f':
-            made = self.text_float()
-        elif tag == 'g':
-            made = struct.unpack('<d', self.read(8))[0]
-        elif tag == 'x':
-            real = self.text_float()
-            made = complex(real, self.text_float())
-        elif tag == 'y':
-            real = struct.unpack('<d', self.read(8))[0]
-            made = complex(real, struct.unpack('<d', self.read(8))[0])
-        elif tag == 's':
-            made = self.read(self.size32())
-        elif tag == 'u' or tag == 't':
-            made = self.read(self.size32()).decode('utf-8', 'surrogatepass')
-            if tag == 't':
-                self.interned.append(made)
-        elif tag == 'a' or tag == 'A':
-            made = self.read(self.size32()).decode('ascii')
-            if tag == 'A':
-                self.interned.append(made)
-        elif tag == 'z' or tag == 'Z':
-            made = self.read(self.byte()).decode('ascii')
-            if tag == 'Z':
-                self.interned.append(made)
-        elif tag == 'R':
-            index = self.int32()
-            if index < 0 or index >= len(self.interned):
-                raise ValueError('bad marshal data (string ref out of range)')
-            return self.interned[index]
-        elif tag == 'c':
-            raise ValueError('bad marshal data (code objects are not supported)')
-        else:
-            raise ValueError('bad marshal data (unknown type code)')
-        if flag:
-            refs.append(made)
-        return made
-
-    def reserve(self, flag):
-        if not flag:
-            return -1
-        self.refs.append(_UNSET)
-        return len(self.refs) - 1
-
-    def sequence(self, tag, count, flag, depth):
-        place = self.reserve(flag)
-        if tag == '[':
-            made = []
-            if place >= 0:
-                self.refs[place] = made
-            for _ in range(count):
-                made.append(self.get(depth + 1))
-            return made
-        items = [self.get(depth + 1) for _ in range(count)]
-        if tag == '(':
-            made = tuple(items)
-        elif tag == '<':
-            made = set(items)
-        else:
-            made = frozenset(items)
-        if place >= 0:
-            self.refs[place] = made
-        return made
-
-
-_UNSET = object()
-
-
-def _bytes_of(data):
-    if isinstance(data, str) or not isinstance(data, (bytes, bytearray, memoryview)):
-        raise TypeError("a bytes-like object is required, not '" + type(data).__name__ + "'")
-    return bytes(data)
-
-
-def loads(data, /, *, allow_code=True):
-    """Convert the bytes-like object to a value.
-
-    If no valid value is found, raise EOFError, ValueError or TypeError.
-    Extra bytes in the input are ignored.
-    """
-    return _In(_bytes_of(data), None).get(0)
-
-
-def load(file, /, *, allow_code=True):
-    """Read one value from the open file and return it.
-
-    If no valid value is read (e.g. because the data has a different Python
-    version's incompatible marshal format), raise EOFError, ValueError or
-    TypeError.
-
-    Note: If an object containing an unsupported type was marshalled with
-    dump(), load() will substitute None for the unmarshallable type.
-    """
-    return _In(b'', file.read).get(0)
-
-
-# Report absent globals so callers can continue looking in other modules.
-def __getattr__(name):
-    raise AttributeError("module 'marshal' has no attribute '" + name + "'")
+    return _PickleReader(data.decode()).get()

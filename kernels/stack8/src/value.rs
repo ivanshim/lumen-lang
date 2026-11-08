@@ -15,6 +15,19 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 
 use crate::code::Routine;
 
+/// Retain immutable code content and its dictionary key and hash for one routine.
+#[derive(Debug, Default)]
+pub(crate) struct CodeContent {
+    content: std::cell::OnceCell<Value>,
+    address: std::cell::OnceCell<Result<String, &'static str>>,
+    hash: std::cell::OnceCell<Option<i64>>,
+}
+
+impl Clone for CodeContent {
+    /// Start fresh because a routine clone may replace any code metadata.
+    fn clone(&self) -> Self { Self::default() }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub enum Sort {
@@ -1580,6 +1593,12 @@ impl Value {
             // A loose member descriptor is addressed by the descriptor it
             // is kept as: two readings of the same member, and of the
             // same member on the same kind, are the one key.
+            Value::Adapter(held) if held.0 == 7 => match held.1.first() {
+                Some(Value::Routine(code)) => {
+                    Self::routine_address(code)
+                }
+                _ => Ok(format!("descriptor:{:p}", Rc::as_ptr(held))),
+            },
             Value::Adapter(held) => Ok(format!("descriptor:{:p}", Rc::as_ptr(held))),
             Value::Bond(cell) => cell.borrow().member_key(),
             _ => Err(""),
@@ -1737,7 +1756,7 @@ impl Value {
     /// Select the content fields of a compiled source, excluding its file
     /// and the private markers used when its constants are replaced.
     pub(crate) fn code_content_field(key: &str) -> bool {
-        matches!(key, "source" | "mode" | "co_flags" | "co_firstlineno" | "co_consts")
+        matches!(key, "source" | "mode" | "co_flags" | "co_firstlineno" | "co_consts" | "\0compile_features" | "co_optimize")
     }
 
     fn source_code_content(object: &Instance) -> Vec<Value> {
@@ -1753,26 +1772,38 @@ impl Value {
         }).collect()
     }
 
-    /// Describe a routine's body within its token stream and its current
-    /// constant table. Source and boundary identify the compiled instructions;
-    /// replacements change the constants, not that original stream.
-    fn routine_content(body: &crate::code::Routine) -> Value {
-        Value::tuple(vec![
-            Value::Text(body.source_content.get_or_init(|| Rc::from(crate::lex::token_image(&body.source_tokens))).clone()), Value::Small(body.source_end as i64),
-            Value::text(&body.ident), Value::Small(body.declared_on as i64),
-            Value::Small(body.code_flags | body.future_bits), Value::Flag(body.lineless),
-            body.location_bytes.clone().unwrap_or(Value::Null),
-            Value::Bytes(Rc::new(RefCell::new(body.native_image())), false, Rc::from("bytes")),
-            Value::tuple(body.handler_image().into_iter().map(|byte| Value::Small(byte as i64)).collect()),
-            Value::tuple(body.formals.iter().map(|name| Value::text(name)).collect()),
-            Value::tuple(body.parameter_rules.as_deref().unwrap_or_default().iter().map(|rule| Value::Small(*rule as i64)).collect()),
-            body.rest_at.map_or(Value::Null, |at| Value::Small(at as i64)),
-            Value::tuple(body.code_names.iter().map(|name| Value::text(name)).collect()),
-            Value::tuple(body.local_names.iter().map(|name| Value::text(name)).collect()),
-            Value::tuple(body.idents.iter().map(|name| Value::text(name)).collect()),
-            Value::tuple(body.cell_names.iter().filter(|name| !body.local_names.contains(name)).map(|name| Value::text(name)).collect()),
-            Value::tuple(body.code_constants.clone()),
-        ])
+    /// Compare emitted bodies and mutable metadata without compiler instance offsets.
+    fn routine_content(body: &crate::code::Routine) -> &Value {
+        body.code_content.content.get_or_init(|| {
+            let words = body.source_tokens.get(body.image_origin.0..body.source_end).unwrap_or(&[]);
+            let first_row = words.first().map_or(0, |word| word.row);
+            let mut coordinates = Vec::with_capacity(words.len() * 32);
+            for word in words {
+                for number in [word.row.saturating_sub(first_row) as u64, word.byte_column as u64,
+                    word.end_row.saturating_sub(first_row) as u64, word.byte_end_column as u64] {
+                    coordinates.extend_from_slice(&number.to_le_bytes());
+                }
+            }
+            let positions = Value::Bytes(Rc::new(RefCell::new(coordinates)), false, Rc::from("b"));
+            Value::tuple(vec![
+                positions,
+                if body.body_spelling.is_empty() {
+                    Value::tuple(vec![Value::Text(body.source_content.get_or_init(|| Rc::from(crate::lex::token_image(&body.source_tokens))).clone()), Value::Small(body.source_end as i64)])
+                } else { Value::Text(body.body_spelling.clone()) },
+                Value::text(&body.ident), Value::Small(i64::from(body.declared_on.max(1))),
+                Value::Small(body.code_flags | body.future_bits), Value::Flag(body.lineless),
+                body.location_bytes.as_ref().filter(|table| body.location_baseline.as_ref().map_or(true, |base| !base.equals(table))).cloned().unwrap_or(Value::Null),
+                body.instruction_image.as_ref().filter(|image| matches!(image, Value::Bytes(data, ..) if data.borrow().first() != Some(&1))).cloned().unwrap_or(Value::Null),
+                Value::tuple(body.handler_image().into_iter().map(|byte| Value::Small(byte as i64)).collect()),
+                Value::tuple(body.formals.iter().map(|name| Value::text(name)).collect()),
+                Value::tuple(body.parameter_rules.clone().unwrap_or_else(|| vec![0; body.formals.len()]).iter().map(|rule| Value::Small(*rule as i64)).collect()),
+                body.rest_at.map_or(Value::Null, |at| Value::Small(at as i64)),
+                Value::tuple(body.code_names.iter().map(|name| Value::text(name)).collect()),
+                Value::tuple(body.local_names.iter().map(|name| Value::text(name)).collect()),
+                Value::tuple(body.cell_names.iter().filter(|name| !body.local_names.contains(name)).map(|name| Value::text(name)).collect()),
+                Self::code_constants_content(&body.code_constants, body.initial_constants.as_deref().map(Vec::as_slice).unwrap_or(&body.code_constants)),
+            ])
+        })
     }
 
     /// Compare code constants recursively rather than comparing routine
@@ -1782,10 +1813,10 @@ impl Value {
         match (one, two) {
             (Value::Adapter(p), Value::Adapter(q)) if p.0 == 7 && q.0 == 7 => match (p.1.first(), q.1.first()) {
                 (Some(Value::Routine(a)), Some(Value::Routine(b))) =>
-                    Self::code_field_eq(&Self::routine_content(a), &Self::routine_content(b)),
+                    Self::code_field_eq(Self::routine_content(a), Self::routine_content(b)),
                 _ => Rc::ptr_eq(p, q),
             },
-            (Value::Routine(a), Value::Routine(b)) => Self::code_field_eq(&Self::routine_content(a), &Self::routine_content(b)),
+            (Value::Routine(a), Value::Routine(b)) => Self::code_field_eq(Self::routine_content(a), Self::routine_content(b)),
             (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| Self::code_field_eq(x, y)),
             (Value::Small(_) | Value::Huge(_), Value::Small(_) | Value::Huge(_)) => one.equals(two),
             (Value::Real(a), Value::Real(b)) => one.equals(two) && (!a.p.is_zero() || a.below == b.below),
@@ -1794,15 +1825,58 @@ impl Value {
         }
     }
 
+    /// Normalize only unchanged compiler class slots; user type constants retain identity.
+    fn code_constants_content(current: &[Value], original: &[Value]) -> Value {
+        Value::tuple(current.iter().enumerate().map(|(at, value)| match value {
+            Value::Class(kind) if original.get(at).is_some_and(|old| old.same_value(value)) =>
+                Value::tuple(vec![Value::text("compiler class"), Self::compiler_class_content(kind)]),
+            other => other.clone(),
+        }).collect())
+    }
+
+    /// Describe compiler class constants by their methods, independent of allocation.
+    fn compiler_class_content(kind: &crate::value::Class) -> Value {
+        Value::tuple(vec![Value::text(&kind.name), Value::tuple(kind.methods.iter().map(|(name, body)|
+            Value::tuple(vec![Value::text(name), Value::Routine(body.clone())])).collect())])
+    }
+
+    /// Reuse the collision-free content key for every dictionary lookup.
+    fn routine_address(body: &crate::code::Routine) -> Result<String, &'static str> {
+        body.code_content.address.get_or_init(|| Self::code_field_address(Self::routine_content(body))).clone()
+    }
+
+    /// Reuse the numeric hash without walking the source or constants again.
+    fn routine_hash(body: &crate::code::Routine) -> Option<i64> {
+        *body.code_content.hash.get_or_init(|| Self::code_field_hash(Self::routine_content(body)))
+    }
+
+    /// Encode recursive code content without treating a hash collision as identity.
+    fn code_field_address(value: &Value) -> Result<String, &'static str> {
+        match value {
+            Value::Adapter(parts) if parts.0 == 7 => match parts.1.first() {
+                Some(Value::Routine(body)) => Self::routine_address(body),
+                _ => value.member_key(),
+            },
+            Value::Routine(body) => Self::routine_address(body),
+            Value::Tuple(items) => {
+                let parts = items.iter().map(Self::code_field_address).collect::<Result<Vec<_>, _>>()?;
+                Ok(format!("code-row:{parts:?}"))
+            }
+            Value::Small(_) | Value::Huge(_) => Ok(format!("code-int:{}", value.as_big().map_err(|_| "")?)),
+            Value::Real(number) => Ok(format!("code-real:{}:{}", value.member_key()?, number.below)),
+            _ => Ok(format!("{:?}:{}", std::mem::discriminant(value), value.member_key()?)),
+        }
+    }
+
     /// Hash the same recursive content used by code comparison.
     pub(crate) fn code_field_hash(value: &Value) -> Option<i64> {
         match value {
             Value::Adapter(parts) if parts.0 == 7 => match parts.1.first() {
-                Some(Value::Routine(body)) => Self::code_field_hash(&Self::routine_content(body)),
+                Some(Value::Routine(body)) => Self::routine_hash(body),
                 _ => Some((Rc::as_ptr(parts) as usize >> 4) as i64),
             },
-            Value::Routine(body) => Self::code_field_hash(&Self::routine_content(body)),
-            Value::Object(object) if object.class_now().constants.iter().any(|(key, value)| key == "\0kind" && matches!(value, Value::Text(kind) if kind.as_ref() == "code")) => {
+            Value::Routine(body) => Self::routine_hash(body),
+            Value::Object(object) if object.0.class_now().constants.iter().any(|(key, value)| key == "\0kind" && matches!(value, Value::Text(kind) if kind.as_ref() == "code")) => {
                 let fields = Self::source_code_content(object);
                 Self::code_field_hash(&Value::tuple(fields))
             }

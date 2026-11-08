@@ -100,6 +100,7 @@ struct Context {
     born: Option<Value>,
     home: Option<Option<Rc<str>>>,
     origins: Vec<Rc<[crate::lex::Token]>>,
+    sources: Vec<Rc<str>>,
     routines: Vec<Json>,
     restored: Vec<Option<Rc<crate::code::Routine>>>,
     active: std::collections::HashSet<usize>,
@@ -138,9 +139,10 @@ pub fn program(mut packet: Json, registry: &mut crate::compile::Registry) -> Res
     registry.arg_names.extend(archived.arg_names);
     registry.gives_back.extend(archived.gives_back);
     let origins = serde_json::from_value(packet["origins"].clone()).map_err(|e| format!("ValueError: {e}"))?;
+    let sources = serde_json::from_value(packet.get("sources").cloned().unwrap_or(Json::Array(Vec::new()))).unwrap_or_default();
     let routines: Vec<Json> = serde_json::from_value(packet["routines"].take()).map_err(|e| format!("ValueError: {e}"))?;
     let restored = vec![None; routines.len()];
-    CONTEXT.with(|c| c.borrow_mut().push(Context { globe: registry.globe.clone(), born: registry.born.clone(), home: registry.home.clone(), origins, routines, restored, active: Default::default() }));
+    CONTEXT.with(|c| c.borrow_mut().push(Context { globe: registry.globe.clone(), born: registry.born.clone(), home: registry.home.clone(), origins, sources, routines, restored, active: Default::default() }));
     let _scope = ContextScope;
     serde_json::from_value(packet["program"].take()).map_err(|e| format!("ValueError: {e}"))
 }
@@ -167,13 +169,38 @@ pub fn read_origin<'de, D: Deserializer<'de>>(reader: D) -> Result<Rc<[crate::le
     CONTEXT.with(|c| c.borrow().last().and_then(|s| s.origins.get(index as usize).cloned()))
         .ok_or_else(|| serde::de::Error::custom("source origin outside cache"))
 }
-pub fn encoded(program: &Rc<crate::code::Routine>) -> Result<(Json, Vec<Rc<[crate::lex::Token]>>, Vec<Json>), String> {
+pub fn encoded(program: &Rc<crate::code::Routine>) -> Result<(Vec<u8>, Vec<Rc<[crate::lex::Token]>>, Vec<Vec<u8>>, Vec<Rc<str>>), String> {
     let parent = WRITING.with(|w| w.replace(Some((Vec::new(), std::collections::HashMap::new()))));
     let parent_routines = ROUTINE_OUTPUT.with(|pool| pool.replace(Some((Vec::new(), Default::default()))));
-    let graph = serde_json::to_value(program).map_err(|e| format!("ValueError: {e}"));
+    let parent_sources = SOURCES.with(|cell| cell.replace(Some((Vec::new(), Default::default()))));
+    let graph = serde_json::to_vec(program).map_err(|e| format!("ValueError: {e}"));
+    let sources = SOURCES.with(|cell| cell.replace(parent_sources).unwrap().0);
     let routines = ROUTINE_OUTPUT.with(|pool| pool.replace(parent_routines).unwrap().0);
     let origins = WRITING.with(|w| w.replace(parent).unwrap().0);
-    graph.map(|graph| (graph, origins, routines))
+    graph.map(|graph| (graph, origins, routines, sources))
+}
+
+type SourceTable = (Vec<Rc<str>>, std::collections::HashMap<usize, usize>);
+thread_local! { static SOURCES: RefCell<Option<SourceTable>> = const { RefCell::new(None) }; }
+pub fn write_source<S: Serializer>(text: &Rc<str>, serializer: S) -> Result<S::Ok, S::Error> {
+    let index = SOURCES.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        let (words, addresses) = cell.as_mut()?;
+        let key = Rc::as_ptr(text) as *const u8 as usize;
+        let index = *addresses.entry(key).or_insert_with(|| {
+            words.push(text.clone());
+            words.len() - 1
+        });
+        Some(index)
+    });
+    match index { Some(index) => index.serialize(serializer), None => text.serialize(serializer) }
+}
+pub fn read_source<'de, D: Deserializer<'de>>(reader: D) -> Result<Rc<str>, D::Error> {
+    let word = Json::deserialize(reader)?;
+    if let Some(text) = word.as_str() { return Ok(Rc::from(text)); }
+    let index = word.as_u64().ok_or_else(|| serde::de::Error::custom("invalid source"))?;
+    CONTEXT.with(|c| c.borrow().last().and_then(|s| s.sources.get(index as usize).cloned()))
+        .ok_or_else(|| serde::de::Error::custom("source outside cache"))
 }
 
 
@@ -191,7 +218,7 @@ pub fn move_filename(node: &mut Json, old: &str, new: &str) {
 }
 
 
-type RoutineOutput = (Vec<Json>, std::collections::HashMap<usize, usize>);
+type RoutineOutput = (Vec<Vec<u8>>, std::collections::HashMap<usize, usize>);
 thread_local! { static ROUTINE_OUTPUT: RefCell<Option<RoutineOutput>> = const { RefCell::new(None) }; }
 fn routine_reference(body: &Rc<crate::code::Routine>) -> Result<Json, String> {
     let allocation = Rc::as_ptr(body) as usize;
@@ -200,13 +227,13 @@ fn routine_reference(body: &Rc<crate::code::Routine>) -> Result<Json, String> {
         let (rows, addresses) = pool.as_mut()?;
         if let Some(index) = addresses.get(&allocation) { return Some((*index, false)); }
         let index = rows.len();
-        rows.push(Json::Null);
+        rows.push(Vec::new());
         addresses.insert(allocation, index);
         Some((index, true))
     });
     let Some((index, fresh)) = slot else { return serde_json::to_value(body).map_err(|e| e.to_string()); };
     if fresh {
-        let encoded = serde_json::to_value(body).map_err(|e| e.to_string())?;
+        let encoded = serde_json::to_vec(body).map_err(|e| e.to_string())?;
         ROUTINE_OUTPUT.with(|pool| pool.borrow_mut().as_mut().unwrap().0[index] = encoded);
     }
     Ok(json!(index))
@@ -255,6 +282,51 @@ pub fn load_methods<'de, D: Deserializer<'de>>(reader: D) -> Result<Vec<(String,
 pub fn pack_json(value: &serde_json::Value) -> Result<Vec<u8>, String> {
     let raw = serde_json::to_vec(value).map_err(|error| format!("ValueError: {error}"))?;
     pack_text(&raw)
+}
+
+fn append_field(out: &mut Vec<u8>, key: &str, raw: &[u8]) {
+    if out.len() > 1 { out.push(b','); }
+    out.push(b'"');
+    out.extend_from_slice(key.as_bytes());
+    out.push(b'"');
+    out.push(b':');
+    out.extend_from_slice(raw);
+}
+fn append_value(out: &mut Vec<u8>, key: &str, value: &(impl Serialize + ?Sized)) -> Result<(), String> {
+    let raw = serde_json::to_vec(value).map_err(|error| format!("ValueError: {error}"))?;
+    append_field(out, key, &raw);
+    Ok(())
+}
+/// Nested routines are stored as JSON text. A value tree of every routine is
+/// several times larger than that text and exhausts a large module.
+pub fn pack_packet<B: Serialize, O: Serialize>(file: &str, mode: i64, function: bool, graph: &[u8], bindings: &B, origins: &O, routines: &[Vec<u8>], sources: &[Rc<str>]) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    out.push(b'{');
+    append_value(&mut out, "abi", &crate::PYTHON_CACHE_ABI)?;
+    append_value(&mut out, "file", &file)?;
+    append_value(&mut out, "mode", &mode)?;
+    if function { append_value(&mut out, "function", &true)?; }
+    append_field(&mut out, "program", graph);
+    append_value(&mut out, "bindings", bindings)?;
+    append_value(&mut out, "origins", origins)?;
+    if out.len() > 1 { out.push(b','); }
+    out.extend_from_slice(b"\"routines\":[");
+    for (index, routine) in routines.iter().enumerate() {
+        if index > 0 { out.push(b','); }
+        out.extend_from_slice(routine);
+    }
+    out.push(b']');
+    append_value(&mut out, "sources", sources)?;
+    out.push(b'}');
+    let bytes = pack_text(&out)?;
+    if bytes.len() >= 256 * 1024 {
+        #[cfg(target_os = "linux")]
+        unsafe {
+            extern "C" { fn malloc_trim(pad: usize) -> i32; }
+            malloc_trim(0);
+        }
+    }
+    Ok(bytes)
 }
 pub fn pack_text(raw: &[u8]) -> Result<Vec<u8>, String> {
     let compressed = lumen_zlib::compress(raw).map_err(|error| format!("ValueError: {error}"))?;

@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::fmt::Write as _;
 
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -210,6 +211,12 @@ fn input_proof(input: &[Token]) -> Vec<u8> {
             (item.utf8_end as u64).to_le_bytes(),
         ];
         output.extend_from_slice(coordinates.as_flattened());
+        // Keep the input retained on the final token when restoring a library survey.
+        output.push(u8::from(item.source_text.is_some()));
+        if let Some(source) = &item.source_text {
+            output.extend_from_slice(&(source.len() as u64).to_le_bytes());
+            output.extend_from_slice(source.as_bytes());
+        }
     }
     output
 }
@@ -263,7 +270,10 @@ fn read_token_proof(mut remaining: &[u8]) -> Option<Vec<Token>> {
         let [span, row, column, end_column, end_row, utf8_column, utf8_end] = take_numbers(&mut remaining)?;
         let fits = |number: u64| (number as usize) as u64 == number;
         if row > u64::from(u32::MAX) || end_row > u64::from(u32::MAX) || ![span, column, end_column, utf8_column, utf8_end].into_iter().all(fits) { return None; }
-        output.push(Token { shape: kind, lexeme: said, raw: written, span: span as usize, row: row as u32, column: column as usize, end_column: end_column as usize, end_row: end_row as u32, utf8_column: utf8_column as usize, utf8_end: utf8_end as usize });
+        let source_text = match take_byte(&mut remaining)? {
+            0 => None, 1 => Some(Rc::from(take_word(&mut remaining)?)), _ => return None,
+        };
+        output.push(Token { source_text, shape: kind, lexeme: said, raw: written, span: span as usize, row: row as u32, column: column as usize, end_column: end_column as usize, end_row: end_row as u32, utf8_column: utf8_column as usize, utf8_end: utf8_end as usize });
     }
     if remaining.is_empty() { Some(output) } else { None }
 }
@@ -1447,7 +1457,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     let mut root_names = Vec::new();
     let mut suspended = false;
     if !survey { inspect_form(&body, &[], &mut root_literals, &mut root_names, &mut suspended); }
-    let program = Routine { globals_rebound: false, code_description: Default::default(), compilation_entry: (0, r.before, r.future_bits | r.image_settings), encoded_body: None, encoded_handlers: None,  display_names: Default::default(), definition: None, immediate_slots: None, body_boundary: r.pos, origin_content: r.origin_content.clone(), lexical_origin: r.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_spelling: None, annotation_protocol: false, reads_annotation: false, annotator: None, literals: root_literals, referenced: root_names, locals: Vec::new(), cells: Vec::new(), flags: r.future_bits | if r.top_coroutine { 128 } else { 0 }, future_bits: r.future_bits, lineless: false, locations: None, stack_bound: None, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
+    let program = Routine { code_content: Default::default(), compiled_optimize: r.optimize.max(0), live_source: tokens.last().and_then(|token| token.source_text.clone()).unwrap_or_else(|| Rc::from("")), body_spelling: if survey { Rc::from("") } else { Rc::from(tokens.iter().take(r.pos).fold(String::new(), |mut text, token| { let _ = write!(text, "{:?}={:?}|", token.shape, token.lexeme); text })) }, initial_constants: None, globals_rebound: false, code_description: Default::default(), compilation_entry: (0, r.before, r.future_bits | r.image_settings), encoded_body: None, encoded_handlers: None,  display_names: Default::default(), definition: None, immediate_slots: None, body_boundary: r.pos, origin_content: r.origin_content.clone(), lexical_origin: r.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_spelling: None, annotation_protocol: false, reads_annotation: false, annotator: None, literals: root_literals, referenced: root_names, locals: Vec::new(), cells: Vec::new(), flags: r.future_bits | if r.top_coroutine { 128 } else { 0 }, future_bits: r.future_bits, lineless: false, location_baseline: None, locations: None, stack_bound: None, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), warnings: r.warnings, future_bits: r.future_bits, globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program, native_exports: r.native_exports })
 }
 
@@ -2779,7 +2789,7 @@ impl<'a> Builder<'a> {
             }
             flags = (flags & !128) | 512;
         }
-        Ok(constant(Value::Routine(Rc::new(Routine { globals_rebound: false, code_description: Default::default(), compilation_entry: (began, self.before, self.future_bits | self.image_settings), encoded_body: None, encoded_handlers: None,  display_names: Default::default(), definition: None, immediate_slots: None, body_boundary: self.pos, origin_content: self.origin_content.clone(), lexical_origin: self.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_spelling: None, annotation_protocol: false, reads_annotation: false, annotator, literals, referenced, locals, cells, flags, future_bits: self.future_bits, lineless: false, locations: None, stack_bound: None, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, type_params, globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: catches, carried, body }))))
+        Ok(constant(Value::Routine(Rc::new(Routine { code_content: Default::default(), compiled_optimize: self.optimize.max(0), live_source: self.original_words.last().and_then(|token| token.source_text.clone()).unwrap_or_else(|| Rc::from("")), body_spelling: if self.survey { Rc::from("") } else { Rc::from({ let mut text = self.original_words[began..self.pos].iter().fold(String::new(), |mut text, token| { let _ = write!(text, "{:?}={:?}|", token.shape, token.lexeme); text }); text.push_str(&body.operation_shape()); text }) }, initial_constants: None, globals_rebound: false, code_description: Default::default(), compilation_entry: (began, self.before, self.future_bits | self.image_settings), encoded_body: None, encoded_handlers: None,  display_names: Default::default(), definition: None, immediate_slots: None, body_boundary: self.pos, origin_content: self.origin_content.clone(), lexical_origin: self.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_spelling: None, annotation_protocol: false, reads_annotation: false, annotator, literals, referenced, locals, cells, flags, future_bits: self.future_bits, lineless: false, location_baseline: None, locations: None, stack_bound: None, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, type_params, globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: catches, carried, body }))))
     }
 
     /// The words an annotation was written with, read back out of the text
@@ -2790,7 +2800,8 @@ impl<'a> Builder<'a> {
     /// joined from the tokens instead.
     fn annotation_spelling(&self, first: usize, last: usize) -> String {
         let held = self.table.source.borrow();
-        if let Some(source) = held.as_deref() {
+        let retained = self.original_words.last().and_then(|word| word.source_text.as_deref());
+        if let Some(source) = retained.or(held.as_deref()) {
             let from = if first > 0 {
                 match self.tokens.get(first - 1) {
                     Some(previous) => {
@@ -3192,7 +3203,7 @@ impl<'a> Builder<'a> {
             if let Some(answer) = literal_boolean(&test) { return if answer { then } else { otherwise }; }
         }
         let wrap = |name: &str, body: Form| {
-            let program = Routine { globals_rebound: false, code_description: Default::default(), compilation_entry: (self.pos, self.before, self.future_bits | self.image_settings), encoded_body: None, encoded_handlers: None,  display_names: Default::default(), definition: None, immediate_slots: None, body_boundary: self.pos, origin_content: self.origin_content.clone(), lexical_origin: self.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_spelling: None, annotation_protocol: false, reads_annotation: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), cells: Vec::new(), flags: 0, future_bits: self.future_bits, lineless: false, locations: None, stack_bound: None, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), reaching: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
+            let program = Routine { code_content: Default::default(), compiled_optimize: self.optimize.max(0), live_source: self.original_words.last().and_then(|token| token.source_text.clone()).unwrap_or_else(|| Rc::from("")), body_spelling: if self.survey { Rc::from("") } else { Rc::from(format!("{body:?}")) }, initial_constants: None, globals_rebound: false, code_description: Default::default(), compilation_entry: (self.pos, self.before, self.future_bits | self.image_settings), encoded_body: None, encoded_handlers: None,  display_names: Default::default(), definition: None, immediate_slots: None, body_boundary: self.pos, origin_content: self.origin_content.clone(), lexical_origin: self.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_spelling: None, annotation_protocol: false, reads_annotation: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), cells: Vec::new(), flags: 0, future_bits: self.future_bits, lineless: false, location_baseline: None, locations: None, stack_bound: None, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), reaching: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
             constant(Value::Routine(Rc::new(program)))
         };
         prim_call(Prim::Choose, vec![test, wrap("<then>", then), wrap("<else>", otherwise)])
@@ -14074,7 +14085,7 @@ impl<'a> Builder<'a> {
             param_slots.reverse();
             let mut body = sequence(s);
             if table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
-            let program = Routine { globals_rebound: false, code_description: Default::default(), compilation_entry: (self.pos, self.before, self.future_bits | self.image_settings), encoded_body: None, encoded_handlers: None,  display_names: Default::default(), definition: None, immediate_slots: None, body_boundary: self.pos, origin_content: self.origin_content.clone(), lexical_origin: self.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_spelling: None, annotation_protocol: false, reads_annotation: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), cells: Vec::new(), flags: 0, future_bits: self.future_bits, lineless: false, locations: None, stack_bound: None, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Yields, carried: Vec::new(), body };
+            let program = Routine { code_content: Default::default(), compiled_optimize: self.optimize.max(0), live_source: self.original_words.last().and_then(|token| token.source_text.clone()).unwrap_or_else(|| Rc::from("")), body_spelling: if self.survey { Rc::from("") } else { Rc::from(format!("{body:?}")) }, initial_constants: None, globals_rebound: false, code_description: Default::default(), compilation_entry: (self.pos, self.before, self.future_bits | self.image_settings), encoded_body: None, encoded_handlers: None,  display_names: Default::default(), definition: None, immediate_slots: None, body_boundary: self.pos, origin_content: self.origin_content.clone(), lexical_origin: self.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_spelling: None, annotation_protocol: false, reads_annotation: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), cells: Vec::new(), flags: 0, future_bits: self.future_bits, lineless: false, location_baseline: None, locations: None, stack_bound: None, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Yields, carried: Vec::new(), body };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }

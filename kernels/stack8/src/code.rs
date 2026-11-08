@@ -984,6 +984,37 @@ pub enum Instr {
     SkipCmp { op: Action, a: Operand, b: Operand, to: usize },
 }
 
+/// Preserve emitted operations while ignoring source-position bookkeeping.
+pub(crate) fn instruction_shape(words: &[Instr]) -> String {
+    let mut offsets = Vec::with_capacity(words.len() + 1);
+    let mut count = 0;
+    for word in words {
+        offsets.push(count);
+        if !matches!(word, Instr::Line(_) | Instr::Location(..)) { count += 1; }
+    }
+    offsets.push(count);
+    let target = |at: usize| offsets.get(at).copied().unwrap_or(at);
+    let mut output = String::new();
+    for word in words {
+        if matches!(word, Instr::Line(_) | Instr::Location(..)) { continue; }
+        output.push_str(&format!("{:?}", std::mem::discriminant(word)));
+        match word {
+            Instr::Act(action, arity) => output.push_str(&format!("/{:?}/{arity}", std::mem::discriminant(action))),
+            Instr::Skip(at) | Instr::Guard(at) => output.push_str(&format!("/{}", target(*at))),
+            Instr::Depart { to, cycle } => output.push_str(&format!("/{}/{:?}", target(*to), cycle.map(target))),
+            Instr::Dyad { op, .. } => output.push_str(&format!("/{:?}", std::mem::discriminant(op))),
+            Instr::SkipCmp { op, to, .. } => output.push_str(&format!("/{:?}/{}", std::mem::discriminant(op), target(*to))),
+            Instr::Read(cell) | Instr::Write(cell) | Instr::Glance(cell) | Instr::Bond(cell)
+            | Instr::Fasten(cell) | Instr::BondItem(cell) | Instr::BondPlace(cell, _)
+            | Instr::Forget(cell) | Instr::Emptied(cell) | Instr::Ready(cell) =>
+                output.push_str(&format!("/{}/{}/{}", cell.near.len(), cell.free, cell.moving)),
+            _ => {}
+        }
+        output.push(';');
+    }
+    output
+}
+
 impl Builtin {
     /// The set workings that change the set handed to them. A set that
     /// cannot be changed answers to none of these: the words are no
@@ -1010,11 +1041,24 @@ impl Builtin {
 #[derive(Clone, Debug)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Routine {
+    /// Cache content only for this immutable code description, never its replacements.
+    #[serde(skip)]
+    pub(crate) code_content: crate::value::CodeContent,
     /// Reuse code-only snapshots while the compiled function remains alive.
     #[serde(skip)]
     pub globals_rebound: bool,
     #[serde(skip)]
     pub code_snapshot: std::cell::OnceCell<Rc<Routine>>,
+    /// Full source. The cache stores one shared copy; nested routines point at it.
+    #[serde(serialize_with = "crate::cache::write_source", deserialize_with = "crate::cache::read_source", default)]
+    pub live_source: Rc<str>,
+    #[serde(default)]
+    pub compiled_optimize: i64,
+    #[serde(default)]
+    pub body_spelling: Rc<str>,
+    /// Compiler constants before the first replacement, for internal class slots.
+    #[serde(default)]
+    pub initial_constants: Option<Rc<Vec<Value>>>,
     pub postponed_annotation: bool,
     pub annotation_source: Option<String>,
     pub checks_annotation_format: bool,
@@ -1041,6 +1085,8 @@ pub struct Routine {
     /// reference's code objects carry them in co_flags.
     pub future_bits: i64,
     pub lineless: bool,
+    #[serde(default)]
+    pub location_baseline: Option<Value>,
     pub location_bytes: Option<Value>,
     pub declared_stack: Option<i64>,
     pub instruction_image: Option<Value>,
@@ -1167,7 +1213,7 @@ impl Routine {
     pub fn replacing_constants(&self, supplied: &[Value]) -> Result<Self, String> {
         let replacements: Vec<Value> = supplied.iter().enumerate().map(|(index, value)| match value.contents() {
             Value::Adapter(parts) if parts.0 == 7 && matches!(self.code_constants.get(index), Some(Value::Routine(_))) => parts.1[0].clone(),
-            other => other,
+            _ => value.clone(),
         }).collect();
         let mut embedded = self.embedded_integers.clone().unwrap_or_else(|| self.code_constants.iter()
             .map(|value| matches!(value, Value::Small(0..=255))).collect());
@@ -1190,13 +1236,11 @@ impl Routine {
             if embedded[at] { return Ok(value.clone()); }
             match (value, &replacements[at]) {
                 (Value::Routine(existing), Value::Routine(wanted)) => {
-                    if existing.source_tokens != wanted.source_tokens || existing.source_end != wanted.source_end || existing.declared_on != wanted.declared_on || existing.formals != wanted.formals {
-                        return Err("NotImplementedError: replacing a nested instruction body is unavailable".into());
-                    }
                     let mut body = wanted.as_ref().clone();
                     body.globe = existing.globe.clone();
                     body.born = existing.born.clone();
                     body.home = existing.home.clone();
+                    body.annotation = existing.annotation.clone();
                     body.held = existing.held.clone();
                     body.enclosed = existing.enclosed.clone();
                     body.ident = wanted.ident.clone();
@@ -1210,6 +1254,7 @@ impl Routine {
             }
         };
         let mut result = self.clone();
+        result.initial_constants = Some(self.initial_constants.clone().unwrap_or_else(|| Rc::new(self.code_constants.clone())));
         let mut instructions = self.instrs.as_ref().clone();
         for (offset, instruction) in instructions.iter_mut().enumerate() {
             match instruction {

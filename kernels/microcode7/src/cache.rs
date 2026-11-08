@@ -94,7 +94,11 @@ pub fn native_dictionary() -> Option<Value> { READ_NAMESPACES.with(|stack| stack
 pub fn namespace_name() -> Option<Rc<str>> { READ_NAMESPACES.with(|stack| stack.borrow().last().and_then(|names| names.2.clone())) }
 struct ReadingScope;
 impl Drop for ReadingScope {
-    fn drop(&mut self) { READ_NAMESPACES.with(|stack| { stack.borrow_mut().pop(); }); BODY_INPUT.with(|stack| { stack.borrow_mut().pop(); }); }
+    fn drop(&mut self) {
+        READ_NAMESPACES.with(|stack| { stack.borrow_mut().pop(); });
+        BODY_INPUT.with(|stack| { stack.borrow_mut().pop(); });
+        SOURCE_INPUT.with(|stack| { stack.borrow_mut().pop(); });
+    }
 }
 
 pub fn forms(mut record: Node, seeded: &[String], globals: Option<Value>, natives: Option<Value>, module: Option<Rc<str>>) -> Result<crate::build::Built, String> {
@@ -129,8 +133,10 @@ pub fn forms(mut record: Node, seeded: &[String], globals: Option<Value>, native
     renumber(&mut record["forms"], &offsets)?;
     renumber(&mut record["bodies"], &offsets)?;
     let spellings = serde_json::from_value(record["spellings"].take()).map_err(|error| format!("ValueError: {error}"))?;
+    let sources = serde_json::from_value(record.get("sources").cloned().unwrap_or(Node::Array(Vec::new()))).unwrap_or_default();
     let bodies: Vec<Node> = serde_json::from_value(record["bodies"].take()).map_err(|e| format!("ValueError: {e}"))?;
     BODY_INPUT.with(|stack| stack.borrow_mut().push(BodyInput { visited: vec![None; bodies.len()], pending: Default::default(), bodies }));
+    SOURCE_INPUT.with(|stack| stack.borrow_mut().push(sources));
     READ_NAMESPACES.with(|stack| stack.borrow_mut().push((globals, natives, module, spellings)));
     let _reading = ReadingScope;
     let program = serde_json::from_value(record["forms"].take()).map_err(|error| format!("ValueError: {error}"))?;
@@ -166,13 +172,41 @@ pub fn recover_spelling<'de, D: Deserializer<'de>>(from: D) -> Result<Rc<Vec<cra
         _ => Err(serde::de::Error::custom("source metadata has wrong type")),
     }
 }
-pub fn serialize_forms(routine: Rc<crate::form::Routine>) -> Result<(Node, Vec<Rc<Vec<crate::scan::Token>>>, Vec<Node>), String> {
+pub fn serialize_forms(routine: Rc<crate::form::Routine>) -> Result<(Vec<u8>, Vec<Rc<Vec<crate::scan::Token>>>, Vec<Vec<u8>>, Vec<Rc<str>>), String> {
     let previous = OUTPUT_WORDS.with(|cell| cell.replace(Some(Spellings { rows: Vec::new(), lookup: std::collections::HashMap::new() })));
     let previous_bodies = BODY_OUTPUT.with(|slot| slot.replace(Some(BodyOutput::default())));
-    let result = serde_json::to_value(routine);
+    let previous_sources = SOURCE_OUTPUT.with(|cell| cell.replace(Some((Vec::new(), Default::default()))));
+    let result = serde_json::to_vec(&routine);
+    let sources = SOURCE_OUTPUT.with(|cell| cell.replace(previous_sources).unwrap().0);
     let bodies = BODY_OUTPUT.with(|slot| slot.replace(previous_bodies).unwrap().nodes);
     let entries = OUTPUT_WORDS.with(|cell| cell.replace(previous).unwrap().rows);
-    result.map(|forms| (forms, entries, bodies)).map_err(|error| format!("ValueError: {error}"))
+    result.map(|forms| (forms, entries, bodies, sources)).map_err(|error| format!("ValueError: {error}"))
+}
+
+type SourceTable = (Vec<Rc<str>>, std::collections::HashMap<usize, usize>);
+thread_local! {
+    static SOURCE_OUTPUT: RefCell<Option<SourceTable>> = const { RefCell::new(None) };
+    static SOURCE_INPUT: RefCell<Vec<Vec<Rc<str>>>> = const { RefCell::new(Vec::new()) };
+}
+pub fn write_source<S: Serializer>(text: &Rc<str>, serializer: S) -> Result<S::Ok, S::Error> {
+    let index = SOURCE_OUTPUT.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        let (words, addresses) = cell.as_mut()?;
+        let key = Rc::as_ptr(text) as *const u8 as usize;
+        let index = *addresses.entry(key).or_insert_with(|| {
+            words.push(text.clone());
+            words.len() - 1
+        });
+        Some(index)
+    });
+    match index { Some(index) => index.serialize(serializer), None => text.serialize(serializer) }
+}
+pub fn read_source<'de, D: Deserializer<'de>>(reader: D) -> Result<Rc<str>, D::Error> {
+    let word = Node::deserialize(reader)?;
+    if let Some(text) = word.as_str() { return Ok(Rc::from(text)); }
+    let index = word.as_u64().ok_or_else(|| serde::de::Error::custom("invalid source"))?;
+    SOURCE_INPUT.with(|stack| stack.borrow().last().and_then(|sources| sources.get(index as usize).cloned()))
+        .ok_or_else(|| serde::de::Error::custom("source outside cache"))
 }
 
 
@@ -192,7 +226,7 @@ pub fn relocate_source(value: &mut Node, previous: &str, replacement: &str) {
 
 
 #[derive(Default)]
-struct BodyOutput { nodes: Vec<Node>, positions: std::collections::HashMap<usize, usize> }
+struct BodyOutput { nodes: Vec<Vec<u8>>, positions: std::collections::HashMap<usize, usize> }
 struct BodyInput {
     bodies: Vec<Node>,
     visited: Vec<Option<Rc<crate::form::Routine>>>,
@@ -211,7 +245,7 @@ fn record_body(routine: &Rc<crate::form::Routine>) -> Result<Node, String> {
             Some(at) => Some((at, true)),
             None => {
                 let at = state.nodes.len();
-                state.nodes.push(Node::Null);
+                state.nodes.push(Vec::new());
                 state.positions.insert(pointer, at);
                 Some((at, false))
             }
@@ -221,7 +255,7 @@ fn record_body(routine: &Rc<crate::form::Routine>) -> Result<Node, String> {
         None => serde_json::to_value(routine).map_err(|err| err.to_string()),
         Some((at, found)) => {
             if !found {
-                let body = serde_json::to_value(routine).map_err(|err| err.to_string())?;
+                let body = serde_json::to_vec(routine).map_err(|err| err.to_string())?;
                 BODY_OUTPUT.with(|output| output.borrow_mut().as_mut().unwrap().nodes[at] = body);
             }
             Ok(Node::from(at))
@@ -276,6 +310,51 @@ pub fn read_members<'de, D: Deserializer<'de>>(input: D) -> Result<Vec<(String, 
 }
 
 // Serialize this kernel's form envelope before handing bytes to the codec.
+fn append_field(out: &mut Vec<u8>, key: &str, raw: &[u8]) {
+    if out.len() > 1 { out.push(b','); }
+    out.push(b'"');
+    out.extend_from_slice(key.as_bytes());
+    out.push(b'"');
+    out.push(b':');
+    out.extend_from_slice(raw);
+}
+fn append_value(out: &mut Vec<u8>, key: &str, value: &(impl Serialize + ?Sized)) -> Result<(), String> {
+    let raw = serde_json::to_vec(value).map_err(|error| format!("ValueError: {error}"))?;
+    append_field(out, key, &raw);
+    Ok(())
+}
+/// Nested forms are stored as JSON text. A value tree of every form is
+/// several times larger than that text and exhausts a large module.
+pub fn pack_record<M: Serialize, S: Serialize>(filename: &str, manner: i64, function: bool, forms: &[u8], metadata: &M, spellings: &S, bodies: &[Vec<u8>], sources: &[Rc<str>]) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    out.push(b'{');
+    append_value(&mut out, "format", &crate::PYTHON_CACHE_ABI)?;
+    append_value(&mut out, "filename", &filename)?;
+    append_value(&mut out, "manner", &manner)?;
+    if function { append_value(&mut out, "function", &true)?; }
+    append_field(&mut out, "forms", forms);
+    append_value(&mut out, "metadata", metadata)?;
+    append_value(&mut out, "spellings", spellings)?;
+    if out.len() > 1 { out.push(b','); }
+    out.extend_from_slice(b"\"bodies\":[");
+    for (index, body) in bodies.iter().enumerate() {
+        if index > 0 { out.push(b','); }
+        out.extend_from_slice(body);
+    }
+    out.push(b']');
+    append_value(&mut out, "sources", sources)?;
+    out.push(b'}');
+    let bytes = pack_saved_forms(&out)?;
+    if bytes.len() >= 256 * 1024 {
+        #[cfg(target_os = "linux")]
+        unsafe {
+            extern "C" { fn malloc_trim(pad: usize) -> i32; }
+            malloc_trim(0);
+        }
+    }
+    Ok(bytes)
+}
+
 pub fn pack_forms(envelope: &serde_json::Value) -> Result<Vec<u8>, String> {
     let serialized = serde_json::to_vec(envelope).map_err(|fault| format!("ValueError: {fault}"))?;
     pack_saved_forms(&serialized)
