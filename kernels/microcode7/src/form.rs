@@ -1271,7 +1271,12 @@ impl Form {
             _ => inherited,
         };
         entries.push(current);
-        for child in self.children(true) { child.position_rows(entries, current); }
+        for child in self.children(true) {
+            let carried = if matches!(self, Self::Apply(Callee::Prim(Prim::Seq, _), _)) && matches!(child, Self::Const(Value::Nil) | Self::Release(_) | Self::Forget(_)) {
+                entries.last().copied().unwrap_or(current)
+            } else { current };
+            child.position_rows(entries, carried);
+        }
     }
 }
 
