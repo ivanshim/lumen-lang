@@ -1,8 +1,5 @@
 """The file-control calls the library and the socket tests use."""
-import errno
-from posix import (
-    O_NONBLOCK, _call, get_blocking, get_inheritable, set_blocking, set_inheritable,
-)
+import operator
 
 F_DUPFD = 0
 F_GETFD = 1
@@ -15,10 +12,11 @@ LOCK_EX = 2
 LOCK_NB = 4
 LOCK_UN = 8
 
-# libc lockf(3) commands. Python LOCK_* values are a different numbering.
-_F_ULOCK = 0
-_F_LOCK = 1
-_F_TLOCK = 2
+# Record-lock kinds for the host call. A shared bit wins when both are set.
+_SHARED = 0
+_EXCLUSIVE = 1
+_UNLOCK = 2
+_BUFFER_LIMIT = 1024
 
 
 def _descriptor(fd):
@@ -27,28 +25,50 @@ def _descriptor(fd):
     return fd.fileno()
 
 
+def _c_int(value):
+    number = value if type(value) is int else operator.index(value)
+    if number < -2147483648 or number > 2147483647:
+        raise OverflowError("Python int too large to convert to C int")
+    return number
+
+
+def _index(value):
+    return value if type(value) is int else operator.index(value)
+
+
 def fcntl(fd, cmd, arg=0):
+    from posix import _call
     fd = _descriptor(fd)
-    if cmd == F_GETFD:
-        return 0 if get_inheritable(fd) else FD_CLOEXEC
-    if cmd == F_SETFD:
-        set_inheritable(fd, not (arg & FD_CLOEXEC))
-        return 0
-    if cmd == F_GETFL:
-        return 0 if get_blocking(fd) else O_NONBLOCK
-    if cmd == F_SETFL:
-        set_blocking(fd, not (arg & O_NONBLOCK))
-        return 0
-    raise OSError(errno.EINVAL, "Invalid argument")
+    cmd = _c_int(cmd)
+    if type(arg) is str:
+        raw = arg.encode("utf-8", "surrogateescape")
+    elif type(arg) is bytes:
+        raw = arg
+    else:
+        return _call("fcntl", fd, cmd, _c_int(arg))
+    if len(raw) > _BUFFER_LIMIT:
+        raise ValueError("fcntl string arg too long")
+    return _call("fcntl_buf", fd, cmd, raw)
 
 
 def lockf(fd, cmd, len=0, start=0, whence=0):
-    # shortcut: start and whence are ignored, upgrade when a caller locks a range
+    # Unlock is only the unlock command alone. Any other mix needs a shared
+    # or exclusive bit; the shared bit wins when both are present.
+    from posix import _call
     fd = _descriptor(fd)
-    if cmd & LOCK_UN:
-        action = _F_ULOCK
-    elif cmd & LOCK_NB:
-        action = _F_TLOCK
+    cmd = _index(cmd)
+    length = _index(len)
+    origin = _index(start)
+    from_where = _c_int(whence)
+    if cmd == LOCK_UN:
+        kind = _UNLOCK
+        waiting = 1
+    elif cmd & LOCK_SH:
+        kind = _SHARED
+        waiting = 0 if cmd & LOCK_NB else 1
+    elif cmd & LOCK_EX:
+        kind = _EXCLUSIVE
+        waiting = 0 if cmd & LOCK_NB else 1
     else:
-        action = _F_LOCK
-    _call("lockf", fd, action, len)
+        raise ValueError("unrecognized lockf argument")
+    _call("lockf", fd, waiting, kind, from_where, origin, length)

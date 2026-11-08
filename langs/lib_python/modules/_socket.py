@@ -326,15 +326,7 @@ def _option_int(fd, level, name):
     return int.from_bytes(_call('sock_getopt', fd, level, name, 4), _sys.byteorder, signed=True)
 
 
-class _SocketMeta(type):
-    def __setattr__(cls, name, value):
-        # The marker lives on this class only, so the public subclass stays mutable.
-        if "_type_locked" in cls.__dict__:
-            raise TypeError("cannot set '%s' attribute of immutable type '%s'" % (name, cls.__name__))
-        super().__setattr__(name, value)
-
-
-class socket(metaclass=_SocketMeta):
+class socket:
     """socket(family=AF_INET, type=SOCK_STREAM, proto=0) -> socket object
 socket(family=-1, type=-1, proto=-1, fileno=None) -> socket object
 
@@ -352,6 +344,7 @@ A socket object represents one endpoint of a network connection."""
     # No instance dictionary and no weak-reference slot of its own, like
     # the reference's C type: the public subclass adds those in its slots.
     __slots__ = ('_fd', '_family', '_type', '_proto', '_timeout')
+    __native_type_name__ = 'socket'
 
     def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
         family, type, proto = _index(family), _index(type), _index(proto)
@@ -623,10 +616,6 @@ A socket object represents one endpoint of a network connection."""
 
     def __exit__(self, *args):
         self.close()
-
-
-socket._type_locked = True
-del _SocketMeta
 
 
 SocketType = socket
