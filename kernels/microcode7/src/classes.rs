@@ -7480,8 +7480,8 @@ impl<'a> Machine<'a> {
                         return Ok(Value::Member(Rc::new(value.clone()), String::from("code_replace")));
                     }
                     match key {
-                        "co_lines" | "co_positions" => {
-                            let operation = if key == "co_positions" { "code_positions" } else { "code_lines" };
+                        "co_lines" | "co_positions" | "co_branches" => {
+                            let operation = match key { "co_positions" => "code_positions", "co_branches" => "code_branches", _ => "code_lines" };
                             return Ok(Value::Member(Rc::new(value.clone()), operation.to_owned()));
                         }
                         "co_linetable" => return match &p.locations {

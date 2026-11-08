@@ -1273,6 +1273,72 @@ impl Form {
         entries.push(current);
         for child in self.children(true) { child.position_rows(entries, current); }
     }
+
+    fn row_count(&self) -> usize {
+        1 + self.children(true).into_iter().map(Self::row_count).sum::<usize>()
+    }
+
+    fn suite_head(&self, mut cursor: usize) -> usize {
+        let mut current = self;
+        loop {
+            match current {
+                Self::Const(Value::Routine(routine)) if routine.frameless => {
+                    cursor += 1;
+                    current = &routine.body;
+                }
+                Self::Apply(Callee::Prim(Prim::Seq, _), items) if !items.is_empty() => {
+                    cursor += 1;
+                    current = &items[0];
+                }
+                _ => return cursor,
+            }
+        }
+    }
+
+    pub fn branch_spans(&self) -> Vec<(usize, usize, usize)> {
+        fn flatten<'a>(node: &'a Form, out: &mut Vec<&'a Form>) {
+            out.push(node);
+            for child in node.children(true) { flatten(child, out); }
+        }
+        let mut nodes = Vec::new();
+        flatten(self, &mut nodes);
+        let mut out = Vec::new();
+        for (slot, node) in nodes.iter().enumerate() {
+            let cursor = slot + 1;
+            match node {
+                Self::Apply(Callee::Prim(Prim::Choose, _), limbs) if limbs.len() == 3 => {
+                    if matches!(limbs[0], Self::Apply(Callee::Prim(Prim::Kept | Prim::HasMember, _), _)) {
+                        continue;
+                    }
+                    let first_arm = cursor + 1 + limbs[0].row_count();
+                    let second_arm = first_arm + limbs[1].row_count();
+                    let after = second_arm + limbs[2].row_count();
+                    let left = limbs[1].suite_head(first_arm);
+                    let empty_else = matches!(&limbs[2], Self::Const(Value::Routine(r)) if r.frameless && matches!(r.body, Self::Const(Value::Nil)))
+                        || matches!(&limbs[2], Self::Const(Value::Nil));
+                    let right = if empty_else { after } else { limbs[2].suite_head(second_arm) };
+                    out.push((cursor * 2, left * 2, right * 2));
+                }
+                Self::Cycle { test, body, .. } => {
+                    let test_cursor = cursor + 1;
+                    let body_cursor = test_cursor + test.row_count();
+                    let mut exit = cursor + node.row_count();
+                    while matches!(nodes.get(exit.saturating_sub(1)), Some(Self::Release(_) | Self::Forget(_))) {
+                        exit += 1;
+                    }
+                    let collection_walk = matches!(test.as_ref(), Self::Apply(Callee::Prim(Prim::MoreYet, _), _));
+                    let (source, left) = if collection_walk {
+                        (cursor, test_cursor)
+                    } else {
+                        (test_cursor, body.suite_head(body_cursor))
+                    };
+                    out.push((source * 2, left * 2, exit * 2));
+                }
+                _ => {}
+            }
+        }
+        out
+    }
 }
 
 impl Routine {

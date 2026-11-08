@@ -21473,6 +21473,42 @@ impl<'a> Engine<'a> {
                 Err(fault) => { self.carried = Some(fault); Err(String::new()) }
             };
         }
+        if operation == "code_branches" {
+            if !args.is_empty() || !named.is_empty() { return Err("TypeError: code location iterator takes no arguments".into()); }
+            let Value::Adapter(handle) = receiver.contents() else { return Err(self.special_fault()) };
+            let Some(Value::Routine(body)) = handle.1.first() else { return Err(self.special_fault()) };
+            let mut branches = Vec::new();
+            for (pc, word) in body.instrs.iter().enumerate() {
+                let target = match word {
+                    Instr::Skip(to) | Instr::SkipCmp { to, .. } => *to,
+                    _ => continue,
+                };
+                if pc > 0 && matches!(
+                    &body.instrs[pc - 1],
+                    Instr::Const(Value::Flag(_))
+                        | Instr::Missing(_)
+                        | Instr::Unwritten(_)
+                        | Instr::Act(Action::Standing(_) | Action::HasMember(_), _)
+                ) {
+                    continue;
+                }
+                let (origin, left, right) = if target <= pc && pc >= 2 && matches!(&body.instrs[pc - 2], Instr::Act(Action::WalkMore, 2)) {
+                    let mut exit = pc + 1;
+                    while matches!(body.instrs.get(exit), Some(Instr::Forget(_))) { exit += 1; }
+                    (target, target, exit)
+                } else if target <= pc {
+                    (pc, target, pc + 1)
+                } else {
+                    (pc, pc + 1, target)
+                };
+                branches.push(Value::tuple(vec![
+                    Value::Small((origin * 2) as i64),
+                    Value::Small((left * 2) as i64),
+                    Value::Small((right * 2) as i64),
+                ]));
+            }
+            return self.iterator(Value::tuple(branches)).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
+        }
         if operation == "code_replace" {
             if let Value::Object(object) = receiver.contents() {
                 if self.code_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &object.class_now())) {
