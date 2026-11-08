@@ -3145,17 +3145,33 @@ class _Parser:
                 self.pop()
             case_tok = self.toks[self.at]
             indent = self.indent_col(case_tok)
-            if indent <= self.indent_col(first):
+            alt = self.alt_indent_col(case_tok)
+            parent = self.indent_col(first)
+            if indent <= parent:
+                # A tab and spaces can share a column. That is a TabError
+                # when the spellings differ, before the missing-indent error.
+                if (case_tok.srow != first.srow and indent == parent
+                        and alt != self.alt_stack[-1]):
+                    _tab('inconsistent use of tabs and spaces in indentation')
                 raise IndentationError('expected an indented block')
+            # Wider on the screen can still be a shallower alternate column,
+            # which is a tab under a space indent. Same-line text is not a case level.
+            if case_tok.srow != first.srow and alt <= self.alt_stack[-1]:
+                _tab('inconsistent use of tabs and spaces in indentation')
             # The case clauses sit at a level of their own between the
             # subject and each body; register it so that a body's dedent
             # back to the next case is a step the reader knows. The width
             # is indent_col: a tab is one character wide in scol and eight
             # wide here, and parse_block dedents with indent_col.
             self.indent_stack.append(indent)
-            self.alt_stack.append(self.alt_indent_col(case_tok))
+            self.alt_stack.append(alt)
             cases = []
             while self.at_name('case') and self.indent_col(self.toks[self.at]) == indent:
+                # An inline suite returns without an indent check, and a
+                # body dedent returns before the alternate column is read,
+                # so a sibling case has to be checked here.
+                if self.alt_indent_col(self.toks[self.at]) != self.alt_stack[-1]:
+                    _tab('inconsistent use of tabs and spaces in indentation')
                 header = self.pop()
                 pattern, vs, ve = self.parse_case_as()
                 if isinstance(pattern, MatchStar) and not self.at_op(','):
