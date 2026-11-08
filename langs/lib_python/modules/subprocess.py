@@ -310,9 +310,11 @@ class Popen:
         if input is not None and self.stdin is None:
             raise ValueError('stdin is not a pipe')
         # Bytes already sitting in the stream wrapper were read before
-        # collection starts. Take them first, then let the kernel capture
-        # own the pipes. A later read goes through that capture.
-        held = [self._take_buffered(self.stdout), self._take_buffered(self.stderr)]
+        # collection starts. Keep them in the captures so timeout retries
+        # retain them before any bytes subsequently read from the pipes.
+        captures = self._communication_output
+        captures[0].append(self._take_buffered(self.stdout))
+        captures[1].append(self._take_buffered(self.stderr))
         _subprocess(8, self._handle)
         for stream in (self.stdout, self.stderr):
             if stream is not None and not stream.closed:
@@ -329,7 +331,6 @@ class Popen:
             self.stdin = None
         import time
         deadline = None if timeout is None else time.monotonic() + timeout
-        captures = self._communication_output
         while self.returncode is None:
             ready = _subprocess(9, self._handle)
             if ready[0]:
@@ -349,7 +350,7 @@ class Popen:
             _wait(10000)
         if self.stdout is not None and not self.stdout.closed:
             captures[0].append(self._read_stream(0))
-        out = (b'' if self.stdout.closed else held[0] + b''.join(captures[0])) if self.stdout is not None else None
+        out = (b'' if self.stdout.closed else b''.join(captures[0])) if self.stdout is not None else None
         if self._stderr_to_stdout:
             if self.stdout is not None:
                 captures[1].append(self._read_stream(1))
@@ -358,7 +359,7 @@ class Popen:
         else:
             if self.stderr is not None and not self.stderr.closed:
                 captures[1].append(self._read_stream(1))
-            err = (b'' if self.stderr.closed else held[1] + b''.join(captures[1])) if self.stderr is not None else None
+            err = (b'' if self.stderr.closed else b''.join(captures[1])) if self.stderr is not None else None
         if self.returncode is None:
             self.returncode = self.wait()
         out = self._text_captured(self.stdout, out)
