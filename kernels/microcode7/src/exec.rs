@@ -15016,21 +15016,42 @@ impl<'a> Machine<'a> {
             // the values are not even put into words for it.
             if route.len() == 3 {
                 if matches!(sink, Value::Nil) {
-                    for item in positional.iter() {
-                        if let value @ Value::Unpaired(_) = item.settled() { self.codec_function("_encode_surrogates", vec![value])?; }
-                    }
                     let namespace = self.namespace_for(&route[0])?;
                     sink = self.attribute(&namespace, &route[1]).unwrap_or(Value::Nil);
-                    if matches!(sink, Value::Nil) { return Ok(Some(Value::Nil)); }
+                    if matches!(sink, Value::Nil) {
+                        for item in positional.iter() { self.written_surrogate_check(item)?; }
+                        return Ok(Some(Value::Nil));
+                    }
                 }
-                for item in positional.iter() { self.written_surrogate_check(item)?; }
+                // A stream that names no encoding keeps the text it is
+                // given, surrogate and all. One that names an encoding
+                // is still checked before anything is written.
+                let mut deliver = false;
+                for item in positional.iter() {
+                    if matches!(item.settled(), Value::Unpaired(_)) { deliver = true; break; }
+                }
+                if deliver {
+                    deliver = match self.read_class_member(sink.clone(), "encoding", false) {
+                        Ok(found) => matches!(found.settled(), Value::Nil),
+                        Err(_) if self.attribute(&sink, "encoding").is_none() => true,
+                        Err(err) => return Err(err),
+                    };
+                }
+                if !deliver {
+                    for item in positional.iter() { self.written_surrogate_check(item)?; }
+                }
                 let writer = self.read_class_member(sink.clone(), &route[2], false)?;
                 let mut first = true;
                 for item in positional {
                     if !first { self.apply_held(writer.clone(), vec![Value::text(&join)])?; }
                     first = false;
-                    let rendered = self.object_words(&item, false)?;
-                    self.apply_held(writer.clone(), vec![Value::text(&rendered)])?;
+                    if deliver {
+                        let rendered = self.converted_string(&item, false)?;
+                        self.apply_held(writer.clone(), vec![rendered])?;
+                    } else {
+                        let rendered = self.object_words(&item, false)?;
+                        self.apply_held(writer.clone(), vec![Value::text(&rendered)])?;
+                    }
                 }
                 self.apply_held(writer, vec![Value::text(&tail)])?;
                 if drained {

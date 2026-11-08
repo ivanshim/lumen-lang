@@ -269,6 +269,26 @@ def set_int_max_str_digits(maxdigits):
         raise ValueError('maxdigits must be 0 or larger than 640')
     _int_max_str_digits = maxdigits
 
+# PYTHONIOENCODING is encoding[:errors]. An empty encoding leaves the
+# stream's own. Stderr keeps backslashreplace so a traceback can still
+# be written; the other streams use strict when no handler is named.
+def _apply_io_encoding(stream):
+    if _ignore_environment:
+        return
+    value = _host_environment('environ')[1].get(b'PYTHONIOENCODING')
+    if not value:
+        return
+    raw = value.decode('utf-8', 'surrogateescape') if isinstance(value, bytes) else value
+    encoding, sep, errors = raw.partition(':')
+    if encoding:
+        stream.encoding = encoding
+    if stream._fd == 2:
+        return
+    if sep and errors:
+        stream.errors = errors
+    else:
+        stream.errors = 'strict'
+
 # Standard streams validate their descriptor before asking os.isatty.
 class _StandardStream:
     closed = False
@@ -339,6 +359,7 @@ class _Output(_StandardStream):
     _fd = 1
     def __init__(self):
         self.buffer = _BinaryOutput()
+        _apply_io_encoding(self)
     def write(self, *args, **keywords):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
@@ -356,6 +377,7 @@ class _Error(_StandardStream):
     _fd = 2
     def __init__(self):
         self.buffer = _BinaryOutput(True)
+        _apply_io_encoding(self)
     def write(self, *args, **keywords):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
@@ -387,6 +409,7 @@ class _Input(_BinaryInput):
 
     def __init__(self):
         self.buffer = _BinaryInput()
+        _apply_io_encoding(self)
         self._newline = None
         self._seen = 0
         self._held = ''
