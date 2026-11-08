@@ -337,7 +337,9 @@ def _real(body, source):
         if floating:
             return float(body)
         return int(body)
-    except Exception:
+    except Exception as exc:
+        if 'Exceeds the limit ' in str(exc):
+            raise SyntaxError(str(exc) + ' - Consider hexadecimal for huge integer literals to avoid decimal conversion limits.')
         _malformed(source)
 
 class _Reader:
@@ -647,14 +649,28 @@ class AST:
 
     # Represent the actual fields, without source positions or private parser state.
     def __repr__(self):
+        return _node_repr(self, 0)
+
+
+def _node_repr(value, depth):
+    if isinstance(value, AST):
+        if depth >= 3:
+            return type(value).__name__ + '(...)'
         parts = []
-        for field in self._fields:
+        for field in value._fields:
             try:
-                value = getattr(self, field)
+                item = getattr(value, field)
             except AttributeError:
                 continue
-            parts.append(field + '=' + repr(value))
-        return type(self).__name__ + '(' + ', '.join(parts) + ')'
+            parts.append(field + '=' + _node_repr(item, depth + 1))
+        return type(value).__name__ + '(' + ', '.join(parts) + ')'
+    if isinstance(value, list):
+        if not value:
+            return '[]'
+        if len(value) <= 2:
+            return '[' + ', '.join(_node_repr(item, depth) for item in value) + ']'
+        return '[' + _node_repr(value[0], depth) + ', ..., ' + _node_repr(value[-1], depth) + ']'
+    return repr(value)
 
 
 class mod(AST):
@@ -3112,16 +3128,19 @@ class _Parser:
             self.expect_op(':')
             while self.toks[self.at].kind == 'newline':
                 self.pop()
-            indent = self.toks[self.at].scol
-            if indent <= first.scol:
+            case_tok = self.toks[self.at]
+            indent = self.indent_col(case_tok)
+            if indent <= self.indent_col(first):
                 raise IndentationError('expected an indented block')
             # The case clauses sit at a level of their own between the
             # subject and each body; register it so that a body's dedent
-            # back to the next case is a step the reader knows.
+            # back to the next case is a step the reader knows. The width
+            # is indent_col: a tab is one character wide in scol and eight
+            # wide here, and parse_block dedents with indent_col.
             self.indent_stack.append(indent)
-            self.alt_stack.append(self.alt_indent_col(self.toks[self.at]))
+            self.alt_stack.append(self.alt_indent_col(case_tok))
             cases = []
-            while self.at_name('case') and self.toks[self.at].scol == indent:
+            while self.at_name('case') and self.indent_col(self.toks[self.at]) == indent:
                 header = self.pop()
                 pattern, vs, ve = self.parse_case_as()
                 if isinstance(pattern, MatchStar) and not self.at_op(','):
