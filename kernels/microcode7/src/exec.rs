@@ -35649,7 +35649,7 @@ impl Machine<'_> {
         answer
     }
 
-    fn initialize_source_file_spec(&mut self, path: &str, module: &Value, file: Option<&str>) -> Result<bool, String> {
+    pub(super) fn initialize_source_file_spec(&mut self, path: &str, module: &Value, file: Option<&str>) -> Result<bool, String> {
         if !self.table.has_any("ext.system.module.path") { return Ok(false); }
         let factory = self.imported.get("sys").cloned().and_then(|system| self.attribute(&system, "_make_spec"));
         let (Some(factory), Some(file), Value::Thing(namespace)) = (factory, file, module) else { return Ok(false); };
@@ -35668,7 +35668,13 @@ impl Machine<'_> {
             && self.table.single("ext.builtin.posix").is_some()
             && !self.imported.contains_key("os") && !self.importing.contains("os");
         if path_group_needs_os { self.load_namespace("os")?; }
-        if path == "_typing" && self.table.has_any("ext.stmt.type_params.open") { return Ok(self.type_support_namespace()); }
+        if path == "_typing" && self.table.has_any("ext.stmt.type_params.open") {
+            let space = self.type_support_namespace();
+            if self.attribute(&space, "__spec__").is_none_or(|entry| matches!(entry.settled(), Value::Nil)) {
+                let _ = self.initialize_source_file_spec(path, &space, Some(""));
+            }
+            return Ok(space);
+        }
 
         // A name a program's own code took out of `sys.modules` is read
         // in again rather than handed the standing instance: that is

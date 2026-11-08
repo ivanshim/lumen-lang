@@ -4,493 +4,532 @@ from _picklebuffer import PickleBuffer
 _HAVE_PICKLE_BUFFER = True
 __all__.append('PickleBuffer')
 
-def save_picklebuffer(self, obj):
-    if self.proto < 5:
-        raise PicklingError("PickleBuffer can only be pickled with "
-                            "protocol >= 5")
-    with obj.raw() as m:
-        if not m.contiguous:
-            raise PicklingError("PickleBuffer can not be pickled when "
-                                "pointing to a non-contiguous buffer")
-        in_band = True
-        if self._buffer_callback is not None:
-            in_band = bool(self._buffer_callback(obj))
-        if in_band:
-            # Write data in-band
-            # XXX The C implementation avoids a copy here
-            buf = m.tobytes()
-            if m.readonly:
-                self._save_bytes_no_memo(buf)
-            else:
-                self._save_bytearray_no_memo(buf)
-            self.memoize(obj)
-        else:
-            # Write data out-of-band
-            self.write(NEXT_BUFFER)
-            if m.readonly:
-                self.write(READONLY_BUFFER)
 
-save_picklebuffer.__qualname__ = '_Pickler.save_picklebuffer'
-_Pickler.save_picklebuffer = save_picklebuffer
-_Pickler.dispatch[PickleBuffer] = save_picklebuffer
-del save_picklebuffer
-
-# Decode protocol-0 byte escapes with the shared native codec, warning only
-# after successful decoding and attributing it outside the pickle frames.
-def _escape_decode(data):
-    decoded, consumed, warning = __escape_decode_native__(data, None)
-    if warning is not None:
-        import warnings
-        warnings.warn(warning, DeprecationWarning,
-                      skip_file_prefixes=(__file__,))
-    return decoded
-
-# Preserve the canonical STRING parser and bind its byte codec to caller warnings.
-def load_string(self):
-    data = self.readline()[:-1]
-    if len(data) >= 2 and data[0] == data[-1] and data[0] in b'"\'':
-        data = data[1:-1]
-    else:
-        raise UnpicklingError("the STRING opcode argument must be quoted")
-    self.append(self._decode_string(_escape_decode(data)))
-
-load_string.__qualname__ = '_Unpickler.load_string'
-_Unpickler.load_string = load_string
-_Unpickler.dispatch[STRING[0]] = load_string
-del load_string
-
-# Reduce native typing objects through their actual runtime kinds.
-def _save_native_generic_alias(self, obj):
-    self.save_reduce(type(obj), (obj.__origin__, obj.__args__), state=True if obj.__unpacked__ else None, obj=obj)
-
-import _typing as _native_typing
-import types as _native_types
-for _parameter_name in ('TypeVar', 'ParamSpec', 'TypeVarTuple', 'TypeAliasType'):
-    _Pickler.dispatch[getattr(_native_typing, _parameter_name)] = _Pickler.save_global
-_Pickler.dispatch[_native_types.GenericAlias] = _save_native_generic_alias
-del _native_typing, _native_types, _parameter_name
-# Snapshot frames only for synchronous writes to an exact in-memory stream.
-# Other writers retain the exported view, including writers that keep chunks.
-_stream_write = io.BytesIO.write
-_stream_write_body = _stream_write.__code__
-_commit_exported_frame = _Framer.commit_frame
-
-def commit_frame(self, force=False):
-    frame = self.current_frame
-    if frame and (frame.tell() >= self._FRAME_SIZE_TARGET or force):
-        write = self.file_write
-        if (type(frame) is _memory_stream_type
-                and type(write) is _memory_method_type
-                and type(write.__self__) is _memory_stream_type
-                and write.__func__ is _stream_write
-                and _pickle_code_watch[0]):
-            data = frame.getvalue()
-            if len(data) >= self._FRAME_SIZE_MIN:
-                write(FRAME + pack('<Q', len(data)))
-            write(data)
-            self.current_frame = io.BytesIO()
-        else:
-            data = frame.getbuffer()
-            if len(data) >= self._FRAME_SIZE_MIN:
-                write(FRAME + pack('<Q', len(data)))
-            write(data)
-            self.current_frame = io.BytesIO()
-
-commit_frame.__qualname__ = '_Framer.commit_frame'
-_Framer.commit_frame = commit_frame
-del commit_frame
-
-# Decode bounded runs of scalar fields and plain memo/tuple operations.
-# Other opcodes keep the canonical dispatch and framing machinery.
-_scalar_formats = {
-    NONE[0]: 0, NEWTRUE[0]: 24, NEWFALSE[0]: 25,
-    INT[0]: 18, BININT[0]: 3, BININT1[0]: 1, BININT2[0]: 2,
-    LONG[0]: 19, LONG1[0]: 14, LONG4[0]: 15,
-    BINBYTES[0]: 8, SHORT_BINBYTES[0]: 7, BINBYTES8[0]: 9,
-    UNICODE[0]: 21, BINUNICODE[0]: 12,
-    SHORT_BINUNICODE[0]: 11, BINUNICODE8[0]: 13,
-}
-_scalar_codes = frozenset(_scalar_formats)
-_memory_memoize, _memory_binput, _memory_long_binput = MEMOIZE[0], BINPUT[0], LONG_BINPUT[0]
-_memory_tuple1, _memory_tuple2, _memory_tuple3 = TUPLE1[0], TUPLE2[0], TUPLE3[0]
-_scalar_formats.update({
-    _memory_memoize: 0, _memory_binput: 1, _memory_long_binput: 4,
-    _memory_tuple1: 0, _memory_tuple2: 0, _memory_tuple3: 0,
-})
-_scalar_layouts = tuple(_scalar_formats.get(code, -1) for code in range(256))
-_scalar_handlers = {code: (_Unpickler.dispatch[code], _Unpickler.dispatch[code].__code__)
-                    for code in _scalar_formats}
-_memory_transfer = __bytes_memory__
-_memory_stream_type = io.BytesIO
-_memory_stream_read = io.BytesIO.read
-_memory_stream_line = io.BytesIO.readline
-_memory_unframer = _Unframer
-_memory_unframer_read = _Unframer.read
-_memory_unframer_line = _Unframer.readline
-_memory_unframer_init = _Unframer.__init__
-_memory_append_type = type([].append)
-_memory_method_type = type(io.BytesIO().read)
-_memory_unpack = unpack
-_memory_integer = int
-_memory_string = str
-_memory_long = decode_long
-_memory_long_body = decode_long.__code__
-_memory_maxsize = maxsize
-_memory_all, _memory_type, _memory_length = all, type, len
-_memory_loader_type = _Unpickler
-_stream_load = _Unpickler.load
-_stream_load_body = _stream_load.__code__
-_stock_load = _stream_load
-_accepted_load = _stream_load
-_guarded_functions = tuple(handler for handler, body in _scalar_handlers.values()) + (decode_long, _stream_write)
-_guarded_bodies = tuple(body for handler, body in _scalar_handlers.values()) + (_memory_long_body, _stream_write_body)
-_pickle_code_watch = _memory_transfer(_guarded_functions, _guarded_bodies, '__code__', False, 6)
+class Pickler(_Pickler):
+    pass
 
 
-def _load_memory(self):
-    if (type(self) is not _memory_loader_type or _Unpickler is not _memory_loader_type
-            or (_Unpickler.load is not _stream_load and _Unpickler.load is not _accepted_load)
-            or _stream_load.__code__ is not _stream_load_body
-            or _Unframer is not _memory_unframer
-            or _Unframer.read is not _memory_unframer_read
-            or _Unframer.readline is not _memory_unframer_line
-            or _Unframer.__init__ is not _memory_unframer_init
-            or io.BytesIO.read is not _memory_stream_read
-            or unpack is not _memory_unpack or maxsize != _memory_maxsize
-            or sys.gettrace() is not None):
-        return _stock_load(self)
-    if not hasattr(self, "_file_read"):
-        return _stock_load(self)
-    source_read = self._file_read
-    if (type(source_read) is not _memory_method_type
-            or source_read.__func__ is not _memory_stream_read
-            or type(source_read.__self__) is not _memory_stream_type):
-        return _stock_load(self)
-    source_line = self._file_readline
-    if (type(source_line) is not _memory_method_type
-            or source_line.__func__ is not _memory_stream_line
-            or source_line.__self__ is not source_read.__self__):
-        return _stock_load(self)
-    self._unframer = unframer = _Unframer(source_read, source_line)
-    self.read = read = unframer.read
-    self.readinto = unframer.readinto
-    self.readline = readline = unframer.readline
-    self.metastack = []
-    self.stack = []
-    self.append = self.stack.append
-    self.proto = 0
-    dispatch = self.dispatch
-    bulk = True
-    transferred = False
-    memo = None
-    try:
-        while True:
-            key = read(1)
-            if not key:
-                raise EOFError
-            assert isinstance(key, bytes_types)
-            if not bulk:
-                dispatch[key[0]](self)
-                continue
-            records = ()
-            if (_scalar_layouts[key[0]] >= 0 and _pickle_code_watch[0]
-                    and self.read is read and self.readline is readline):
-                stream = unframer.current_frame
-                if stream is None:
-                    stream = source_read.__self__
-                if type(stream) is _memory_stream_type:
-                    stream_read = stream.read
-                    stream_line = stream.readline
-                    if (type(stream_read) is _memory_method_type
-                            and stream_read.__func__ is _memory_stream_read
-                            and type(stream_line) is _memory_method_type
-                            and stream_line.__func__ is _memory_stream_line
-                            and not stream._closed):
-                        records = _memory_transfer(stream._data, stream._pos - 1, _scalar_layouts,
-                                                   stream._closed, 3)
-                        if len(records) < 4 and key[0] in _scalar_codes:
-                            bulk = False
-            # Short runs do not repay the invariant checks and transfer loop.
-            if len(records) >= 4:
-                append = self.append
-                if (type(dispatch) is dict and type(self.stack) is list
-                        and type(append) is _memory_append_type
-                        and append.__self__ is self.stack and append.__name__ == 'append'
-                        and io.BytesIO.read is _memory_stream_read
-                        and io.BytesIO.readline is _memory_stream_line
-                        and unpack is _memory_unpack and maxsize == _memory_maxsize
-                        and int is _memory_integer and str is _memory_string
-                        and decode_long is _memory_long and sys.gettrace() is None
-                        and type(self.memo) is dict and len is _memory_length
-                        and (not transferred or self.memo is memo)
-                        and (transferred or _memory_all(_memory_type(index) is _memory_integer
-                                                        for index in self.memo))):
-                    memo = self.memo
-                    stack = self.stack
-                    transferred = True
-                    checked = [False] * 256
-                    for code, argument, start, end in records:
-                        if not checked[code]:
-                            handler, body = _scalar_handlers[code]
-                            if dispatch.get(code) is not handler:
-                                break
-                            checked[code] = True
-                        stream._pos = end
-                        if code == _memory_memoize or code == _memory_binput or code == _memory_long_binput:
-                            index = len(memo) if code == _memory_memoize else argument
-                            if code == _memory_long_binput and index > maxsize:
-                                raise ValueError("negative LONG_BINPUT argument")
-                            # Replacements can finalize user objects.
-                            if index in memo:
-                                break
-                            memo[index] = stack[-1]
-                        elif code == _memory_tuple1:
-                            stack[-1] = (stack[-1],)
-                        elif code == _memory_tuple2:
-                            stack[-2:] = [(stack[-2], stack[-1])]
-                        elif code == _memory_tuple3:
-                            stack[-3:] = [(stack[-3], stack[-2], stack[-1])]
-                        else:
-                            append(argument)
-                    else:
-                        continue
-                    stream._pos = start
-                    key = read(1)
-            if transferred or len(records) >= 4:
-                bulk = False
-            dispatch[key[0]](self)
-    except _Stop as stopinst:
-        return stopinst.value
+class Unpickler(_Unpickler):
+    pass
 
-# The setup cost is repaid by bulk binary inputs; small and line-oriented
-# pickles retain the ordinary loader, as do explicit Unpickler instances.
-_stream_loads = _loads
 
-def _loads(s, /, *, fix_imports=True, encoding="ASCII", errors="strict",
-           buffers=None):
+def dump(obj, file, protocol=None, *, fix_imports=True, buffer_callback=None):
+    _Pickler(file, protocol, fix_imports=fix_imports,
+             buffer_callback=buffer_callback).dump(obj)
+
+
+def dumps(obj, protocol=None, *, fix_imports=True, buffer_callback=None):
+    f = io.BytesIO()
+    _Pickler(f, protocol, fix_imports=fix_imports,
+             buffer_callback=buffer_callback).dump(obj)
+    res = f.getvalue()
+    assert isinstance(res, bytes_types)
+    return res
+
+
+def load(file, *, fix_imports=True, encoding="ASCII", errors="strict",
+         buffers=None):
+    return _Unpickler(file, fix_imports=fix_imports, buffers=buffers,
+                      encoding=encoding, errors=errors).load()
+
+
+def loads(s, /, *, fix_imports=True, encoding="ASCII", errors="strict",
+          buffers=None):
     if isinstance(s, str):
         raise TypeError("Can't load pickle from unicode string")
     file = io.BytesIO(s)
-    loader = _Unpickler(file, fix_imports=fix_imports, buffers=buffers,
-                        encoding=encoding, errors=errors)
-    return loader.load()
-
-_loads.__doc__ = _stream_loads.__doc__
-if loads is _stream_loads:
-    loads = _loads
-
-# A list of small ints is the whole cost of the framing tests. The bytes are
-# the stock protocol-4/5 pickle; anything else keeps Pickler.dump.
-_stock_dump = _Pickler.dump
+    return _Unpickler(file, fix_imports=fix_imports, buffers=buffers,
+                      encoding=encoding, errors=errors).load()
 
 
-def _emit_pickled_writes(write, blob):
-    # Reproduce _Pickler frame and large-object write boundaries. An empty
-    # frame forced out before a leading large object is not in the bytes.
-    n = len(blob)
-    i = 0
-    if n >= 2 and blob[0] == 0x80:
-        write(blob[0:2])
-        i = 2
-        if _large_plain_at(blob, i):
-            write(b"")
-    start = i
+def _install_pickle_adapter():
+    def save_picklebuffer(self, obj):
+        if self.proto < 5:
+            raise PicklingError("PickleBuffer can only be pickled with "
+                                "protocol >= 5")
+        with obj.raw() as m:
+            if not m.contiguous:
+                raise PicklingError("PickleBuffer can not be pickled when "
+                                    "pointing to a non-contiguous buffer")
+            in_band = True
+            if self._buffer_callback is not None:
+                in_band = bool(self._buffer_callback(obj))
+            if in_band:
+                # Write data in-band
+                # XXX The C implementation avoids a copy here
+                buf = m.tobytes()
+                if m.readonly:
+                    self._save_bytes_no_memo(buf)
+                else:
+                    self._save_bytearray_no_memo(buf)
+                self.memoize(obj)
+            else:
+                # Write data out-of-band
+                self.write(NEXT_BUFFER)
+                if m.readonly:
+                    self.write(READONLY_BUFFER)
 
-    def flush(end):
-        nonlocal start
-        if end > start:
-            write(blob[start:end])
-            start = end
+    save_picklebuffer.__qualname__ = '_Pickler.save_picklebuffer'
+    _Pickler.save_picklebuffer = save_picklebuffer
+    _Pickler.dispatch[PickleBuffer] = save_picklebuffer
 
-    while i < n:
+    # Decode protocol-0 byte escapes with the shared native codec, warning only
+    # after successful decoding and attributing it outside the pickle frames.
+    def _escape_decode(data):
+        decoded, consumed, warning = __escape_decode_native__(data, None)
+        if warning is not None:
+            import warnings
+            warnings.warn(warning, DeprecationWarning,
+                          skip_file_prefixes=(__file__,))
+        return decoded
+
+    # Preserve the canonical STRING parser and bind its byte codec to caller warnings.
+    def load_string(self):
+        data = self.readline()[:-1]
+        if len(data) >= 2 and data[0] == data[-1] and data[0] in b'"\'':
+            data = data[1:-1]
+        else:
+            raise UnpicklingError("the STRING opcode argument must be quoted")
+        self.append(self._decode_string(_escape_decode(data)))
+
+    load_string.__qualname__ = '_Unpickler.load_string'
+    _Unpickler.load_string = load_string
+    _Unpickler.dispatch[STRING[0]] = load_string
+
+    # Reduce native typing objects through their actual runtime kinds.
+    def _save_native_generic_alias(self, obj):
+        self.save_reduce(type(obj), (obj.__origin__, obj.__args__), state=True if obj.__unpacked__ else None, obj=obj)
+
+    import _typing as _native_typing
+    import types as _native_types
+    for _parameter_name in ('TypeVar', 'ParamSpec', 'TypeVarTuple', 'TypeAliasType'):
+        _Pickler.dispatch[getattr(_native_typing, _parameter_name)] = _Pickler.save_global
+    _Pickler.dispatch[_native_types.GenericAlias] = _save_native_generic_alias
+
+    # Snapshot frames only for synchronous writes to an exact in-memory stream.
+    # Other writers retain the exported view, including writers that keep chunks.
+    _stream_write = io.BytesIO.write
+    _stream_write_body = _stream_write.__code__
+
+    def commit_frame(self, force=False):
+        frame = self.current_frame
+        if frame and (frame.tell() >= self._FRAME_SIZE_TARGET or force):
+            write = self.file_write
+            if (type(frame) is _memory_stream_type
+                    and type(write) is _memory_method_type
+                    and type(write.__self__) is _memory_stream_type
+                    and write.__func__ is _stream_write
+                    and _pickle_code_watch[0]):
+                data = frame.getvalue()
+                if len(data) >= self._FRAME_SIZE_MIN:
+                    write(FRAME + pack('<Q', len(data)))
+                write(data)
+                self.current_frame = io.BytesIO()
+            else:
+                data = frame.getbuffer()
+                if len(data) >= self._FRAME_SIZE_MIN:
+                    write(FRAME + pack('<Q', len(data)))
+                write(data)
+                self.current_frame = io.BytesIO()
+
+    commit_frame.__qualname__ = '_Framer.commit_frame'
+    _Framer.commit_frame = commit_frame
+
+    # Decode bounded runs of scalar fields and plain memo/tuple operations.
+    # Other opcodes keep the canonical dispatch and framing machinery.
+    _scalar_formats = {
+        NONE[0]: 0, NEWTRUE[0]: 24, NEWFALSE[0]: 25,
+        INT[0]: 18, BININT[0]: 3, BININT1[0]: 1, BININT2[0]: 2,
+        LONG[0]: 19, LONG1[0]: 14, LONG4[0]: 15,
+        BINBYTES[0]: 8, SHORT_BINBYTES[0]: 7, BINBYTES8[0]: 9,
+        UNICODE[0]: 21, BINUNICODE[0]: 12,
+        SHORT_BINUNICODE[0]: 11, BINUNICODE8[0]: 13,
+    }
+    _scalar_codes = frozenset(_scalar_formats)
+    _memory_memoize, _memory_binput, _memory_long_binput = MEMOIZE[0], BINPUT[0], LONG_BINPUT[0]
+    _memory_tuple1, _memory_tuple2, _memory_tuple3 = TUPLE1[0], TUPLE2[0], TUPLE3[0]
+    _scalar_formats.update({
+        _memory_memoize: 0, _memory_binput: 1, _memory_long_binput: 4,
+        _memory_tuple1: 0, _memory_tuple2: 0, _memory_tuple3: 0,
+    })
+    _scalar_layouts = tuple(_scalar_formats.get(code, -1) for code in range(256))
+    _scalar_handlers = {code: (_Unpickler.dispatch[code], _Unpickler.dispatch[code].__code__)
+                        for code in _scalar_formats}
+    _memory_transfer = __bytes_memory__
+    _memory_stream_type = io.BytesIO
+    _memory_stream_read = io.BytesIO.read
+    _memory_stream_line = io.BytesIO.readline
+    _memory_unframer = _Unframer
+    _memory_unframer_read = _Unframer.read
+    _memory_unframer_line = _Unframer.readline
+    _memory_unframer_init = _Unframer.__init__
+    _memory_append_type = type([].append)
+    _memory_method_type = type(io.BytesIO().read)
+    _memory_unpack = unpack
+    _memory_integer = int
+    _memory_string = str
+    _memory_long = decode_long
+    _memory_long_body = decode_long.__code__
+    _memory_maxsize = maxsize
+    _memory_all, _memory_type, _memory_length = all, type, len
+    _memory_loader_type = _Unpickler
+    _stream_load = _Unpickler.load
+    _stream_load_body = _stream_load.__code__
+    _stock_load = _stream_load
+    _accepted_load = _stream_load
+    _guarded_functions = tuple(handler for handler, body in _scalar_handlers.values()) + (decode_long, _stream_write)
+    _guarded_bodies = tuple(body for handler, body in _scalar_handlers.values()) + (_memory_long_body, _stream_write_body)
+    _pickle_code_watch = _memory_transfer(_guarded_functions, _guarded_bodies, '__code__', False, 6)
+
+    def _load_memory(self):
+        if (type(self) not in (_memory_loader_type, Unpickler) or _Unpickler is not _memory_loader_type
+                or (_Unpickler.load is not _stream_load and _Unpickler.load is not _accepted_load)
+                or _stream_load.__code__ is not _stream_load_body
+                or _Unframer is not _memory_unframer
+                or _Unframer.read is not _memory_unframer_read
+                or _Unframer.readline is not _memory_unframer_line
+                or _Unframer.__init__ is not _memory_unframer_init
+                or io.BytesIO.read is not _memory_stream_read
+                or unpack is not _memory_unpack or maxsize != _memory_maxsize
+                or sys.gettrace() is not None):
+            return _stock_load(self)
+        if not hasattr(self, "_file_read"):
+            return _stock_load(self)
+        source_read = self._file_read
+        if (type(source_read) is not _memory_method_type
+                or source_read.__func__ is not _memory_stream_read
+                or type(source_read.__self__) is not _memory_stream_type):
+            return _stock_load(self)
+        source_line = self._file_readline
+        if (type(source_line) is not _memory_method_type
+                or source_line.__func__ is not _memory_stream_line
+                or source_line.__self__ is not source_read.__self__):
+            return _stock_load(self)
+        self._unframer = unframer = _Unframer(source_read, source_line)
+        self.read = read = unframer.read
+        self.readinto = unframer.readinto
+        self.readline = readline = unframer.readline
+        self.metastack = []
+        self.stack = []
+        self.append = self.stack.append
+        self.proto = 0
+        dispatch = self.dispatch
+        bulk = True
+        transferred = False
+        memo = None
+        try:
+            while True:
+                key = read(1)
+                if not key:
+                    raise EOFError
+                assert isinstance(key, bytes_types)
+                if not bulk:
+                    dispatch[key[0]](self)
+                    continue
+                records = ()
+                if (_scalar_layouts[key[0]] >= 0 and _pickle_code_watch[0]
+                        and self.read is read and self.readline is readline):
+                    stream = unframer.current_frame
+                    if stream is None:
+                        stream = source_read.__self__
+                    if type(stream) is _memory_stream_type:
+                        stream_read = stream.read
+                        stream_line = stream.readline
+                        if (type(stream_read) is _memory_method_type
+                                and stream_read.__func__ is _memory_stream_read
+                                and type(stream_line) is _memory_method_type
+                                and stream_line.__func__ is _memory_stream_line
+                                and not stream._closed):
+                            records = _memory_transfer(stream._data, stream._pos - 1, _scalar_layouts,
+                                                       stream._closed, 3)
+                            if len(records) < 4 and key[0] in _scalar_codes:
+                                bulk = False
+                # Short runs do not repay the invariant checks and transfer loop.
+                if len(records) >= 4:
+                    append = self.append
+                    if (type(dispatch) is dict and type(self.stack) is list
+                            and type(append) is _memory_append_type
+                            and append.__self__ is self.stack and append.__name__ == 'append'
+                            and io.BytesIO.read is _memory_stream_read
+                            and io.BytesIO.readline is _memory_stream_line
+                            and unpack is _memory_unpack and maxsize == _memory_maxsize
+                            and int is _memory_integer and str is _memory_string
+                            and decode_long is _memory_long and sys.gettrace() is None
+                            and type(self.memo) is dict and len is _memory_length
+                            and (not transferred or self.memo is memo)
+                            and (transferred or _memory_all(_memory_type(index) is _memory_integer
+                                                            for index in self.memo))):
+                        memo = self.memo
+                        stack = self.stack
+                        transferred = True
+                        checked = [False] * 256
+                        for code, argument, start, end in records:
+                            if not checked[code]:
+                                handler, body = _scalar_handlers[code]
+                                if dispatch.get(code) is not handler:
+                                    break
+                                checked[code] = True
+                            stream._pos = end
+                            if code == _memory_memoize or code == _memory_binput or code == _memory_long_binput:
+                                index = len(memo) if code == _memory_memoize else argument
+                                if code == _memory_long_binput and index > maxsize:
+                                    raise ValueError("negative LONG_BINPUT argument")
+                                # Replacements can finalize user objects.
+                                if index in memo:
+                                    break
+                                memo[index] = stack[-1]
+                            elif code == _memory_tuple1:
+                                stack[-1] = (stack[-1],)
+                            elif code == _memory_tuple2:
+                                stack[-2:] = [(stack[-2], stack[-1])]
+                            elif code == _memory_tuple3:
+                                stack[-3:] = [(stack[-3], stack[-2], stack[-1])]
+                            else:
+                                append(argument)
+                        else:
+                            continue
+                        stream._pos = start
+                        key = read(1)
+                if transferred or len(records) >= 4:
+                    bulk = False
+                dispatch[key[0]](self)
+        except _Stop as stopinst:
+            return stopinst.value
+
+    # The setup cost is repaid by bulk binary inputs; small and line-oriented
+    # pickles retain the ordinary loader, as do explicit Unpickler instances.
+    _stream_loads = _loads
+
+    def _fast_loads(s, /, *, fix_imports=True, encoding="ASCII", errors="strict",
+                    buffers=None):
+        if isinstance(s, str):
+            raise TypeError("Can't load pickle from unicode string")
+        file = io.BytesIO(s)
+        loader = _Unpickler(file, fix_imports=fix_imports, buffers=buffers,
+                            encoding=encoding, errors=errors)
+        return loader.load()
+
+    _fast_loads.__name__ = '_loads'
+    _fast_loads.__qualname__ = '_loads'
+    _fast_loads.__doc__ = _stream_loads.__doc__
+    loads.__doc__ = _stream_loads.__doc__
+    dump.__doc__ = _dump.__doc__
+    dumps.__doc__ = _dumps.__doc__
+    load.__doc__ = _load.__doc__
+    globals()['_loads'] = _fast_loads
+
+    # A list of small ints is the whole cost of the framing tests. The bytes are
+    # the stock protocol-4/5 pickle; anything else keeps Pickler.dump.
+    _stock_dump = _Pickler.dump
+
+    def _emit_pickled_writes(write, blob):
+        # Reproduce _Pickler frame and large-object write boundaries. An empty
+        # frame forced out before a leading large object is not in the bytes.
+        n = len(blob)
+        i = 0
+        if n >= 2 and blob[0] == 0x80:
+            write(blob[0:2])
+            i = 2
+            if _large_plain_at(blob, i):
+                write(b"")
+        start = i
+
+        def flush(end):
+            nonlocal start
+            if end > start:
+                write(blob[start:end])
+                start = end
+
+        while i < n:
+            op = blob[i]
+            if op == 0x95 and i + 9 <= n:
+                size = int.from_bytes(blob[i + 1:i + 9], "little")
+                if i + 9 + size <= n:
+                    flush(i)
+                    write(blob[i:i + 9])
+                    write(blob[i + 9:i + 9 + size])
+                    i = i + 9 + size
+                    start = i
+                    continue
+            if op in (0x58, 0x42) and i + 5 <= n:
+                size = int.from_bytes(blob[i + 1:i + 5], "little")
+                if size >= 65536 and i + 5 + size <= n:
+                    flush(i)
+                    write(blob[i:i + 5])
+                    write(blob[i + 5:i + 5 + size])
+                    i = i + 5 + size
+                    start = i
+                    continue
+            if op in (0x8d, 0x8e, 0x96) and i + 9 <= n:
+                size = int.from_bytes(blob[i + 1:i + 9], "little")
+                if size >= 65536 and i + 9 + size <= n:
+                    flush(i)
+                    write(blob[i:i + 9])
+                    write(blob[i + 9:i + 9 + size])
+                    i = i + 9 + size
+                    start = i
+                    continue
+            i += 1
+        flush(n)
+
+    def _large_plain_at(blob, i):
+        n = len(blob)
+        if i >= n:
+            return False
         op = blob[i]
-        if op == 0x95 and i + 9 <= n:
-            size = int.from_bytes(blob[i + 1:i + 9], "little")
-            if i + 9 + size <= n:
-                flush(i)
-                write(blob[i:i + 9])
-                write(blob[i + 9:i + 9 + size])
-                i = i + 9 + size
-                start = i
-                continue
         if op in (0x58, 0x42) and i + 5 <= n:
             size = int.from_bytes(blob[i + 1:i + 5], "little")
-            if size >= 65536 and i + 5 + size <= n:
-                flush(i)
-                write(blob[i:i + 5])
-                write(blob[i + 5:i + 5 + size])
-                i = i + 5 + size
-                start = i
-                continue
+            return size >= 65536 and i + 5 + size <= n
         if op in (0x8d, 0x8e, 0x96) and i + 9 <= n:
             size = int.from_bytes(blob[i + 1:i + 9], "little")
-            if size >= 65536 and i + 9 + size <= n:
-                flush(i)
-                write(blob[i:i + 9])
-                write(blob[i + 9:i + 9 + size])
-                i = i + 9 + size
-                start = i
-                continue
-        i += 1
-    flush(n)
-
-def _large_plain_at(blob, i):
-    n = len(blob)
-    if i >= n:
+            return size >= 65536 and i + 9 + size <= n
         return False
-    op = blob[i]
-    if op in (0x58, 0x42) and i + 5 <= n:
-        size = int.from_bytes(blob[i + 1:i + 5], "little")
-        return size >= 65536 and i + 5 + size <= n
-    if op in (0x8d, 0x8e, 0x96) and i + 9 <= n:
-        size = int.from_bytes(blob[i + 1:i + 9], "little")
-        return size >= 65536 and i + 9 + size <= n
-    return False
 
-def _plain_dump(self, obj):
-    if (hasattr(self, "_file_write") and type(self) is _Pickler and self.bin
-            and not self.fast and self.proto >= 4 and not self.memo
-            and type(obj) is list and obj and type(obj[0]) is int
-            and getattr(self.persistent_id, "__func__", None) is _Pickler.persistent_id
-            and _Pickler.dispatch.get(list) is _Pickler.save_list
-            and _Pickler.dispatch.get(int) is _Pickler.save_long):
-        blob = _memory_transfer(obj, self.proto, 0, False, 7)
-        if type(blob) is bytes:
-            self.framer.file_write(blob)
-            self.memo[id(obj)] = (0, obj)
-            return
-    if (hasattr(self, "_file_write") and type(self) is _Pickler and self.bin
-            and not self.fast and self.proto >= 4 and not self.memo
-            and getattr(self, "reducer_override", _NoValue) is _NoValue
-            and getattr(self.persistent_id, "__func__", None) is _Pickler.persistent_id
-            and _Pickler.dispatch.get(list) is _Pickler.save_list
-            and _Pickler.dispatch.get(dict) is _Pickler.save_dict
-            and _Pickler.dispatch.get(tuple) is _Pickler.save_tuple
-            and _Pickler.dispatch.get(bytes) is _Pickler.save_bytes
-            and _Pickler.dispatch.get(str) is _Pickler.save_str
-            and _Pickler.dispatch.get(int) is _Pickler.save_long
-            and (type(obj) is list or type(obj) is dict or type(obj) is bytes
-                 or type(obj) is str or (type(obj) is tuple and obj))):
-        blob = _memory_transfer(obj, self.proto, 0, False, 8)
-        if type(blob) is bytes and blob:
-            _emit_pickled_writes(self.framer.file_write, blob)
-            self.memo[id(obj)] = (0, obj)
-            return
-    return _stock_dump(self, obj)
+    def _plain_dump(self, obj):
+        if (hasattr(self, "_file_write") and type(self) in (_Pickler, Pickler) and self.bin
+                and not self.fast and self.proto >= 4 and not self.memo
+                and type(obj) is list and obj and type(obj[0]) is int
+                and getattr(self.persistent_id, "__func__", None) is _Pickler.persistent_id
+                and _Pickler.dispatch.get(list) is _Pickler.save_list
+                and _Pickler.dispatch.get(int) is _Pickler.save_long):
+            blob = _memory_transfer(obj, self.proto, 0, False, 7)
+            if type(blob) is bytes:
+                self.framer.file_write(blob)
+                self.memo[id(obj)] = (0, obj)
+                return
+        if (hasattr(self, "_file_write") and type(self) in (_Pickler, Pickler) and self.bin
+                and not self.fast and self.proto >= 4 and not self.memo
+                and getattr(self, "reducer_override", _NoValue) is _NoValue
+                and getattr(self.persistent_id, "__func__", None) is _Pickler.persistent_id
+                and _Pickler.dispatch.get(list) is _Pickler.save_list
+                and _Pickler.dispatch.get(dict) is _Pickler.save_dict
+                and _Pickler.dispatch.get(tuple) is _Pickler.save_tuple
+                and _Pickler.dispatch.get(bytes) is _Pickler.save_bytes
+                and _Pickler.dispatch.get(str) is _Pickler.save_str
+                and _Pickler.dispatch.get(int) is _Pickler.save_long
+                and (type(obj) is list or type(obj) is dict or type(obj) is bytes
+                     or type(obj) is str or (type(obj) is tuple and obj))):
+            blob = _memory_transfer(obj, self.proto, 0, False, 8)
+            if type(blob) is bytes and blob:
+                _emit_pickled_writes(self.framer.file_write, blob)
+                self.memo[id(obj)] = (0, obj)
+                return
+        return _stock_dump(self, obj)
 
-_plain_dump.__qualname__ = '_Pickler.dump'
-_Pickler.dump = _plain_dump
+    _plain_dump.__name__ = 'dump'
+    _plain_dump.__qualname__ = '_Pickler.dump'
+    _Pickler.dump = _plain_dump
 
-# A list of (int, str) pairs, bytes, and builtin len is one native read.
-# A long run of BININTs still uses the scalar loader. Everything else keeps load.
-_memory_find_class = _Unpickler.find_class
+    # A list of (int, str) pairs, bytes, and builtin len is one native read.
+    # A long run of BININTs still uses the scalar loader. Everything else keeps load.
+    _memory_find_class = _Unpickler.find_class
 
-def _memory_stream(self):
-    if not hasattr(self, "_file_read"):
-        return None
-    source_read = self._file_read
-    if (type(source_read) is not _memory_method_type
-            or source_read.__func__ is not _memory_stream_read):
-        return None
-    stream = source_read.__self__
-    data = getattr(stream, "_data", None)
-    if type(data) is not bytes and type(data) is not bytearray:
-        return None
-    return stream
+    def _memory_stream(self):
+        if not hasattr(self, "_file_read"):
+            return None
+        source_read = self._file_read
+        if (type(source_read) is not _memory_method_type
+                or source_read.__func__ is not _memory_stream_read):
+            return None
+        stream = source_read.__self__
+        data = getattr(stream, "_data", None)
+        if type(data) is not bytes and type(data) is not bytearray:
+            return None
+        return stream
 
-def _long_int_run(data, pos):
-    n = len(data)
-    i = pos
-    if i < n and data[i] == 128:
-        i += 2
-    if i < n and data[i] == 149 and i + 9 <= n:
-        i += 9
-    if i + 1 < n and data[i] == 93 and data[i + 1] == 148:
-        i += 2
-    if i < n and data[i] == 40:
-        i += 1
-    seen = 0
-    while seen < 8 and i < n:
-        op = data[i]
-        if op == 75 and i + 2 <= n:
+    def _long_int_run(data, pos):
+        n = len(data)
+        i = pos
+        if i < n and data[i] == 128:
             i += 2
-        elif op == 77 and i + 3 <= n:
-            i += 3
-        elif op == 74 and i + 5 <= n:
-            i += 5
-        else:
-            return False
-        seen += 1
-    return seen >= 8
+        if i < n and data[i] == 149 and i + 9 <= n:
+            i += 9
+        if i + 1 < n and data[i] == 93 and data[i + 1] == 148:
+            i += 2
+        if i < n and data[i] == 40:
+            i += 1
+        seen = 0
+        while seen < 8 and i < n:
+            op = data[i]
+            if op == 75 and i + 2 <= n:
+                i += 2
+            elif op == 77 and i + 3 <= n:
+                i += 3
+            elif op == 74 and i + 5 <= n:
+                i += 5
+            else:
+                return False
+            seen += 1
+        return seen >= 8
 
-def _recall_recorded_pairs(self):
-    if self.memo or self.encoding != "ASCII" or self.errors != "strict" or self._buffers is not None:
-        return None
-    if getattr(self.find_class, "__func__", None) is not _memory_find_class:
-        return None
-    stream = _memory_stream(self)
-    if stream is None or stream._closed:
-        return None
-    got = _memory_transfer(stream._data, stream._pos, bool(self.fix_imports), False, 9)
-    if type(got) is not tuple or len(got) != 2:
-        return None
-    body, end = got
-    if type(body) is not list or type(end) is not int:
-        return None
-    body.append(len)
-    stream._pos = end
-    return body
-
-def _recall_plain(self, stream):
-    if self.memo or self.encoding != "ASCII" or self.errors != "strict" or self._buffers is not None:
-        return None
-    if getattr(self.find_class, "__func__", None) is not _memory_find_class:
-        return None
-    if len(stream._data) - stream._pos < 4096:
-        return None
-    got = _memory_transfer(stream._data, stream._pos, False, False, 10)
-    if type(got) is not tuple or len(got) != 3:
-        return None
-    body, end, memo = got
-    if type(end) is not int or type(memo) is not list:
-        return None
-    for index, item in enumerate(memo):
-        self.memo[index] = item
-    stream._pos = end
-    return body
-
-def _plain_load(self):
-    if type(self) is _memory_loader_type:
-        recalled = _recall_recorded_pairs(self)
-        if recalled is not None:
-            return recalled
+    def _recall_recorded_pairs(self):
+        if self.memo or self.encoding != "ASCII" or self.errors != "strict" or self._buffers is not None:
+            return None
+        if getattr(self.find_class, "__func__", None) is not _memory_find_class:
+            return None
         stream = _memory_stream(self)
-        if stream is not None and not stream._closed:
-            plain = _recall_plain(self, stream)
-            if plain is not None:
-                return plain
-            data = stream._data
-            pos = stream._pos
-            # Memo and short-tuple runs share the scalar loader. Native recall
-            # already returned; small and line-oriented pickles stay canonical.
-            if (_long_int_run(data, pos)
-                    or (pos >= 0 and len(data) - pos >= 256
-                        and data[pos] in (PROTO[0], EMPTY_LIST[0], EMPTY_DICT[0], EMPTY_TUPLE[0]))):
-                return _load_memory(self)
-    return _stock_load(self)
+        if stream is None or stream._closed:
+            return None
+        got = _memory_transfer(stream._data, stream._pos, bool(self.fix_imports), False, 9)
+        if type(got) is not tuple or len(got) != 2:
+            return None
+        body, end = got
+        if type(body) is not list or type(end) is not int:
+            return None
+        body.append(len)
+        stream._pos = end
+        return body
 
-_plain_load.__qualname__ = '_Unpickler.load'
-_accepted_load = _plain_load
-_Unpickler.load = _plain_load
+    def _recall_plain(self, stream):
+        if self.memo or self.encoding != "ASCII" or self.errors != "strict" or self._buffers is not None:
+            return None
+        if getattr(self.find_class, "__func__", None) is not _memory_find_class:
+            return None
+        if len(stream._data) - stream._pos < 4096:
+            return None
+        got = _memory_transfer(stream._data, stream._pos, False, False, 10)
+        if type(got) is not tuple or len(got) != 3:
+            return None
+        body, end, memo = got
+        if type(end) is not int or type(memo) is not list:
+            return None
+        for index, item in enumerate(memo):
+            self.memo[index] = item
+        stream._pos = end
+        return body
 
-# A code object is not picklable in the reference; the reducer that would
-# otherwise rebuild the class standing for it must say so.
-import types as _code_types
+    def _plain_load(self):
+        if type(self) in (_memory_loader_type, Unpickler):
+            recalled = _recall_recorded_pairs(self)
+            if recalled is not None:
+                return recalled
+            stream = _memory_stream(self)
+            if stream is not None and not stream._closed:
+                plain = _recall_plain(self, stream)
+                if plain is not None:
+                    return plain
+                data = stream._data
+                pos = stream._pos
+                # Memo and short-tuple runs share the scalar loader. Native recall
+                # already returned; small and line-oriented pickles stay canonical.
+                if (_long_int_run(data, pos)
+                        or (pos >= 0 and len(data) - pos >= 256
+                            and data[pos] in (PROTO[0], EMPTY_LIST[0], EMPTY_DICT[0], EMPTY_TUPLE[0]))):
+                    return _load_memory(self)
+        return _stock_load(self)
 
-def save_code(self, obj):
-    raise TypeError("cannot pickle code objects")
+    _plain_load.__name__ = 'load'
+    _plain_load.__qualname__ = '_Unpickler.load'
+    _accepted_load = _plain_load
+    _Unpickler.load = _plain_load
 
-save_code.__qualname__ = "_Pickler.save_code"
-_Pickler.save_code = save_code
-_Pickler.dispatch[_code_types.CodeType] = save_code
-del save_code, _code_types
+    # A code object is not picklable in the reference; the reducer that would
+    # otherwise rebuild the class standing for it must say so.
+    def _save_code(self, obj):
+        raise TypeError("cannot pickle code objects")
+
+    _save_code.__qualname__ = "_Pickler.save_code"
+    _Pickler.dispatch[_native_types.CodeType] = _save_code
+
+
+_install_pickle_adapter()

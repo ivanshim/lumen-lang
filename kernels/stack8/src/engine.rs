@@ -34510,7 +34510,7 @@ impl Engine<'_> {
         result
     }
 
-    fn initialize_source_file_spec(&mut self, path: &str, module: &Value, file: Option<&str>) -> Flow<bool> {
+    pub(super) fn initialize_source_file_spec(&mut self, path: &str, module: &Value, file: Option<&str>) -> Flow<bool> {
         if self.lang.module_path.is_none() { return Ok(false); }
         let maker = self.modules.get("sys").cloned()
             .and_then(|system| self.member_of(system, "_make_spec").ok().flatten());
@@ -34531,7 +34531,13 @@ impl Engine<'_> {
             && !self.modules.contains_key("os") && !self.importing.contains("os") {
             self.import_module("os")?;
         }
-        if path == "_typing" && self.lang.type_parameters { return Ok(self.typing_module()); }
+        if path == "_typing" && self.lang.type_parameters {
+            let module = self.typing_module();
+            if matches!(self.member_of(module.clone(), "__spec__")?, None | Some(Value::Null)) {
+                let _ = self.initialize_source_file_spec(path, &module, Some(""));
+            }
+            return Ok(module);
+        }
 
         if path.starts_with('.') { let resolved = self.import_path(path)?; return self.import_module(&resolved); }
         if let Some(cached) = self.module_cache_value(path) {
