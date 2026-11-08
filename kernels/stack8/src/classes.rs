@@ -299,7 +299,7 @@ impl<'a> Engine<'a> {
         }
         let order=self.class_word("order").to_owned();
         if !order.is_empty(){c.shared.borrow_mut().push((order.clone(),self.held_kind_descriptor("type",&order)));}
-        for detail in ["mro", "namespace"] {
+        for detail in ["mro", "namespace", "subclasses"] {
             let key = self.class_word(detail);
             if !key.is_empty() { c.shared.borrow_mut().push((key.to_string(), self.held_kind_descriptor("type", key))); }
         }
@@ -352,6 +352,8 @@ impl<'a> Engine<'a> {
     /// which reads as the kind having no attribute of that name.
     pub(super) fn builtin_kind_doc(word: &str) -> Option<&'static str> {
         match word {
+            "function" => Some("Create a function object.\n\n  code\n    a code object\n  globals\n    the globals dictionary\n  name\n    a string that overrides the name from the code object\n  argdefs\n    a tuple that specifies the default argument values\n  closure\n    a tuple that supplies the bindings for free variables"),
+            "method" => Some("Create a bound instance method object."),
             "object" => Some("The base class of the class hierarchy.\n\nWhen called, it accepts no arguments and returns a new featureless\ninstance that has no instance attributes and cannot be given any.\n"),
             "enumerate" => Some("Return an enumerate object.\n\n  iterable\n    an object supporting iteration\n\nThe enumerate object yields pairs containing a count (from start, which\ndefaults to zero) and a value yielded by the iterable argument.\n\nenumerate is useful for obtaining an indexed list:\n    (0, seq[0]), (1, seq[1]), (2, seq[2]), ..."),
             "reversed" => Some("Return a reverse iterator over the values of the given sequence."),
@@ -1610,7 +1612,10 @@ impl<'a> Engine<'a> {
                     let _ = entries;
                     Ok(Value::Null)
     }
-    fn slot_read(&self, thing: &Value, parts: &[Value]) -> Flow<Value> {
+    fn slot_read(&mut self, thing: &Value, parts: &[Value]) -> Flow<Value> {
+        if parts.get(2).is_some_and(|part| part.plain() == "\0object-class") {
+            return self.class_type(vec![thing.clone()]);
+        }
         if parts.get(2).is_some_and(|part|part.plain()=="\0instance-namespace") {
             if let (Value::Class(receiver),Some(Value::Class(declaring)))=(thing,parts.get(1)) {
                 let matches=Self::maker_beneath(receiver).is_some_and(|maker|Rc::ptr_eq(&maker,declaring)||maker.lineage.borrow().iter().any(|base|Rc::ptr_eq(base,declaring)));
@@ -1648,7 +1653,37 @@ impl<'a> Engine<'a> {
             } else { self.missing_member(thing, &parts[0].plain()) }
         })
     }
-    fn slot_write(&self, thing: &Value, parts: &[Value], value: Option<Value>) -> Flow<Value> {
+    fn replace_object_class(&self, o: &Keep, value: Option<Value>) -> Flow<Value> {
+        let Some(Value::Class(next)) = value else { return Err("TypeError: __class__ must be set to a class".to_string().into()); };
+        let old = o.class_now();
+        // Native modules and subclasses without extra slots share their storage.
+        let extra_slots = |class: &Class| std::iter::once(class).chain(class.lineage.borrow().iter().map(Rc::as_ref))
+            .any(|base| Self::own_class_value(base, self.class_word("slots")).is_some_and(|value| !matches!(value.contents(), Value::Tuple(names) | Value::Array(names) if names.is_empty())));
+        let old_module = self.module_holding(&Value::Object(o.clone())).is_some() || Self::kind_beneath(&old).as_deref() == Some("module");
+        let module_layout = old_module && Self::kind_beneath(&next).as_deref() == Some("module")
+            && !extra_slots(&old) && !extra_slots(&next);
+        let mutable=old.python_names.borrow().is_some() && next.python_names.borrow().is_some();
+        let modules=Self::kind_beneath(&old).as_deref()==Some("module") && Self::kind_beneath(&next).as_deref()==Some("module");
+        if !module_layout && !Rc::ptr_eq(&old,&next) && ((!mutable && !modules) || !self.bases_compatible(&old,&next) || !self.assignment_layouts_agree(&old,&next)) {
+            return Err("TypeError: __class__ assignment: object layout differs".to_string().into());
+        }
+        let from = format!(":{:p}", Rc::as_ptr(&old));
+        let to = format!(":{:p}", Rc::as_ptr(&next));
+        for (place, _) in o.fields.borrow_mut().iter_mut() {
+            if place.starts_with("\0slot:") && place.ends_with(&from) {
+                place.truncate(place.len() - from.len());
+                place.push_str(&to);
+            }
+        }
+        *o.replacement_class.borrow_mut() = Some(next);
+        return Ok(Value::Null);
+    }
+    fn slot_write(&mut self, thing: &Value, parts: &[Value], value: Option<Value>) -> Flow<Value> {
+        if parts.get(2).is_some_and(|part| part.plain() == "\0object-class") {
+            if let Value::Object(instance) = thing { return self.replace_object_class(instance, value); }
+            let name = self.class_word("kind").to_string();
+            return self.class_write(thing.clone(), &name, value, true);
+        }
         if parts.get(2).is_some_and(|part|part.plain()=="\0instance-namespace") && matches!(thing,Value::Class(_)) {
             self.slot_read(thing,parts)?;
             return Err("AttributeError: attribute '__dict__' of 'type' objects is not writable".into());
@@ -3535,6 +3570,21 @@ impl<'a> Engine<'a> {
             => {
                     let member = w.1[1].plain();
                     let word = w.1[0].plain();
+                    if word == self.class_word("root") && member == self.class_word("subclass") {
+                        let given = self.call_items(args)?;
+                        let Some((None, receiver)) = given.first() else { return Err(format!("TypeError: descriptor '{member}' of '{word}' object needs an argument").into()); };
+                        if !self.stands_for_kind(receiver) { return Err(format!("TypeError: descriptor '{member}' requires a type object").into()); }
+                        let class = self.super_type_arg(receiver)?;
+                        if given.len() != 1 { return Err(format!("TypeError: {}.{member}() takes no keyword arguments", class.name).into()); }
+                        return Ok(Value::Null);
+                    }
+                    if word == "type" && member == self.class_word("subclasses") {
+                        if args.is_empty() { return Err("TypeError: unbound method type.__subclasses__() needs an argument".into()); }
+                        let receiver = args.remove(0);
+                        if !self.stands_for_kind(&receiver) { return Err("TypeError: descriptor '__subclasses__' requires a type object".into()); }
+                        let owner = self.super_type_arg(&receiver)?;
+                        return self.class_apply(Self::adapter(204, vec![Value::Class(owner)]), args);
+                    }
                     if word=="type" && member==self.class_word("order") {return self.default_mro_call(args);}
                     if args.is_empty() {
                         if word == "module" && self.lang.class_special.get(1).is_some_and(|name| name == &member) {
@@ -4433,8 +4483,17 @@ impl<'a> Engine<'a> {
         entries.push((String::from("object"), name.to_string(), callable.clone()));
         callable
     }
+    fn root_subclass_descriptor(&self) -> Value {
+        let name = self.class_word("subclass");
+        let mut entries = self.kind_descriptors.borrow_mut();
+        if let Some((_, _, value)) = entries.iter().find(|(kind, key, _)| kind == "object" && key == name) { return value.clone(); }
+        let value = Self::adapter(29, vec![Value::text(self.class_word("root")), Value::text(name), Value::Flag(true)]);
+        entries.push((String::from("object"), name.to_string(), value.clone()));
+        value
+    }
     fn root_member(&mut self, name: &str, of: Option<&Rc<Class>>) -> Option<Value> {
         if name.is_empty() { return None; }
+        if name == self.class_word("subclass") { return Some(self.root_subclass_descriptor()); }
         if self.lang.class_details.get("root.members").map_or(false,|names| names.iter().any(|n| n==name)) {
             let owner = of.and_then(|class| Self::kind_beneath(class)).unwrap_or_else(|| self.class_word("root").to_string());
             let key = format!("root:{owner}:{name}");
@@ -4828,7 +4887,7 @@ impl<'a> Engine<'a> {
             _ => Self::type_argument_kind(&owner),
         };
         let class = if let Value::Class(held) = &owner { held.clone() } else if matches!(&owner, Value::Native(Builtin::Bool, _)) { self.kind_class("bool") } else { self.type_base(&owner).map_err(|_| Fault::Note(format!("TypeError: descriptor '{word}' for type '{defining}' needs a type, not a '{}' as arg 2", clip(argument_kind))))? };
-        let base = self.spelled_kind(&defining).ok_or_else(|| self.class_refusal())?;
+        let base = if defining == self.class_word("root") { Value::Class(self.root_class()) } else { self.spelled_kind(&defining).ok_or_else(|| self.class_refusal())? };
         let registered_buffer = class.shared.borrow().iter().any(|(key, value)| key == "\0buffer_allocator" && value.is_true());
         let title = if registered_buffer || class.python_names.borrow().is_none() { self.qualified_class(&class) }
             else { class.python_names.borrow().as_ref().unwrap().0.type_text().plain() };
@@ -4890,6 +4949,9 @@ impl<'a> Engine<'a> {
             if w.0 == 29 && w.1.len() == 3 {
                 let class = match &subject { Some(Value::Object(object)) => object.class_now(), Some(Value::Class(owner)) => owner.clone(), _ => class };
                 let name = w.1[1].plain();
+                if w.1[0].plain() == self.class_word("root") && name == self.class_word("subclass") {
+                    return Ok(Self::adapter(3, vec![value.clone(), Value::Class(class)]));
+                }
                 if Self::own_kind(&class).as_deref() == Some("dict") {
                     let qualified = format!("dict.{name}");
                     if let Some(operation) = self.lang.builtins.get(&qualified) { return Ok(Value::Native(*operation, Rc::from(qualified))); }
@@ -5514,7 +5576,7 @@ impl<'a> Engine<'a> {
             // The walk of a class's own line, and the initialiser told
             // to subclasses, both take nothing the caller supplies.
             Value::Adapter(w) if w.0 == 0 && matches!(w.1.first(), Some(Value::Tuple(_))) => Some("()"),
-            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(entry)) if (entry.0 == 0 && matches!(entry.1.first(), Some(Value::Tuple(_)))) || (entry.0 == 2 && entry.1.first().is_some_and(|name| name.plain() == self.class_word("subclass"))) || entry.0 == 29 && entry.1.first().is_some_and(|owner| owner.plain() == "type") && entry.1.get(1).is_some_and(|name| name.plain() == self.class_word("order"))) => Some("()"),
+            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(entry)) if (entry.0 == 0 && matches!(entry.1.first(), Some(Value::Tuple(_)))) || (entry.0 == 2 && entry.1.first().is_some_and(|name| name.plain() == self.class_word("subclass"))) || entry.0 == 29 && ((entry.1.first().is_some_and(|owner| owner.plain() == "type") && entry.1.get(1).is_some_and(|name| name.plain() == self.class_word("order"))) || (entry.1.len() == 3 && entry.1[0].plain() == self.class_word("root") && entry.1[1].plain() == self.class_word("subclass")))) => Some("()"),
             Value::Adapter(w) if w.0 == 2 && w.1.first().is_some_and(|entry| entry.plain() == self.class_word("subclass")) => Some("()"),
             _ => None,
         }
@@ -5767,6 +5829,10 @@ impl<'a> Engine<'a> {
         }
         if let Value::Adapter(entry) = &subject {
             let w = entry;
+            if w.0 == 16 && w.1.get(2).is_some_and(|part| part.plain() == "\0object-class") && name == self.class_word("doc") {
+                let qualified = format!("{}.{}", self.class_word("root"), self.class_word("kind"));
+                if let Some(pair) = self.lang.native_docs.chunks_exact(2).find(|pair| pair[0] == qualified) { return Ok(Value::text(&pair[1])); }
+            }
             if w.0 == 16 && w.1.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") {
                 if name == self.class_word("name") { return Ok(w.1[0].clone()); }
                 if name == "__objclass__" { return Ok(w.1[1].clone()); }
@@ -5987,6 +6053,7 @@ impl<'a> Engine<'a> {
         if matches!(&subject, Value::Native(Builtin::SortOf, _))
             || (!self.lang.class_builder.is_empty() && (matches!(&subject, Value::Class(c) if self.is_metaclass_root(c) || Self::own_kind(c).is_some_and(|word| self.lang.builtins.get(&word) == Some(&Builtin::SortOf)))
                 || self.kind_spelled(&subject).is_some_and(|word| self.lang.builtins.get(word.as_ref()) == Some(&Builtin::SortOf)))) {
+            if !name.is_empty() && name == self.class_word("subclasses") { return Ok(self.held_kind_descriptor("type", name)); }
             let tag = if self.lang.constructor.as_deref() == Some(name) { Some(78) }
                 else if name == self.class_word("call") { Some(41) }
                 else if name == self.class_word("allocate") { Some(40) }
@@ -6197,9 +6264,23 @@ impl<'a> Engine<'a> {
                     // methods they carry.
                     if Rc::ptr_eq(c, &self.root_class()) {
                         let names: Vec<String> = self.lang.class_details.get("root.members").cloned().unwrap_or_default();
-                        let listed: Vec<(Value, Value)> = names.iter()
+                        let mut listed: Vec<(Value, Value)> = names.iter()
                             .filter_map(|name| self.root_member(name, Some(c)).map(|member| (Value::text(name), member)))
                             .collect();
+                        if !self.class_word("subclass").is_empty() {
+                            listed.push((Value::text(self.class_word("subclass")), self.root_subclass_descriptor()));
+                        }
+                        let name = self.class_word("kind");
+                        if !name.is_empty() {
+                            let mut entries = self.kind_descriptors.borrow_mut();
+                            let descriptor = if let Some((_, _, held)) = entries.iter().find(|(owner, key, _)| owner == "object" && key == name) { held.clone() }
+                                else {
+                                    let held = Self::adapter(16, vec![Value::text(name), Value::Class(c.clone()), Value::text("\0object-class")]);
+                                    entries.push((String::from("object"), name.to_string(), held.clone()));
+                                    held
+                                };
+                            listed.push((Value::text(name), descriptor));
+                        }
                         return Ok(Value::View(Rc::new((Value::Map(Rc::new(listed.into())), "mapping".to_string()))));
                     }
                     // A class standing for a native kind holds what a
@@ -6313,6 +6394,9 @@ impl<'a> Engine<'a> {
                 // a thing's method is bound to the thing.
                 if let Some(maker)=Self::maker_beneath(c) {
                     if let Some(v)=self.class_value(&maker,name) { return self.bind_class_value(v,Some(subject.clone()),maker); }
+                }
+                if name == self.class_word("subclass") && !name.is_empty() {
+                    return self.bind_class_value(self.root_subclass_descriptor(), None, c.clone());
                 }
                 // The formatting every class has from the root: a thing
                 // and a specification, answered as the format builtin would.
@@ -6929,6 +7013,7 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("qualified") { return Ok(Value::text(&format!("{}.{}", w.1[0].plain(), w.1[1].plain()))); }
                 if name==self.class_word("name") { return Ok(w.1[1].clone()); }
                 if name=="__objclass__" {
+                    if w.1[0].plain() == self.class_word("root") { return Ok(Value::Class(self.root_class())); }
                     if let Some(kind)=self.spelled_kind(&w.1[0].plain()) { return Ok(kind); }
                 }
                 if name==self.class_word("descriptor.get") { return Ok(Self::adapter(15, vec![subject.clone()])); }
@@ -7803,31 +7888,7 @@ impl<'a> Engine<'a> {
                     if let Some(Value::Fields(view))=&value {if crate::value::Keep::ptr_eq(view,o){return Ok(Value::Null);}}
                     return self.namespace_write(o,value);
                 }
-                if name == self.class_word("kind") {
-                    let Some(Value::Class(next)) = value else { return Err("TypeError: __class__ must be set to a class".to_string().into()); };
-                    let old = o.class_now();
-                    // Native modules and subclasses without extra slots share their storage.
-                    let extra_slots = |class: &Class| std::iter::once(class).chain(class.lineage.borrow().iter().map(Rc::as_ref))
-                        .any(|base| Self::own_class_value(base, self.class_word("slots")).is_some_and(|value| !matches!(value.contents(), Value::Tuple(names) | Value::Array(names) if names.is_empty())));
-                    let old_module = self.module_holding(&subject).is_some() || Self::kind_beneath(&old).as_deref() == Some("module");
-                    let module_layout = old_module && Self::kind_beneath(&next).as_deref() == Some("module")
-                        && !extra_slots(&old) && !extra_slots(&next);
-                    let mutable=old.python_names.borrow().is_some() && next.python_names.borrow().is_some();
-                    let modules=Self::kind_beneath(&old).as_deref()==Some("module") && Self::kind_beneath(&next).as_deref()==Some("module");
-                    if !module_layout && !Rc::ptr_eq(&old,&next) && ((!mutable && !modules) || !self.bases_compatible(&old,&next) || !self.assignment_layouts_agree(&old,&next)) {
-                        return Err("TypeError: __class__ assignment: object layout differs".to_string().into());
-                    }
-                    let from = format!(":{:p}", Rc::as_ptr(&old));
-                    let to = format!(":{:p}", Rc::as_ptr(&next));
-                    for (place, _) in o.fields.borrow_mut().iter_mut() {
-                        if place.starts_with("\0slot:") && place.ends_with(&from) {
-                            place.truncate(place.len() - from.len());
-                            place.push_str(&to);
-                        }
-                    }
-                    *o.replacement_class.borrow_mut() = Some(next);
-                    return Ok(Value::Null);
-                }
+                if name == self.class_word("kind") { return self.replace_object_class(o, value); }
                 // A class naming the members its things hold, and holding
                 // a value of its own under a name not among them, has
                 // that name read-only: the class's own holding is not
