@@ -99,6 +99,10 @@ static HOST_ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 
 static PYTHON_THREAD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 // Let the kernel validate the destination instead of retaining a pthread pointer.
+static SIGNAL_PIPE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static REPORT_FULL_PIPE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static PIPE_FAILURE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
 extern "C" fn note_signal(number: i32) {
     let errno_address = unsafe {libc::__errno_location()};
     let errno_before = unsafe {*errno_address};
@@ -110,6 +114,17 @@ extern "C" fn note_signal(number: i32) {
         }
         _ if (1..=64).contains(&number) => {
             SIGNALS_DUE.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+            let pipe = SIGNAL_PIPE.load(std::sync::atomic::Ordering::Relaxed);
+            if pipe != -1 {
+                let payload = [number as u8];
+                let written = unsafe {libc::write(pipe, payload.as_ptr().cast(), payload.len())};
+                if written == -1 {
+                    let code = unsafe {*errno_address};
+                    if REPORT_FULL_PIPE.load(std::sync::atomic::Ordering::Relaxed) || code != libc::EAGAIN {
+                        PIPE_FAILURE.store(code, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            }
         }
         _ => (),
     }
@@ -922,6 +937,7 @@ pub struct Machine<'a> {
     /// the mark for the signal's own way. A number never given one
     /// keeps its own way.
     signal_takers: Vec<(i64, Value)>,
+    pipe_diagnostic: Option<Value>,
     /// Whether the run watches the edge between one statement and the
     /// next for signals left waiting (ext.builtin.signal).
     watches_signals: bool,
@@ -2424,6 +2440,7 @@ impl<'a> Machine<'a> {
             ready_arguments: None,
             builds_places: table.flag("ext.op.index.makes"),
             signal_takers: Vec::new(),
+            pipe_diagnostic: None,
             watches_signals: table.has_any("ext.builtin.signal"),
             names_in_calls: table.flag("ext.syntax.call.bind_names"),
             native_slot_names: if table.flag("ext.syntax.call.bind_names") {
@@ -14905,6 +14922,12 @@ impl<'a> Machine<'a> {
     /// whatever is still waiting then waits for the next edge instead.
     fn signals_due_now(&mut self) -> Res<()> {
         let due = SIGNALS_DUE.swap(0, std::sync::atomic::Ordering::Relaxed);
+        match PIPE_FAILURE.swap(0, std::sync::atomic::Ordering::Relaxed) {
+            0 => (),
+            code => if let Some(report) = self.pipe_diagnostic.clone() {
+                let _ = self.apply_held(report, vec![Value::Small(i64::from(code))]);
+            },
+        }
         if due == 0 { return Ok(()); }
         let mut left = due;
         while left != 0 {
@@ -29895,6 +29918,12 @@ impl<'a> Machine<'a> {
             => {
                 if v.is_empty() { return Err(format!("{}() wants a step first", name)); }
                 let step = as_index(&v[0])?;
+                if matches!(step, 5 | 6) {
+                    let owner = PYTHON_THREAD.load(std::sync::atomic::Ordering::Relaxed);
+                    if unsafe {libc::syscall(libc::SYS_gettid)} != libc::c_long::from(owner) {
+                        return Err(String::from("ValueError: set_wakeup_fd only works in main thread of the main interpreter"));
+                    }
+                }
                 match step {
                     0 => {
                         n(3)?;
@@ -29925,7 +29954,7 @@ impl<'a> Machine<'a> {
                         n(2)?;
                         let number = as_index(&v[1])?;
                         if (1..=64).contains(&number) {
-                            SIGNALS_DUE.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+                            unsafe {libc::raise(number as libc::c_int);}
                         }
                         Value::Nil
                     }
@@ -29947,6 +29976,16 @@ impl<'a> Machine<'a> {
                         self.observe_host_interrupts()?;
                         Value::Nil
                     }
+                    5 => {
+                        n(4)?;
+                        let replacement = v[1].as_big()?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?;
+                        let warn = as_index(&v[2])?;
+                        REPORT_FULL_PIPE.store(warn != 0, std::sync::atomic::Ordering::Relaxed);
+                        self.pipe_diagnostic = Some(v[3].clone());
+                        let old = SIGNAL_PIPE.swap(replacement, std::sync::atomic::Ordering::Relaxed);
+                        Value::Small(i64::from(old))
+                    }
+                    6 => { n(1)?; Value::Nil }
                     _ => return Err(format!("{name}() knows no step {step}")),
                 }
             },

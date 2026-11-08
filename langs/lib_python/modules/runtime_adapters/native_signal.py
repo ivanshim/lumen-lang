@@ -217,3 +217,23 @@ def getitimer(which, /):
     except OSError as error:
         raise ItimerError(*error.args)
     return (current[0] / 1000000, current[1] / 1000000)
+
+
+def _wakeup_error(number):
+    import os
+    import sys
+    sys._report_unraisable(OSError(number, os.strerror(number)), None,
+                           None, 'signal')
+
+
+def set_wakeup_fd(fd, /, *, warn_on_full_buffer=True):
+    import os
+    from posix import _cint
+    fd = _cint(fd)
+    __signal(6)
+    if fd != -1:
+        if fd < 0:
+            raise ValueError('invalid fd')
+        if os.get_blocking(fd):
+            raise ValueError('the fd %s must be in non-blocking mode' % fd)
+    return __signal(5, fd, int(bool(warn_on_full_buffer)), _wakeup_error)
