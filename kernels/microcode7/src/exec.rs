@@ -4061,9 +4061,9 @@ impl<'a> Machine<'a> {
     }
 
     fn child_laid(&mut self, mark: i64) -> Value {
-        match self.alongside.remove(&mark) {
+        match self.alongside.get_mut(&mark) {
             None => Value::Flag(false),
-            Some(mut kept) => {
+            Some(kept) => {
                 let _ = kept.child.kill();
                 let _ = kept.child.wait();
                 Value::Flag(true)
