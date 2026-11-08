@@ -23,21 +23,69 @@ fn list(object: &Instance, name: &str) -> Option<Rc<RefCell<Value>>> {
     }
 }
 
-// A complete ordinary literal needs only delimiter and escape tracking.
-// Refills and malformed or multiline strings retain the port's diagnostics.
+// Advance an ordinary string body within the current physical line. Leave
+// refills, incomplete escapes and newline diagnostics to the Python adapter.
+fn quoted_run(args: &[Value]) -> Option<Value> {
+    let [owner, Value::Text(mark), Value::Small(width), Value::Small(previous)] = args else { return None; };
+    let quote = match mark.as_bytes() { [b'\''] => b'\'', [b'"'] => b'"', _ => return None };
+    if !matches!(width, 1 | 3) || !(0..*width).contains(previous) { return None; }
+    let Value::Object(state) = owner.contents() else { return None; };
+    let (current, base, limit) = (number(&state, "cur")?, number(&state, "line_start")?, number(&state, "inp")?);
+    if current < base || limit < current || base < 0 { return None; }
+    let Value::Text(text) = field(&state, "buf") else { return None; };
+    let start = crate::strings::character_byte(&text, usize::try_from(current - base).ok()?)?;
+    let stop = crate::strings::character_byte(&text, usize::try_from(limit - base).ok()?)?;
+    let bytes = text.as_bytes();
+    let mut at = start;
+    let mut quotes = *previous;
+    let mut escaped_quote = false;
+    while at < stop {
+        let ch = bytes[at];
+        if ch == b'\n' && *width == 1 { break; }
+        if ch == b'\\' {
+            let next = at + 1;
+            if next == stop { break; }
+            let escaped = bytes[next];
+            let mut after = next + text[next..stop].chars().next()?.len_utf8();
+            if escaped == b'\r' {
+                if after == stop { break; }
+                after += text[after..stop].chars().next()?.len_utf8();
+            }
+            escaped_quote |= escaped == quote;
+            quotes = 0;
+            at = after;
+        } else {
+            at += 1;
+            quotes = if ch == quote { quotes + 1 } else { 0 };
+            if quotes == *width { break; }
+        }
+    }
+    let advanced = text[start..at].chars().count() as i64;
+    put(&state, "cur", Value::Small(current + advanced));
+    Some(Value::tuple(vec![Value::Small(quotes), Value::Flag(escaped_quote)]))
+}
+
+// Complete literals on this physical line can bypass the character port.
+// Leave refills and unterminated delimiters to its diagnostic path.
 fn quoted_end(bytes: &[u8], opening: usize) -> Option<usize> {
     let quote = *bytes.get(opening)?;
-    if bytes.get(opening + 1..opening + 3) == Some(&[quote, quote][..]) { return None; }
-    let mut cursor = opening + 1;
+    let width = if bytes.get(opening + 1..opening + 3) == Some(&[quote, quote][..]) { 3 } else { 1 };
+    let mut cursor = opening + width;
+    let mut consecutive = 0;
     loop {
         match *bytes.get(cursor)? {
-            c if c == quote => return Some(cursor + 1),
+            c if c == quote => {
+                consecutive += 1;
+                cursor += 1;
+                if consecutive == width { return Some(cursor); }
+            }
             b'\n' | b'\r' => return None,
             b'\\' => {
                 if matches!(bytes.get(cursor + 1), None | Some(b'\n' | b'\r')) { return None; }
+                consecutive = 0;
                 cursor += 2;
             }
-            _ => cursor += 1,
+            _ => { consecutive = 0; cursor += 1; }
         }
     }
 }
@@ -535,6 +583,7 @@ fn next_buffered(args: &[Value]) -> Result<Value, String> {
 }
 
 pub fn scan(args: &[Value]) -> Result<Value, String> {
+    if args.len() == 4 { return Ok(quoted_run(args).unwrap_or(Value::Null)); }
     if args.is_empty() { return Ok(Value::Adapter(Rc::new((119, vec![Value::Small(11)])))); }
     if args.len() == 2 && matches!(args[1], Value::Flag(true)) { return next_buffered(args); }
     if args.len() != 1 {

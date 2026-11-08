@@ -4183,6 +4183,9 @@ impl<'a> Engine<'a> {
     }
     // Validate ordinary keyword names after main's full mapping expansion.
     fn call_items_for(&mut self, args: Vec<Value>, callee: Callee) -> Flow<Vec<(Option<String>, Value)>> {
+        if args.iter().all(|value| !matches!(value, Value::Tie(_))) {
+            return Ok(args.into_iter().map(|value| (None, value)).collect());
+        }
         let items = self.expanded_call_items_for(args, callee)?;
         Ok(self.keyword_items(items)?)
     }
@@ -4191,6 +4194,9 @@ impl<'a> Engine<'a> {
         self.expanded_call_items_for(args, Callee::Unknown)
     }
     fn keyword_items(&self, items: Vec<(Option<Value>, Value)>) -> Res<Vec<(Option<String>, Value)>> {
+        if items.iter().all(|(key, _)| key.is_none()) {
+            return Ok(items.into_iter().map(|(_, value)| (None, value)).collect());
+        }
         items.into_iter().map(|(key, value)| match key {
             None => Ok((None, value)),
             Some(key) => self.word_of_key(&key).map(|word| (Some(word), value)),
@@ -11628,6 +11634,11 @@ impl<'a> Engine<'a> {
         }
         if !matches!(op, Action::Same | Action::Unsame) || self.lang.identity_not.is_empty() {
             if let Value::Fields(o) = a {
+                // One name asked of a dictionary view is found where it stands,
+                // without making the whole map of the view first.
+                if let (Action::At, Value::Text(word)) = (op, b) {
+                    if let Some(found) = self.field_standing(o, word) { return Ok(found); }
+                }
                 return self.special_dyad(op, &Value::Map(Rc::new(self.fields_entries(o).into())), b);
             }
             // The view standing on the right is also a dictionary for
@@ -12535,7 +12546,7 @@ impl<'a> Engine<'a> {
                 self.special_call(&args[2], 12, vec![args[0].clone(), args[1].clone()])?;
                 args[2].clone()
             }
-            Builtin::Length if args.len() == 1 && self.special_method(&args[0], 10).is_some() => {
+            Builtin::Length if args.len() == 1 && self.special_value(&args[0], 10).is_some() => {
                 let mut answer = self.special_call(&args[0], 10, Vec::new())?.unwrap();
                 // Python reads an integer subclass's stored length directly.
                 if self.lang.bool_result.is_some() {
@@ -13378,6 +13389,24 @@ impl<'a> Engine<'a> {
             let held = Self::interned_text(Value::text(word));
             names.borrow_mut().insert(word.to_owned(), held.clone());
             held
+        })
+    }
+
+    /// What `fields_entries` would list under a name, found alone; none where
+    /// that listing could differ (extra keys kept beside the fields) or lacks the name.
+    fn field_standing(&self, o: &Keep, word: &str) -> Option<Value> {
+        // module_holding borrows the field table, so the module question
+        // has to be answered before this function borrows it itself.
+        let module = self.module_holding(&Value::Object(o.clone())).is_some();
+        let fields = o.fields.borrow();
+        if fields.iter().any(|(key, _)| key == "\0keys") { return None; }
+        let (_, held) = fields.iter().find(|(key, _)| key == word)?;
+        if word.starts_with(['\0', '#']) || matches!(held.contents(), Value::Blank) { return None; }
+        Some(match held {
+            Value::Bond(cell) if module => {
+                if matches!(&*cell.borrow(), Value::Array(_) | Value::Map(_)) { held.clone().held(false) } else { cell.borrow().clone() }
+            },
+            _ => held.clone(),
         })
     }
 
@@ -37635,6 +37664,20 @@ impl Engine<'_> {
                     Value::Null => self.source_buffer(Value::Object(tree), &file)?,
                     _ => return Err(self.source_unready()),
                 }
+            }
+            Value::Codepoints(row) => {
+                // The reference encodes a source string to UTF-8 before
+                // reading it; a lone surrogate cannot be encoded and is
+                // named so rather than refused outright.
+                if let Some(start) = row.iter().position(|point| (0xd800..=0xdfff).contains(point)) {
+                    let end = row[start..].iter().take_while(|point| (0xd800..=0xdfff).contains(*point)).count() + start;
+                    if let Some(Value::Class(class)) = self.native_exceptions.get("UnicodeEncodeError").cloned() {
+                        let raised = self.exception_instance(class, vec![Value::text("utf-8"), args[0].contents(), Value::Small(start as i64), Value::Small(end as i64), Value::text("surrogates not allowed")], Value::Null);
+                        self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
+                        return Err(String::new());
+                    }
+                }
+                return Err(self.source_unready());
             }
             _ => return Err("TypeError: compile() arg 1 must be a string, bytes or AST object".into()),
         };

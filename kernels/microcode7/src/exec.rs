@@ -910,6 +910,9 @@ pub struct Machine<'a> {
     unheard: RefCell<Vec<(String, String, u32)>>,
     any_unheard: std::cell::Cell<bool>,
     ghost_tap: crate::ghost::Tap,
+    /// Arguments a prim arm already holds, so that arm does not work the
+    /// same forms out a second time.
+    ready_arguments: Option<Vec<Value>>,
     /// Whether writing into a place makes what is needed to hold it: an
     /// array where a name holds nothing, and one at each place along the
     /// way that is not there yet.
@@ -2418,6 +2421,7 @@ impl<'a> Machine<'a> {
             unheard: RefCell::new(Vec::new()),
             any_unheard: std::cell::Cell::new(false),
             ghost_tap: crate::ghost::tap(),
+            ready_arguments: None,
             builds_places: table.flag("ext.op.index.makes"),
             signal_takers: Vec::new(),
             watches_signals: table.has_any("ext.builtin.signal"),
@@ -6057,11 +6061,12 @@ impl<'a> Machine<'a> {
                     }
                     Form::OnLine(row, at, body) => {
                         self.stand_at_instruction(at as i64);
-                        self.row = row;
-                        if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(row as i64); }
+                        // A farewell for the previous line still belongs to that line.
                         if crate::ghost::stirred(&self.ghost_tap) {
                             self.attend_to_gone();
                         }
+                        self.row = row;
+                        if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(row as i64); }
                         if !matches!(self.tracing_function, Value::Nil) { self.emit_trace("line", Value::Nil)?; }
                         // A statement reached inside a sleeping walk is
                         // an edge all the same: a signal waiting is
@@ -7849,7 +7854,12 @@ impl<'a> Machine<'a> {
         if self.any_unheard.get() {
             self.hand_over_unheard()?;
         }
-        if crate::ghost::stirred(&self.ghost_tap) {
+        // Farewells are taken at statement, loop, and return edges. Walking
+        // every still-living owner here, on each value, kept long runs from
+        // finishing once many owners stayed anchored.
+        if self.ghost_tap.state.get() & (crate::ghost::G_STIRRED | crate::ghost::G_POLL) != 0
+            && crate::ghost::stirred_light(&self.ghost_tap)
+        {
             self.attend_to_gone();
         }
         match node {
@@ -7882,6 +7892,52 @@ impl<'a> Machine<'a> {
                 Ok(v)
             }
             Form::Apply(Callee::Prim(Prim::Seq, _), args) => { return self.value_arm_7(node, frame); }
+            Form::Apply(Callee::Prim(Prim::Of, name), args)
+                if args.len() == 2 && name.is_empty() && self.watcher.borrow().is_none() => {
+                // A spelled attribute is the usual load. The general prim arms
+                // build an argument list and call through several functions
+                // before the same checks. They still run when this is not one
+                // of those loads, with the values already worked out.
+                let (wild, revised) = self.namespace_overrides();
+                let shadow = self.world_globals_source.as_deref() == Some(self.written_in.as_ref());
+                if (wild || revised || shadow) && self.spread_override(name, Prim::Of).is_some() {
+                    return self.extended_arm_20(node, frame);
+                }
+                if let Form::Const(Value::Text(held)) = &args[1] {
+                    let spelled_name: &str = held.as_ref();
+                    let mut receiver = self.value_of(&args[0], frame)?;
+                    if !self.rules.words_ext_stmt_class_builder.is_empty() {
+                        receiver = self.what_it_spells(receiver);
+                    }
+                    if self.has_class_order() {
+                        if let held_value @ (Value::Thing(_) | Value::Blueprint(_)) = receiver.settled() {
+                            receiver = held_value;
+                        }
+                    }
+                    let class_word = (self.rules.words_ext_stmt_class_annotations.first().map(String::as_str) == Some(spelled_name)
+                        || self.rules.words_ext_stmt_class_detail_code_fields.get(10).is_some_and(|word| word == spelled_name))
+                        && self.namespace_holding(&receiver).is_some();
+                    if class_word {
+                        return self.read_class_member(receiver, spelled_name, false);
+                    }
+                    if matches!(receiver.settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) && spelled_name == self.detail("allocate") {
+                        return self.read_class_member(receiver.settled(), spelled_name, false);
+                    }
+                    let fast = matches!(&receiver, Value::OctetKind { .. })
+                        || matches!(&receiver, Value::Thing(t) if t.blueprint().presentation.is_some())
+                        || matches!(&receiver, Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c))
+                        || matches!(&receiver, Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..))
+                        || matches!(&receiver, Value::Intrinsic(..))
+                        || matches!(&receiver, Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word));
+                    if fast {
+                        return self.read_class_member(receiver, spelled_name, false);
+                    }
+                    debug_assert!(self.ready_arguments.is_none());
+                    self.ready_arguments = Some(vec![receiver, Value::Text(Rc::clone(held))]);
+                    return self.extended_arm_20(node, frame);
+                }
+                self.extended_arm_20(node, frame)
+            }
             Form::Apply(Callee::Prim(_, _), _) => { return self.extended_arm_20(node, frame); }
             Form::Apply(Callee::Code(target), args) => self.call_form(target, args, frame),
             _ => self.extended_value(node, frame),
@@ -8049,14 +8105,18 @@ impl<'a> Machine<'a> {
                 let mut observed = false;
                 if let Some(active) = &self.active_trace {
                     let mut holds = active.holds.borrow_mut();
-                    holds[0].1 = Value::Small(*row as i64);
                     if !matches!(self.tracing_function, Value::Nil) { holds[7].1 = Value::Small(*at as i64); }
                     observed = matches!(holds.get(3).map(|pair| &pair.1), Some(Value::Shared(_)));
                 }
                 self.extent = None;
-                self.row = *row;
+                // The warning stack reads the line from the active frame, so a
+                // farewell here still belongs to the previous line.
                 if crate::ghost::stirred(&self.ghost_tap) {
                     self.attend_to_gone();
+                }
+                self.row = *row;
+                if let Some(active) = &self.active_trace {
+                    active.holds.borrow_mut()[0].1 = Value::Small(*row as i64);
                 }
                 if observed { self.update_watched_locals(); }
                 if !matches!(self.tracing_function, Value::Nil) { self.emit_trace("line", Value::Nil)?; }
@@ -10452,19 +10512,36 @@ impl<'a> Machine<'a> {
                 if let held @ (Value::Thing(_) | Value::Blueprint(_)) = first.settled() { *first = held; }
             }
         }
+        // One borrowed or converted name serves every class-aware check.
+        // The fallback below used to convert the same text again.
+        if matches!(op, Prim::Of) && values.len() == 2 {
+            let held = match &values[1] {
+                Value::Text(text) => std::borrow::Cow::Borrowed(text.as_ref()),
+                value => std::borrow::Cow::Owned(value.bare()),
+            };
+            let name = held.as_ref();
+            if (self.rules.words_ext_stmt_class_annotations.first().map(String::as_str) == Some(name)
+                || self.rules.words_ext_stmt_class_detail_code_fields.get(10).is_some_and(|word| word == name))
+                && self.namespace_holding(&values[0]).is_some()
+            {
+                return Some(self.read_class_member(values[0].clone(), name, false));
+            }
+            if matches!(values[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) && name == self.detail("allocate") {
+                return Some(self.read_class_member(values[0].settled(), name, false));
+            }
+            if matches!(&values[0], Value::OctetKind { .. })
+                || matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some())
+                || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c))
+                || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..))
+                || matches!(&values[0], Value::Intrinsic(..))
+                || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))
+            {
+                return Some(self.read_class_member(values[0].clone(), name, false));
+            }
+        }
         match op {
             Prim::ClassWork(k) => Some(self.work_on_class(k, std::mem::take(values))),
             Prim::SortOf if values.len() != 1 || values.first().map_or(false, |v| matches!(v, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) => Some(self.class_from_type(std::mem::take(values))),
-            Prim::Of if values.len() == 2
-                && (self.rules.words_ext_stmt_class_annotations.first().map(String::as_str) == Some(values[1].bare().as_str())
-                    || self.rules.words_ext_stmt_class_detail_code_fields.get(10).is_some_and(|word| word == &values[1].bare()))
-                && self.namespace_holding(&values[0]).is_some() => {
-                Some(self.read_class_member(values[0].clone(), &values[1].bare(), false))
-            }
-            Prim::Of if values.len() == 2 && matches!(values[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) && values[1].bare() == self.detail("allocate") => {
-                Some(self.read_class_member(values[0].settled(), &values[1].bare(), false))
-            }
-            Prim::Of if values.len() == 2 && (matches!(&values[0], Value::OctetKind { .. }) || matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(..)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) => Some(self.read_class_member(values[0].clone(), &values[1].bare(), false)),
             Prim::Onto if values.len() == 3 => {
                 self.context_hushed_by(&values[0], &values[1].bare());
                 Some(self.alter_class_member(values[0].clone(), &values[1].bare(), Some(values[2].clone()), false))
@@ -10678,6 +10755,9 @@ impl<'a> Machine<'a> {
     }
 
     fn value_list(&mut self, args: &[Form], frame: &Rc<Env>) -> Res<Vec<Value>> {
+        if let Some(ready) = self.ready_arguments.take() {
+            return Ok(ready);
+        }
         let mut out = Vec::with_capacity(args.len());
         for a in args {
             out.push(self.value_of(a, frame)?);
@@ -15035,8 +15115,14 @@ impl<'a> Machine<'a> {
                 self.apply_held(writer, vec![Value::text(&tail)])?;
                 if drained {
                     if let Some(word) = table.single("ext.builtin.print.flush") {
-                        let flush = self.attribute(&sink, word)
-                            .ok_or_else(|| self.member_missing(&sink, word))?;
+                        // A stream handed to print may answer its flush
+                        // only through its own __getattr__, so the full
+                        // member read stands behind the native shortcut.
+                        let flush = match self.attribute(&sink, word) {
+                            Some(flush) => flush,
+                            None => self.read_class_member(sink.clone(), word, false)
+                                .map_err(|_| self.member_missing(&sink, word))?,
+                        };
                         self.apply_held(flush, Vec::new())?;
                     }
                 }
@@ -16687,6 +16773,10 @@ impl<'a> Machine<'a> {
             if let Some((_, namespace)) = &mut self.body_namespace { *namespace = Some(captured); }
         }
         self.update_watched_locals();
+        // Settle body temporaries before restoring the caller's warning frame.
+        if crate::ghost::stirred(&self.ghost_tap) {
+            self.attend_to_gone();
+        }
         if mine {
             self.park_cursor();
             self.active_trace = caller_trace;
@@ -23650,7 +23740,7 @@ impl<'a> Machine<'a> {
             },
             (Prim::Truthful, []) => Value::Flag(false),
             (Prim::Truthful | Prim::AsTruth, [one]) => Value::Flag(self.object_truth(one)?),
-            (Prim::Length, [one]) if self.appointed(one, 10).is_some() => {
+            (Prim::Length, [one]) if self.appointment(one, 10).is_some() => {
                 let reported = self.ask_special(one, 10, &[])?.unwrap();
                 // Strip Python integer wrappers before inspecting their value.
                 let length = if self.rules.has_any_ext_builtin_bool_result {
@@ -38605,6 +38695,16 @@ impl<'a> Machine<'a> {
                 sites_value = pair[1].clone();
                 match pair[0].settled() { Value::Text(code) => code, _ => return Err(self.source_refused()) }
                 }
+            }
+            Value::Unpaired(_) => {
+                // The reference encodes a source string before reading
+                // it; a lone surrogate cannot be encoded, so the kind
+                // that names that fault answers here.
+                if let Err(Escape::Thrown(fault)) = self.reject_type_surrogates(&v[0]) {
+                    self.got_away = Some(Escape::Thrown(fault));
+                    return Err(String::new());
+                }
+                return Err(self.source_refused());
             }
             _ => return Err("TypeError: compile() arg 1 must be a string, bytes or AST object".to_owned()),
         };

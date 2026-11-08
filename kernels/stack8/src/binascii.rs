@@ -4,6 +4,23 @@ use super::{Engine, Res, Value};
 const BASE64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const HEX: &[u8] = b"0123456789abcdef";
 
+/// What one byte does to a running CRC-32, for each of the 256 bytes.
+const CRC_BY_BYTE: [u32; 256] = {
+    let mut table = [0u32; 256];
+    let mut byte = 0;
+    while byte < 256 {
+        let mut crc = byte as u32;
+        let mut bit = 0;
+        while bit < 8 {
+            crc = (crc >> 1) ^ if crc & 1 != 0 { 0xedb88320 } else { 0 };
+            bit += 1;
+        }
+        table[byte] = crc;
+        byte += 1;
+    }
+    table
+};
+
 // Read one hexadecimal digit.
 fn digit(byte: u8) -> Option<u8> {
     (byte as char).to_digit(16).map(|d| d as u8)
@@ -191,8 +208,7 @@ impl Engine<'_> {
             if operation.as_ref() == "crc32" {
                 crc = !crc;
                 for byte in input.iter() {
-                    crc ^= u32::from(*byte);
-                    for _ in 0..8 { crc = (crc >> 1) ^ if crc & 1 != 0 { 0xedb88320 } else { 0 }; }
+                    crc = CRC_BY_BYTE[((crc ^ u32::from(*byte)) & 255) as usize] ^ (crc >> 8);
                 }
                 crc = !crc;
             } else {
