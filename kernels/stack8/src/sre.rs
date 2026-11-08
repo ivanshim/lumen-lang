@@ -1,7 +1,8 @@
 // Bytecode semantics from CPython 3b564385e4c9 Modules/_sre/{sre.c,sre_lib.h}; PSF License.
 use crate::value::Value;
 use num_traits::ToPrimitive;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell};
+use crate::value::Rc;
 
 thread_local! {
     static SUBJECT: RefCell<Option<(Rc<str>, Rc<Vec<u32>>)>> = const { RefCell::new(None) };

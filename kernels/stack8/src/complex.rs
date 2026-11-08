@@ -1,7 +1,7 @@
 // A number with two real parts. The writer borrows the real writer's
 // choice of figures, retaining the sign of either nought.
 
-use std::rc::Rc;
+use crate::value::Rc;
 use crate::value::{Value, real_of, as_binary, shortest_real};
 use crate::code::Action;
 use crate::lang::Lang;

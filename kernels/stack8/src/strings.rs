@@ -1,7 +1,7 @@
 // Operations upon text, admitted only by their words in the definition.
 // Bounds count letters; byte places are used only after a bound is settled.
 
-use std::rc::Rc;
+use crate::value::Rc;
 use num_traits::ToPrimitive;
 use crate::lang::Lang;
 use crate::value::{Value, Wording};
@@ -907,7 +907,7 @@ pub(crate) fn character_length(text: &Rc<str>) -> usize {
     if text.len() <= 64 { return text.chars().count(); }
     use std::cell::RefCell;
     use std::collections::HashMap;
-    use std::rc::Weak;
+    use crate::value::Weak;
     thread_local! {
         static LENGTHS: RefCell<HashMap<usize, (Weak<str>, usize)>> = RefCell::new(HashMap::new());
     }

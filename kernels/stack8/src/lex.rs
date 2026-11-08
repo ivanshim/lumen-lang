@@ -258,23 +258,23 @@ fn heredoc_at(text: &str, lang: &Lang) -> Option<Heredoc> {
 // Only names continued by punctuation need the longest-builtin scan.
 // Index them by the identifier already consumed, once per cursor tree.
 
-fn symbol_groups(lang: &Lang) -> std::rc::Rc<std::collections::HashMap<char, Vec<&str>>> {
+fn symbol_groups(lang: &Lang) -> crate::value::Rc<std::collections::HashMap<char, Vec<&str>>> {
     let mut groups: std::collections::HashMap<char, Vec<&str>> = std::collections::HashMap::new();
     for spelling in &lang.symbols {
         if let Some(first) = spelling.chars().next() {
             groups.entry(first).or_default().push(spelling);
         }
     }
-    std::rc::Rc::new(groups)
+    crate::value::Rc::new(groups)
 }
 
-type NameLoader<'a> = std::rc::Rc<std::cell::RefCell<dyn FnMut() -> Result<(), String> + 'a>>;
+type NameLoader<'a> = crate::value::Rc<std::cell::RefCell<dyn FnMut() -> Result<(), String> + 'a>>;
 
 struct Cursor<'a> {
     names: Option<NameLoader<'a>>,
     lang: &'a Lang,
-    signs: std::rc::Rc<std::collections::HashMap<char, Vec<&'a str>>>,
-    continued: std::rc::Rc<std::collections::HashMap<String, Vec<String>>>,
+    signs: crate::value::Rc<std::collections::HashMap<char, Vec<&'a str>>>,
+    continued: crate::value::Rc<std::collections::HashMap<String, Vec<String>>>,
     text: Box<[char]>,
     at: usize,
     row: usize,

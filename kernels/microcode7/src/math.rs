@@ -2,7 +2,7 @@
 // numbers, with a native fast path for two machine integers.
 
 use std::cmp::Ordering;
-use std::rc::Rc;
+use crate::data::Rc;
 
 use num_bigint::BigInt;
 use num_integer::Integer;

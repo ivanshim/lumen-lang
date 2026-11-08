@@ -1,7 +1,7 @@
 //! Shared sequence ownership. Only dead Python tuple storage is recycled.
 use std::cell::{Cell, RefCell};
 use std::ops::{Deref, DerefMut};
-use std::rc::Rc;
+use crate::value::Rc;
 use crate::value::Value;
 
 const LIMIT: usize = 1024 * 1024;

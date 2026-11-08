@@ -5,7 +5,7 @@ use crate::{data, math};
 use crate::data::Value;
 use crate::form::Prim;
 use crate::table::Table;
-use std::rc::Rc;
+use crate::data::Rc;
 use num_traits::ToPrimitive;
 
 pub fn pair(t: &Table, x: f64, y: f64) -> Value {

@@ -38,6 +38,8 @@ mod context;
 mod thread_state;
 pub mod capsule;
 pub mod datetime_api;
+mod thread_state;
+mod gil;
 pub mod tuples;
 
 use lang::Lang;
@@ -149,6 +151,7 @@ fn settle_brief(lang: &mut Lang, request: &[(String, String, String, bool)]) {
 
 fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let _tuple_scope = tuples::Scope::enter(lang.builtins.values().any(|b| *b == code::Builtin::Tuple));
+    let _lock = gil::Gil::new().acquire().map_err(|why| format!("interpreter lock refused: {why:?}"))?;
     go_inner(lang, source, program_args, request).map_err(|e| {
         if !lang.exceptions.is_empty() {
             if let Some(told) = e.strip_prefix('\0') { return told.to_string(); }
@@ -310,7 +313,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for name in slots {
         registry.slot(name);
     }
-    registry.source = Some(std::rc::Rc::from(&*source));
+    registry.source = Some(crate::value::Rc::from(&*source));
     compile::holding_figures(lang.integer_digits);
     let program = match compile::compile(&tokens, lang, &mut registry, before) {
         Ok(program) => program,
@@ -380,7 +383,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
             };
             put_step(&mut carried, &steps, held);
         }
-        machine.define(name, Value::Map(std::rc::Rc::new(carried.into())));
+        machine.define(name, Value::Map(crate::value::Rc::new(carried.into())));
     }
     // The body as it came, for a program that would read it itself.
     if let Some(name) = &lang.body_binding {
@@ -435,7 +438,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     // a real out. A count of nought or below asks for the fewest
     // figures that read back as the same number, which is where a run
     // showing a real with its kind starts.
-    let shared = |v: Value| std::rc::Rc::new(std::cell::RefCell::new(v));
+    let shared = |v: Value| crate::value::Rc::new(std::cell::RefCell::new(v));
     let mut counts = (None, None);
     if let Some(name) = &lang.figures_binding {
         let cell = shared(Value::Small(lang.real_digits.map_or(-1, |n| n as i64)));
@@ -556,7 +559,7 @@ fn put_step(into: &mut Vec<(Value, Value)>, steps: &[&str], value: Value) {
     let at = match into.iter().position(|(k, _)| k.equals(&key)) {
         Some(at) => at,
         None => {
-            into.push((key, Value::Map(std::rc::Rc::new(Vec::new().into()))));
+            into.push((key, Value::Map(crate::value::Rc::new(Vec::new().into()))));
             into.len() - 1
         }
     };
@@ -565,7 +568,7 @@ fn put_step(into: &mut Vec<(Value, Value)>, steps: &[&str], value: Value) {
         _ => Vec::new(),
     };
     put_step(&mut inside, &steps[1..], value);
-    into[at].1 = Value::Map(std::rc::Rc::new(inside.into()));
+    into[at].1 = Value::Map(crate::value::Rc::new(inside.into()));
 }
 mod sre;
 

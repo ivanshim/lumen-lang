@@ -233,7 +233,7 @@ impl Machine<'_> {
                     });
                     let Some(Value::Blueprint(definition)) = definition else { continue; };
                     let blueprint = instance.blueprint();
-                    let recognized = std::rc::Rc::ptr_eq(&blueprint, &definition) || blueprint.ancestry().iter().any(|base| std::rc::Rc::ptr_eq(base, &definition));
+                    let recognized = crate::data::Rc::ptr_eq(&blueprint, &definition) || blueprint.ancestry().iter().any(|base| crate::data::Rc::ptr_eq(base, &definition));
                     if !recognized { continue; }
                     if member == "memoryview" {
                         let contiguous = match self.read_class_member(value.clone(), "c_contiguous", false) {

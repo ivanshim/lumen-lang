@@ -1,7 +1,8 @@
 //! The lumen datetime C ABI. Handles retain live interpreter objects rather than CPython structs.
 use crate::data::Value;
 use crate::exec::{Escape, Machine};
-use std::{ffi::{c_char, c_void, CStr, CString}, ptr::null_mut, rc::Rc};
+use std::{ffi::{c_char, c_void, CStr, CString}, ptr::null_mut};
+use crate::data::Rc;
 
 type Handle = *mut c_void;
 type Failure = *mut Handle;

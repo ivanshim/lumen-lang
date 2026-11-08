@@ -1,7 +1,8 @@
 // Serialized forms preserve compiled calls and bindings independently of source availability.
 use serde::{Serialize, Serializer, Deserialize, Deserializer};
 use serde_json::{Value as Node, json};
-use std::{rc::Rc, cell::RefCell};
+use std::{cell::RefCell};
+use crate::data::Rc;
 use crate::data::Value;
 
 impl Serialize for Value {

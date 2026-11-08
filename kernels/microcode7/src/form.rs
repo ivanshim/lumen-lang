@@ -5,7 +5,7 @@
 // the kernel lab found worth a form, each removing a routine call, an
 // argument list or a form visit from a hot path.
 
-use std::rc::Rc;
+use crate::data::Rc;
 
 /// What is put after a class's name to file it under: a class and a
 /// routine may go by one name, and a binding is one thing again, so the

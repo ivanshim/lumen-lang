@@ -51,7 +51,7 @@ use std::collections::HashMap;
 use std::cell::{Cell, RefCell};
 use num_bigint::BigInt;
 use num_integer::Integer;
-use std::rc::{Rc, Weak};
+use crate::data::{Rc, Weak};
 
 thread_local! {
     // What tuples holding instances were given for a hash, found by the
@@ -607,8 +607,8 @@ pub struct Machine<'a> {
     activation_kind: Option<Rc<Blueprint>>,
     locals_kind: Option<Rc<Blueprint>>,
     locals_showing: RefCell<std::collections::HashSet<usize>>,
-    memory_stream_source: Option<std::rc::Weak<Blueprint>>,
-    memory_stream_class: Option<(std::rc::Weak<Blueprint>, u64, Vec<String>)>,
+    memory_stream_source: Option<crate::data::Weak<Blueprint>>,
+    memory_stream_class: Option<(crate::data::Weak<Blueprint>, u64, Vec<String>)>,
     tool_words: RefCell<Vec<Option<String>>>,
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
     coroutine_bodies: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<Routine>, Option<Weak<Thing>>, Value, usize)>,
@@ -832,7 +832,7 @@ pub struct Machine<'a> {
     afterward: RefCell<Vec<(Value, Vec<Value>)>>,
     /// Every thing made, held loosely and in the order they were made,
     /// so that any still standing at the end can be let go.
-    things: RefCell<Vec<std::rc::Weak<Thing>>>,
+    things: RefCell<Vec<crate::data::Weak<Thing>>>,
     next_thing_sweep: std::cell::Cell<usize>,
     /// The files already read where the program asked that they be read
     /// only once, under the whole name each stands by.
@@ -6047,11 +6047,13 @@ impl<'a> Machine<'a> {
                     }
                     Form::OnLine(row, at, body) => {
                         self.stand_at_instruction(at as i64);
-                        self.row = row;
-                        if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(row as i64); }
+                        // The previous line dropped this. Bidding farewell
+                        // after the row moves blames the line being entered.
                         if crate::ghost::stirred(&self.ghost_tap) {
                             self.attend_to_gone();
                         }
+                        self.row = row;
+                        if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(row as i64); }
                         if !matches!(self.tracing_function, Value::Nil) { self.emit_trace("line", Value::Nil)?; }
                         // A statement reached inside a sleeping walk is
                         // an edge all the same: a signal waiting is
@@ -7839,9 +7841,10 @@ impl<'a> Machine<'a> {
         if self.any_unheard.get() {
             self.hand_over_unheard()?;
         }
-        if crate::ghost::stirred(&self.ghost_tap) {
-            self.attend_to_gone();
-        }
+        // Statement edges bid farewells. Doing it on every nested value
+        // walked the anchor list once per byte of an archive header.
+        // The edge must run while the line that dropped the object is
+        // still current; see OnLine.
         match node {
             Form::Const(Value::Routine(p)) => self.bind_program(p, frame),
             Form::Const(Value::OctetKind { changeable, .. }) if self.frames_named.last()
@@ -7865,7 +7868,18 @@ impl<'a> Machine<'a> {
             Form::Dyad { op, name, a, b } => { return self.value_arm_4(node, frame); }
             Form::Share(slot) => Ok(Value::Shared(self.shared_cell(slot, frame))),
             Form::Located(position, at, inner) => { return self.value_arm_5(node, frame); }
-            Form::OnLine(row, at, inner) => { return self.value_arm_6(node, frame); }
+            Form::OnLine(row, at, inner) => {
+                // Bid farewell before moving to this line and again after
+                // the statement finishes, while its line is still current.
+                if crate::ghost::stirred(&self.ghost_tap) {
+                    self.attend_to_gone();
+                }
+                let outcome = self.value_arm_6(node, frame);
+                if crate::ghost::stirred(&self.ghost_tap) {
+                    self.attend_to_gone();
+                }
+                return outcome;
+            }
             Form::Write(slot, value) => {
                 let v = self.value_of(value, frame)?;
                 self.store(slot, frame, v.clone())?;
@@ -14465,7 +14479,7 @@ impl<'a> Machine<'a> {
                         let Value::Wrapped(121, parts) = Self::recipe_tee_storage(thing)? else { return Err("TypeError: invalid tee data".to_owned()); };
                         let Value::Shared(cell) = &parts[4] else { return Err("TypeError: invalid tee readers".to_owned()); };
                         let mut values = match cell.borrow().settled() { Value::Vector(entries) => entries.to_vec(), _ => return Err("TypeError: invalid tee readers".to_owned()) };
-                        values.push(crate::ghost::dim(crate::ghost::Ghost::Thing(crate::data::Hold::downgrade(thing)), std::rc::Weak::new(), None));
+                        values.push(crate::ghost::dim(crate::ghost::Ghost::Thing(crate::data::Hold::downgrade(thing)), crate::data::Weak::new(), None));
                         *cell.borrow_mut() = Value::Vector(crate::tuples::Sequence::plain(values));
                         return Ok(Value::Nil);
                     }
@@ -42348,7 +42362,8 @@ fn paint_host_picture(given: &[Value]) -> Result<Value, String> {
 #[cfg(test)]
 mod capsule_resource_checks {
     use crate::capsule::PointerCapsule;
-    use std::{cell::Cell, ffi::c_void, rc::Rc};
+    use std::{cell::Cell, ffi::c_void};
+    use crate::data::Rc;
     struct Counted { drops: Rc<Cell<u8>> }
     impl Drop for Counted { fn drop(&mut self) { self.drops.set(self.drops.get() + 1); } }
     unsafe extern "C" fn dispose(held: *mut c_void) { let owned = unsafe { Box::from_raw(held.cast::<Counted>()) }; drop(owned); }

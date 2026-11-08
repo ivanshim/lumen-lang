@@ -6,7 +6,7 @@
 // a cell stepped in place, and a comparison with its skip.
 
 use std::cell::RefCell;
-use std::rc::Rc;
+use crate::value::Rc;
 
 /// What is put after a class's name to file it under: a class and a
 /// routine may go by one name, and a binding is one thing, so the three

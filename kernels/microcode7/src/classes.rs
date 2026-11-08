@@ -1778,7 +1778,7 @@ impl<'a> Machine<'a> {
         // Walking every base's storage twice was most of a slot access; the
         // answer is remembered per declaring class and field until any class
         // namespace changes or the class itself is gone.
-        thread_local! { static SLOT_KEYS: RefCell<std::collections::HashMap<(usize, String), (u64, std::rc::Weak<Blueprint>, String)>> = RefCell::new(std::collections::HashMap::new()); }
+        thread_local! { static SLOT_KEYS: RefCell<std::collections::HashMap<(usize, String), (u64, crate::data::Weak<Blueprint>, String)>> = RefCell::new(std::collections::HashMap::new()); }
         let stamp=crate::data::namespace_change();
         let lookup=(Rc::as_ptr(declared) as usize, name.clone());
         let remembered=SLOT_KEYS.with(|table| table.borrow().get(&lookup).and_then(|(seen, class, text)| {
@@ -9236,7 +9236,7 @@ impl<'a> Machine<'a> {
             drop(namespace);
             if let Some(context) = context {
                 let reference = Value::Dim(Rc::new(crate::ghost::Dim {
-                    ghost: crate::ghost::Ghost::Blueprint(Rc::downgrade(&class)), bearer: std::rc::Weak::new(),
+                    ghost: crate::ghost::Ghost::Blueprint(Rc::downgrade(&class)), bearer: crate::data::Weak::new(),
                     notify: RefCell::new(None), hash: RefCell::new(None), detached: std::cell::Cell::new(false),
                 }));
                 let member = self.detail("cell.contents").to_owned();

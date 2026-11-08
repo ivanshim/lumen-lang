@@ -1,6 +1,6 @@
 //! List-backed heap operations for the Python accelerator.
 use std::cell::RefCell;
-use std::rc::Rc;
+use crate::value::Rc;
 use super::{Action, Builtin, Engine, Res, Value};
 
 impl Engine<'_> {

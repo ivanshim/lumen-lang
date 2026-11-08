@@ -786,7 +786,7 @@ fn prefix_conflict(src: &[char], offset: usize, table: &Table) -> Option<String>
     })
 }
 
-type NameGate<'a> = std::rc::Rc<std::cell::RefCell<dyn FnMut() -> Result<(), String> + 'a>>;
+type NameGate<'a> = crate::data::Rc<std::cell::RefCell<dyn FnMut() -> Result<(), String> + 'a>>;
 
 struct Quotation<'s, 'a> {
     gate: Option<NameGate<'a>>,

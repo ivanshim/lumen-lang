@@ -257,6 +257,11 @@ is run alone with a long cap.
   `langs/python.json` is indexed by position in both kernels' parent
   maps (stack8 `engine.rs` `let parents = [...]`, microcode7 `exec.rs`
   `match number`). Two branches that each append collide: renumber one.
+- **Shared ownership is counted atomically.** `Rc`/`Weak` in both full
+  kernels name `std::sync::Arc`/`Weak` (defined once in stack8 `value.rs`,
+  re-exported from microcode7 `data.rs`); import them from there, never
+  from `std::rc`. Interior cells are still `RefCell`/`Cell`, so nothing is
+  `Send`/`Sync` yet; that is the next threads job.
 - **Library modules are compiled into the binary**
   (`langs/lib_python/modules/manifest.rs`, `include_str!`): rebuild after
   any library edit, and a binary built mid-experiment carries the
