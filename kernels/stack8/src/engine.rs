@@ -28385,6 +28385,12 @@ impl<'a> Engine<'a> {
             => {
                 if args.is_empty() { return Err(format!("{}() expects at least 1 argument", name)); }
                 let step = as_index(&args[0])?;
+                if matches!(step, 5 | 6) {
+                    let caller = unsafe { libc::syscall(libc::SYS_gettid) } as i32;
+                    if caller != SIGNAL_OWNER.load(std::sync::atomic::Ordering::Relaxed) {
+                        return Err("ValueError: set_wakeup_fd only works in main thread of the main interpreter".to_string());
+                    }
+                }
                 match step {
                     0 => {
                         arity(3)?;
@@ -28439,6 +28445,7 @@ impl<'a> Engine<'a> {
                         WAKEUP_WARN.store(as_index(&args[2])? != 0, std::sync::atomic::Ordering::Relaxed);
                         Value::Small(WAKEUP_FD.swap(fd, std::sync::atomic::Ordering::Relaxed) as i64)
                     }
+                    6 => { arity(1)?; Value::Null }
                     _ => return Err(format!("{name}() knows no step {step}")),
                 }
             },

@@ -222,14 +222,15 @@ def getitimer(which, /):
 def _wakeup_error(number):
     import os
     import sys
-    print('Exception ignored while trying to write to the signal wakeup fd:', file=sys.stderr)
-    print('OSError: [Errno %s] %s' % (number, os.strerror(number)), file=sys.stderr)
+    sys._report_unraisable(OSError(number, os.strerror(number)), None,
+                           None, 'signal')
 
 
 def set_wakeup_fd(fd, /, *, warn_on_full_buffer=True):
     import os
     from posix import _cint
     fd = _cint(fd)
+    __signal(6)
     if fd != -1:
         if fd < 0:
             raise ValueError('invalid fd')

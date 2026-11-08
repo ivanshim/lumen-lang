@@ -29828,6 +29828,12 @@ impl<'a> Machine<'a> {
             => {
                 if v.is_empty() { return Err(format!("{}() wants a step first", name)); }
                 let step = as_index(&v[0])?;
+                if matches!(step, 5 | 6) {
+                    let owner = PYTHON_THREAD.load(std::sync::atomic::Ordering::Relaxed);
+                    if unsafe {libc::syscall(libc::SYS_gettid)} != libc::c_long::from(owner) {
+                        return Err(String::from("ValueError: set_wakeup_fd only works in main thread of the main interpreter"));
+                    }
+                }
                 match step {
                     0 => {
                         n(3)?;
@@ -29889,6 +29895,7 @@ impl<'a> Machine<'a> {
                         let old = SIGNAL_PIPE.swap(replacement, std::sync::atomic::Ordering::Relaxed);
                         Value::Small(i64::from(old))
                     }
+                    6 => { n(1)?; Value::Nil }
                     _ => return Err(format!("{name}() knows no step {step}")),
                 }
             },
