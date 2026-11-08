@@ -26,7 +26,7 @@ impl Engine<'_> {
         entries.push(("_onceregistry".into(), Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))))));
         entries.push(("_defaultaction".into(), Value::text("default")));
         let context = if let Some((_, context)) = saved.iter().find(|(word, _)| word == "_warnings_context") { context.clone() } else {
-            let module = self.import_module("_contextvars").map_err(|error| { self.carried = Some(error); self.special_fault() })?;
+            let module = self.import_module("_contextvars").map_err(|error| { self.thread.carried = Some(error); self.special_fault() })?;
             let factory = self.warning_member(module, "ContextVar")?;
             self.call_held(factory, vec![Value::text("_warnings_context")])?
         };
@@ -138,7 +138,7 @@ impl Engine<'_> {
         } else {
             let sys = match self.modules.get("sys").cloned() {
                 Some(sys) => sys,
-                None => self.import_module("sys").map_err(|error| { self.carried = Some(error); self.special_fault() })?,
+                None => self.import_module("sys").map_err(|error| { self.thread.carried = Some(error); self.special_fault() })?,
             };
             (self.warning_member(sys, "__dict__")?, Value::text("<sys>"), Value::Small(0))
         };
@@ -193,7 +193,7 @@ impl Engine<'_> {
         if !matches!(action.contents(), Value::Text(_)) { return Err(format!("TypeError: warnings.defaultaction must be a string, not '{}'", action.core_kind())); }
         match action.plain().as_str() {
             "ignore" => return Ok(Value::Null),
-            "error" => { self.carried = Some(Fault::Thrown(message)); return Err(self.special_fault()); }
+            "error" => { self.thread.carried = Some(Fault::Thrown(message)); return Err(self.special_fault()); }
             "always" | "all" => {},
             other => {
                 if has_registry { self.warning_method(registry.clone(), "__setitem__", vec![key, Value::Flag(true)])?; }
@@ -245,7 +245,7 @@ impl Engine<'_> {
         }
         if let Some(sys) = self.modules.get("sys").cloned() {
             if let Some(stream) = self.member_of(sys, "stderr")? {
-                if !matches!(stream.contents(), Value::Null) { let _ = self.warning_method(stream, "write", vec![Value::text(&output)]); self.carried = None; }
+                if !matches!(stream.contents(), Value::Null) { let _ = self.warning_method(stream, "write", vec![Value::text(&output)]); self.thread.carried = None; }
             }
         }
         Ok(Value::Null)
@@ -253,7 +253,7 @@ impl Engine<'_> {
     fn warning_source(&mut self, globals: &Value, lineno: &Value) -> Res<Value> {
         if matches!(globals.contents(), Value::Null) { return Ok(Value::Null); }
         if !matches!(globals.contents(), Value::Map(_) | Value::Fields(_)) { return Err(format!("TypeError: module_globals must be a dict, not '{}'", globals.core_kind())); }
-        let external = self.import_module("importlib._bootstrap_external").map_err(|error| { self.carried = Some(error); self.special_fault() })?;
+        let external = self.import_module("importlib._bootstrap_external").map_err(|error| { self.thread.carried = Some(error); self.special_fault() })?;
         let loader = self.warning_method(external, "_bless_my_loader", vec![globals.clone()])?;
         let Some(get_source) = self.member_of(loader, "get_source")? else { return Ok(Value::Null); };
         let spec = self.warning_method(globals.clone(), "get", vec![Value::text("__spec__"), Value::Null])?;
@@ -262,7 +262,7 @@ impl Engine<'_> {
         if matches!(name, Value::Null) { return Ok(Value::Null); }
         let source = match self.call_held(get_source, vec![name]) {
             Ok(source) => source,
-            Err(error) if error.starts_with("ImportError:") || self.carried.as_ref().is_some_and(|fault| self.fault_names(fault, "ImportError")) => { self.carried = None; return Ok(Value::Null); }
+            Err(error) if error.starts_with("ImportError:") || self.thread.carried.as_ref().is_some_and(|fault| self.fault_names(fault, "ImportError")) => { self.thread.carried = None; return Ok(Value::Null); }
             Err(error) => return Err(error),
         };
         if matches!(source.contents(), Value::Null) { return Ok(Value::Null); }
@@ -336,13 +336,13 @@ impl Engine<'_> {
                 let spec = self.call_held(find_spec, vec![Value::text(path), search_path.clone(), Value::Null])?;
                 if matches!(spec.contents(), Value::Null) { continue; }
                 if !self.importing.contains("_zipimport_path") && (self.modules.contains_key("_zipimport_path") || self.modules.get("importlib").cloned().is_some_and(|module| self.member_of(module, "_native_spec").ok().flatten().is_some())) {
-                    let bridge = self.bootstrap_import("_zipimport_path").map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                    let bridge = self.bootstrap_import("_zipimport_path").map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?;
                     let loaded = self.warning_method(bridge, "load", vec![spec])?;
                     self.modules.insert(path.to_string(), loaded.clone());
                     self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear();
                     return Ok(Some(loaded));
                 }
-                let bootstrap = self.bootstrap_import("importlib._bootstrap").map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                let bootstrap = self.bootstrap_import("importlib._bootstrap").map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?;
                 // The pinned loader owns namespace creation, replacement and failure cleanup.
                 let loaded = self.warning_method(bootstrap, "_load_unlocked", vec![spec]);
                 let module = match loaded {
@@ -366,7 +366,7 @@ impl Engine<'_> {
             Ok(None)
         })();
         self.finder_active.remove(path);
-        result.map_err(|message| self.carried.take().unwrap_or(Fault::Note(message)))
+        result.map_err(|message| self.thread.carried.take().unwrap_or(Fault::Note(message)))
     }
 }
 

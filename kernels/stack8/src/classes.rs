@@ -557,7 +557,7 @@ impl<'a> Engine<'a> {
             let wrapper=Self::adapter(tag,vec![Value::Null]);
             if let Value::Adapter(record)=&wrapper {if let Value::Binding(flag)=&record.1[2] {flag.replace(Value::Flag(true));}}
             wrapper
-        } else {self.builtin_call(op, word, items).map_err(|words| self.carried.take().unwrap_or(Fault::Note(words)))?};
+        } else {self.builtin_call(op, word, items).map_err(|words| self.thread.carried.take().unwrap_or(Fault::Note(words)))?};
         let made = match word {
             "str" | "bytes" | "bytearray" => Self::worth_of(&made).unwrap_or(made),
             _ => made,
@@ -577,7 +577,7 @@ impl<'a> Engine<'a> {
         }
     }
     fn module_rendered(&mut self, value: &Value, quoted: bool) -> Flow<String> {
-        self.special_text(value, quoted).map_err(|message| self.carried.take().unwrap_or(Fault::Note(message)))
+        self.special_text(value, quoted).map_err(|message| self.thread.carried.take().unwrap_or(Fault::Note(message)))
     }
     fn module_namespace_paths(&mut self, loader: &Value) -> Flow<Option<Value>> {
         // The bootstrap's own external half, read from sys.modules first: a fresh copy a test imported must not stand in for it.
@@ -1003,7 +1003,7 @@ impl<'a> Engine<'a> {
         let order=if let (Some(maker),Some(hook))=(maker,hook) {
             let bound=self.bind_class_value(hook,Some(Value::Class(class.clone())),maker)?;
             let result=self.class_apply(bound,Vec::new())?;
-            let items=self.special_items(&result).map_err(|words|self.carried.take().unwrap_or_else(||words.into()))?;
+            let items=self.special_items(&result).map_err(|words|self.thread.carried.take().unwrap_or_else(||words.into()))?;
             let mut order=Vec::new();
             for item in items {order.push(self.mro_class(item)?);}
             order
@@ -1276,7 +1276,7 @@ impl<'a> Engine<'a> {
                 };
                 slots.iter().any(|slot| !matches!(Self::slot_text(slot).as_deref(), Some("__dict__" | "__weakref__")))
             } else {
-                let items = self.special_items(&offered).map_err(|words| self.carried.take().unwrap_or_else(|| words.into()))?;
+                let items = self.special_items(&offered).map_err(|words| self.thread.carried.take().unwrap_or_else(|| words.into()))?;
                 let keeps = items.iter().any(|slot| !matches!(Self::slot_text(slot).as_deref(), Some("__dict__" | "__weakref__")));
                 walked_slots = Some(items);
                 keeps
@@ -1343,7 +1343,7 @@ impl<'a> Engine<'a> {
                 let Some(told) = self.descriptor_hook(&held, "descriptor.name") else { continue };
                 if let Err(raised) = self.call_descriptor(&held, told, vec![Value::Class(c.clone()), Value::text(&member)]) {
                     let note = format!("Error calling __set_name__ on '{}' instance '{}' in '{}'", Self::type_argument_kind(&held), member, c.name);
-                    let faltered = match self.carried.take().unwrap_or(raised) {
+                    let faltered = match self.thread.carried.take().unwrap_or(raised) {
                         Fault::Thrown(value) => { self.attach_note(&value, &note); Fault::Thrown(value) }
                         Fault::Note(words) => match self.as_fault(&words) {
                             Some(value) => { self.attach_note(&value, &note); Fault::Thrown(value) }
@@ -1351,7 +1351,7 @@ impl<'a> Engine<'a> {
                         },
                         other => other,
                     };
-                    self.carried = Some(faltered);
+                    self.thread.carried = Some(faltered);
                     return Err(self.special_fault().into());
                 }
             }
@@ -1406,7 +1406,7 @@ impl<'a> Engine<'a> {
                 Value::Map(v) => v.iter().map(|(key, _)| key.clone()).collect(),
                 Value::Set(v) => v.borrow().items(),
                 single @ Value::Text(_) => vec![single],
-                iterable => self.special_items(&iterable).map_err(|words| self.carried.take().unwrap_or_else(|| words.into()))?,
+                iterable => self.special_items(&iterable).map_err(|words| self.thread.carried.take().unwrap_or_else(|| words.into()))?,
             }
         };
         let named: Vec<Value> = named.into_iter().map(|slot| Self::worth_of(&slot).unwrap_or_else(|| slot.contents())).collect();
@@ -2273,7 +2273,7 @@ impl<'a> Engine<'a> {
         // Native callables use ordinary dispatch, and stored strings stay
         // strings. Routine calls retain their attached namespace here.
         if !self.lang.class_builder.is_empty() && matches!(callable.contents(), Value::Native(..) | Value::ByteKind(..) | Value::SortOf(..) | Value::Text(_)) {
-            self.call_held(callable, args).map_err(|words| self.carried.take().unwrap_or_else(|| words.into()))
+            self.call_held(callable, args).map_err(|words| self.thread.carried.take().unwrap_or_else(|| words.into()))
         } else { self.class_apply(callable, args) }
     }
     pub(super) fn validate_class_spreads(&self, class: &Rc<Class>, args: &[Value]) -> Flow<()> {
@@ -2392,7 +2392,7 @@ impl<'a> Engine<'a> {
                 }
                 let items = self.call_items_named(&name, args)?;
                 let answer = self.builtin_call_expanded(operation, &name, items);
-                if let Some(raised) = self.carried.take() { return Err(raised); }
+                if let Some(raised) = self.thread.carried.take() { return Err(raised); }
                 Ok(answer?)
             }
             // A method bound to a value of a builtin kind, reached as a
@@ -2404,7 +2404,7 @@ impl<'a> Engine<'a> {
                         match key { Some(key) => named.push((key, value)), None => positional.push(value) }
                     }
                     let answer = self.value_method(&bound.0, &bound.1, positional, named);
-                    if let Some(fault) = self.carried.take() { return Err(fault); }
+                    if let Some(fault) = self.thread.carried.take() { return Err(fault); }
                     Ok(answer?)
                 } else { Ok(self.value_method(&bound.0, &bound.1, args, Vec::new())?) }
             },
@@ -2549,7 +2549,7 @@ impl<'a> Engine<'a> {
                         for member in row.iter() {
                             let mut one = vec![member.clone()];
                             let hashed = self.builtin(Builtin::Hash, "hash", &mut one);
-                            if let Some(fled) = self.carried.take() { return Err(fled); }
+                            if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                             hashed?;
                         }
                         return Err(format!("TypeError: union contains {} unhashable elements", row.len()).into());
@@ -2620,12 +2620,12 @@ impl<'a> Engine<'a> {
                     let previous = self.compiled_builtins.replace(w.1[6].clone());
                     let result = self.text_run(true, "eval", vec![w.1[0].clone(), w.1[1].clone()]);
                     self.compiled_builtins = previous;
-                    result.map_err(|words| self.carried.take().unwrap_or_else(|| Fault::Note(words)))
+                    result.map_err(|words| self.thread.carried.take().unwrap_or_else(|| Fault::Note(words)))
                 }
                 143 => {
                     if !args.is_empty() { return Err("TypeError: this code object takes no arguments".into()); }
                     let result = self.text_run(true, "eval", w.1[..2].to_vec());
-                    match result { Ok(value) => Ok(value), Err(message) => Err(self.carried.take().unwrap_or_else(|| message.into())) }
+                    match result { Ok(value) => Ok(value), Err(message) => Err(self.thread.carried.take().unwrap_or_else(|| message.into())) }
                 }
                 43 => {
 
@@ -2773,7 +2773,7 @@ impl<'a> Engine<'a> {
                     let mut supplied = vec![receiver.clone(), Value::text(mode)];
                     supplied.extend(plain.into_iter().skip(1));
                     let answer = self.faint_reading(&supplied);
-                    if let Some(fault) = self.carried.take() { return Err(fault); }
+                    if let Some(fault) = self.thread.carried.take() { return Err(fault); }
                     Ok(answer?)
                 },
             _ => unreachable!(),
@@ -2924,7 +2924,7 @@ impl<'a> Engine<'a> {
     fn native_named_call(&mut self, word: &str, mut args: Vec<Value>) -> Flow<Value> {
         let Some(op) = self.lang.builtins.get(word).copied() else { return self.class_apply(Value::text(word), args); };
         let answer = self.builtin(op, word, &mut args);
-        if let Some(raised) = self.carried.take() { return Err(raised); }
+        if let Some(raised) = self.thread.carried.take() { return Err(raised); }
         Ok(answer?)
     }
 
@@ -9786,8 +9786,8 @@ impl<'a> Engine<'a> {
         let raw = value.contents();
         if matches!(raw, Value::Null) { return Ok("None".to_string()); }
         if matches!(raw, Value::Class(_)) {
-            let module = self.class_get(raw.clone(), "__module__", false).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?.plain();
-            let name = self.class_get(raw, "__qualname__", false).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?.plain();
+            let module = self.class_get(raw.clone(), "__module__", false).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?.plain();
+            let name = self.class_get(raw, "__qualname__", false).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?.plain();
             return Ok(if module == "builtins" { name } else { format!("{module}.{name}") });
         }
         if let Some(word) = raw.kind_it_names() { return Ok(word); }
