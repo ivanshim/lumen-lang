@@ -561,6 +561,12 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
             let mut size = std::mem::zeroed::<libc::winsize>();
             status(libc::ioctl(number(0)? as i32, libc::TIOCGWINSZ, &mut size) as i64).map(|_| Value::tuple(vec![Value::Small(size.ws_col as i64),Value::Small(size.ws_row as i64)]))
         },
+        "lockf" => {
+            let descriptor = number(0)? as i32;
+            let action = number(1)? as libc::c_int;
+            let length = number(2)? as libc::off_t;
+            status(libc::lockf(descriptor, action, length) as i64)
+        },
         "get_inheritable" | "set_inheritable" => {
             let fd = number(0)? as i32;
             let flags = libc::fcntl(fd, libc::F_GETFD);

@@ -543,6 +543,12 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                     (found, _) => Ok(Value::Small(found as i64)),
                 }
             }
+            "lockf" => {
+                let held = int(0)? as libc::c_int;
+                let command = int(1)? as libc::c_int;
+                let extent = int(2)? as libc::off_t;
+                checked(libc::lockf(held, command, extent) as i64)
+            },
             "get_inheritable" | "set_inheritable" | "get_blocking" | "set_blocking" => {
             let (get, set, bit) = match operation.as_ref() {
                 "get_inheritable" | "set_inheritable" => (libc::F_GETFD, libc::F_SETFD, libc::FD_CLOEXEC),

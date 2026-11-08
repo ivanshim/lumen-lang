@@ -326,7 +326,15 @@ def _option_int(fd, level, name):
     return int.from_bytes(_call('sock_getopt', fd, level, name, 4), _sys.byteorder, signed=True)
 
 
-class socket:
+class _SocketMeta(type):
+    def __setattr__(cls, name, value):
+        # The marker lives on this class only, so the public subclass stays mutable.
+        if "_type_locked" in cls.__dict__:
+            raise TypeError("cannot set '%s' attribute of immutable type '%s'" % (name, cls.__name__))
+        super().__setattr__(name, value)
+
+
+class socket(metaclass=_SocketMeta):
     """socket(family=AF_INET, type=SOCK_STREAM, proto=0) -> socket object
 socket(family=-1, type=-1, proto=-1, fileno=None) -> socket object
 
@@ -617,6 +625,10 @@ A socket object represents one endpoint of a network connection."""
         self.close()
 
 
+socket._type_locked = True
+del _SocketMeta
+
+
 SocketType = socket
 
 
@@ -720,6 +732,9 @@ def getnameinfo(sockaddr, flags, /):
     # The host part must name exactly one numeric address, which decides
     # the family; an IPv4 address takes a pair, IPv6 up to four fields.
     if not isinstance(sockaddr, tuple) or not 2 <= len(sockaddr) <= 4:
+        # The C function has no frame, so a rejected argument must not stay
+        # reachable from this traceback.
+        del sockaddr
         raise TypeError('getnameinfo() argument 1 must be a tuple')
     host, port = sockaddr[0], _index(sockaddr[1])
     flowinfo = _index(sockaddr[2]) if len(sockaddr) > 2 else 0
