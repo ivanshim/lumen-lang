@@ -34,7 +34,7 @@ pub enum Shape {
 pub struct Token {
     /// Immutable input retained by the end marker for compiled-code records.
     #[serde(default)]
-    pub source_text: Option<std::rc::Rc<str>>,
+    pub source_text: Option<crate::value::Rc<str>>,
     pub shape: Shape,
     pub lexeme: String,
     /// The spelling as written, kept only when NFKC folding changed it.
@@ -1693,7 +1693,7 @@ fn lex_notices<'a>(source: &str, lang: &'a Lang, names: Option<NameLoader<'a>>, 
     let row = source.chars().filter(|c| *c == '\n').count() + 1;
     let column = source.rsplit('\n').next().unwrap_or("").chars().count() + 1;
     out.push(Token { source_text: None, byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Finish, lexeme: "EOF".to_string(), raw: None, width: 0, row, column });
-    if let Some(end) = out.last_mut() { end.source_text = Some(std::rc::Rc::from(source)); }
+    if let Some(end) = out.last_mut() { end.source_text = Some(crate::value::Rc::from(source)); }
     Ok(out)
 }
 

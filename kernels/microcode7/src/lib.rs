@@ -40,7 +40,6 @@ mod context;
 mod activation;
 pub mod capsule;
 pub mod datetime_api;
-mod activation;
 mod turn;
 pub mod tuples;
 

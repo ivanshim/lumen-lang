@@ -30,7 +30,7 @@ pub enum Shape {
 pub struct Token {
     /// Immutable input retained by the end marker for compiled-code records.
     #[serde(default)]
-    pub source_text: Option<std::rc::Rc<str>>,
+    pub source_text: Option<crate::data::Rc<str>>,
     pub shape: Shape,
     pub lexeme: String,
     /// The spelling as written, kept only when NFKC folding changed it.
@@ -461,7 +461,7 @@ fn code_gives_out(after: &str, closing: &str, table: &Table) -> Option<usize> {
 pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)> {
     let mut read = scan_notices(source, table)?;
     read.retain(|item| item.shape != Shape::EscapeNotice);
-    if let Some(last) = read.last_mut() { last.source_text = Some(std::rc::Rc::from(source)); }
+    if let Some(last) = read.last_mut() { last.source_text = Some(crate::data::Rc::from(source)); }
     Ok(read)
 }
 
@@ -709,7 +709,7 @@ fn scan_notices(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)
     }
     says(rest, row, &mut out);
     out.push(Token { source_text: None, utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Finish, lexeme: "EOF".into(), raw: None, span: 0, row });
-    if let Some(last) = out.last_mut() { last.source_text = Some(std::rc::Rc::from(source)); }
+    if let Some(last) = out.last_mut() { last.source_text = Some(crate::data::Rc::from(source)); }
     Ok(out)
 }
 
@@ -1750,7 +1750,7 @@ fn scan_code_from<'a>(source: &str, table: &'a Table, first: u32, ended: &mut (u
             }
         }
     }
-    if let Some(last) = tokens.last_mut() { last.source_text = Some(std::rc::Rc::from(source)); }
+    if let Some(last) = tokens.last_mut() { last.source_text = Some(crate::data::Rc::from(source)); }
     Ok(tokens)
 }
 
@@ -2018,7 +2018,7 @@ pub fn scan_with_gate<'a>(source: &str, table: &'a Table, gate: Option<NameGate<
     let mut cursor = (1, 1);
     let mut read = scan_code_from(source, table, 1, &mut cursor, gate, &mut false).map_err(|message| (message, cursor.0, cursor.1))?;
     read.retain(|item| item.shape != Shape::EscapeNotice);
-    if let Some(last) = read.last_mut() { last.source_text = Some(std::rc::Rc::from(source)); }
+    if let Some(last) = read.last_mut() { last.source_text = Some(crate::data::Rc::from(source)); }
     Ok(read)
 }
 

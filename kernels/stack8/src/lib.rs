@@ -38,7 +38,6 @@ mod context;
 mod thread_state;
 pub mod capsule;
 pub mod datetime_api;
-mod thread_state;
 mod gil;
 pub mod tuples;
 
