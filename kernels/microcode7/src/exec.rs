@@ -13188,6 +13188,9 @@ impl<'a> Machine<'a> {
         if let Value::Window(owner, 'm') = receiver {
             if name.starts_with("__") && name != "__dir__" {
                 if !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+                if name == "__getitem__" && arguments.len() == 1 {
+                    if let Some(Some(found)) = receiver.window_text_entry(&arguments[0]) { return Ok(found); }
+                }
                 let target = match owner.as_ref() { Value::Blueprint(_) => owner.proxy_pairs(), _ => owner.as_ref().clone() };
                 let unary = match name { "__hash__" => Some(Prim::Hashed), "__reversed__" => Some(Prim::Backwards), "__iter__" => Some(Prim::Iterator), "__len__" => Some(Prim::Length), _ => None };
                 if let Some(work) = unary {
@@ -22818,6 +22821,7 @@ impl<'a> Machine<'a> {
         let local_answer = self.locals_operation(operation, operands);
         if let Some(answer) = self.locals_do(local_answer)? { return Ok(Some(answer)); }
         if let (Prim::At, [Value::Window(owner, 'm'), key]) = (operation, operands) {
+            if let Some(Some(found)) = operands[0].window_text_entry(key) { return Ok(Some(found)); }
             return self.prim(operation, "", &[owner.proxy_pairs(), key.clone()]).map(Some);
         }
         if let (Prim::Hashed, [method @ (Value::Method(..) | Value::Wrapped(3, _) | Value::Intrinsic(..) | Value::Member(..))]) = (operation, operands) {
@@ -25446,6 +25450,7 @@ impl<'a> Machine<'a> {
         // apart from a view of its values, which answers to no set
         // working at all.
         if let (Prim::At, [Value::Window(owner, 'm'), key]) = (op, v) {
+            if let Some(Some(found)) = v[0].window_text_entry(key) { return Ok(found); }
             return self.element(&owner.proxy_pairs(), key, Reading::Plain);
         }
         let view_kept = matches!(op, Prim::Hashed | Prim::SortOf | Prim::Belongs | Prim::SetCall(14) | Prim::Landing(_) | Prim::SetAssign(_) | Prim::Quoted | Prim::Asciied | Prim::Dictionary | Prim::ReadMember | Prim::GetMember | Prim::Of | Prim::HasMember | Prim::FormatValue | Prim::RenderField | Prim::TemplateField | Prim::Mod);
@@ -29801,7 +29806,14 @@ impl<'a> Machine<'a> {
                     6 => {
                         if v.len() != 2 { return Err(format!("{}() expects 2 arguments, got {}", name, v.len())); }
                         let mark = as_index(&v[1])? as i64;
-                        self.child_laid(mark)
+                        match self.alongside.get_mut(&mark) {
+                            None => Value::Flag(false),
+                            Some(kept) => {
+                                let _ = kept.child.kill();
+                                let _ = kept.child.wait();
+                                Value::Flag(true)
+                            }
+                        }
                     }
                     7 if v.len() == 3 => {
                         let token = as_index(&v[1])? as i64;
@@ -29834,6 +29846,14 @@ impl<'a> Machine<'a> {
                                 Value::Flag(true)
                             }
                         }
+                    }
+                    // A collector is done at pipe EOF, not merely at direct-child exit.
+                    9 => {
+                        n(2)?;
+                        let id = as_index(&v[1])? as i64;
+                        Value::Flag(self.alongside.get(&id).is_some_and(|job| {
+                            job.collecting.iter().all(|worker| worker.as_ref().is_none_or(|reader| reader.is_finished()))
+                        }))
                     }
                     _ => return Err(format!("{}() unknown step {}", name, step)),
                 }
@@ -33395,7 +33415,10 @@ impl<'a> Machine<'a> {
                 }
             };
         }
-        if let Value::Window(owner, 'm') = target { return self.element(&owner.proxy_pairs(), at, how); }
+        if let Value::Window(owner, 'm') = target {
+            if let Some(Some(found)) = target.window_text_entry(at) { return Ok(found); }
+            return self.element(&owner.proxy_pairs(), at, how);
+        }
         if matches!(target, Value::Mutable(..) | Value::Shared(..) | Value::Window(..)) { return self.element(&target.settled(), at, how); }
         if let Some(store) = self.check_set_walk(target)? {
             let position = as_index(at)?;

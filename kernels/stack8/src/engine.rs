@@ -11478,7 +11478,10 @@ impl<'a> Engine<'a> {
             return Ok(Value::Flag(a.equals(b) != matches!(op, Action::Ne)));
         }
         if let (Action::At, Value::View(proxy)) = (op, a) {
-            if proxy.1 == "mapping" { return self.special_dyad(op, &proxy.0.proxy_dictionary(), b); }
+            if proxy.1 == "mapping" {
+                if let Some(Some(found)) = a.proxy_text_value(b) { return Ok(found); }
+                return self.special_dyad(op, &proxy.0.proxy_dictionary(), b);
+            }
         }
         if self.lang.sequence_values && matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge) {
             // A row of words a string method hands back stands for the
@@ -18156,7 +18159,10 @@ impl<'a> Engine<'a> {
         // as a set does under the set signs; elsewhere it stands for
         // its items.
         if matches!(op, Action::At) {
-            if let Value::View(window) = a { if window.1 == "mapping" { return self.element(&window.0.proxy_dictionary(), b, Reading::Plain); } }
+            if let Value::View(window) = a { if window.1 == "mapping" {
+                if let Some(Some(found)) = a.proxy_text_value(b) { return Ok(found); }
+                return self.element(&window.0.proxy_dictionary(), b, Reading::Plain);
+            } }
         }
         if matches!(a, Value::View(_)) || matches!(b, Value::View(_)) {
             // The reading of the map itself by a key answers from the
@@ -19632,7 +19638,10 @@ impl<'a> Engine<'a> {
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
         if let Value::View(window) = target {
-            if window.1 == "mapping" { return self.element(&window.0.proxy_dictionary(), at, how); }
+            if window.1 == "mapping" {
+                if let Some(Some(found)) = target.proxy_text_value(at) { return Ok(found); }
+                return self.element(&window.0.proxy_dictionary(), at, how);
+            }
         }
         if matches!(target, Value::Collection(..) | Value::Bond(_) | Value::View(_)) { return self.element(&target.contents(), at, how); }
         if let Some(cell) = self.walked_set(target)? {
@@ -21388,6 +21397,9 @@ impl<'a> Engine<'a> {
             if view.1 == "mapping" && operation.starts_with("__") && operation != "__dir__" {
                 if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
                 if operation == "__ior__" { return Err("TypeError: '|=' is not supported by mappingproxy; use '|' instead".into()); }
+                if operation == "__getitem__" && args.len() == 1 {
+                    if let Some(Some(found)) = receiver.proxy_text_value(&args[0]) { return Ok(found); }
+                }
                 let backing = if matches!(&view.0, Value::Class(_)) { view.0.proxy_dictionary() } else { view.0.clone() };
                 let unary = match operation { "__len__" => Some(Builtin::Length), "__iter__" => Some(Builtin::Iter), "__reversed__" => Some(Builtin::Reversed), "__hash__" => Some(Builtin::Hash), _ => None };
                 if let Some(op) = unary {
@@ -28740,9 +28752,9 @@ impl<'a> Engine<'a> {
                     6 => {
                         arity(2)?;
                         let which = as_index(&args[1])? as i64;
-                        match self.beside.borrow_mut().remove(&which) {
+                        match self.beside.borrow_mut().get_mut(&which) {
                             None => Value::Flag(false),
-                            Some(mut kept) => {
+                            Some(kept) => {
                                 let _ = kept.child.kill();
                                 let _ = kept.child.wait();
                                 Value::Flag(true)
@@ -28784,6 +28796,16 @@ impl<'a> Engine<'a> {
                             if let Some(pipe) = process.err_pipe.take() { process.err_capture = Some(capture_pipe(pipe)); }
                             Value::Flag(true)
                         } else { Value::Flag(false) }
+                    }
+                    // Readers finish only after EOF, including inherited descendant pipes.
+                    9 => {
+                        arity(2)?;
+                        let which = as_index(&args[1])? as i64;
+                        let kept = self.beside.borrow();
+                        Value::Flag(kept.get(&which).is_some_and(|process| {
+                            process.out_capture.as_ref().is_none_or(|reader| reader.is_finished())
+                                && process.err_capture.as_ref().is_none_or(|reader| reader.is_finished())
+                        }))
                     }
                     _ => return Err(format!("{}() unknown step {}", name, step)),
                 }
