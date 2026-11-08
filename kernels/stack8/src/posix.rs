@@ -252,6 +252,10 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
         "open" => { let p = pathname(0)?; status(libc::openat(number(3)? as i32, p.as_ptr(), number(1)? as i32 | libc::O_CLOEXEC, number(2)? as libc::mode_t) as i64) },
         "close" => status(libc::close(number(0)? as i32) as i64),
         "dup" => status(libc::fcntl(number(0)? as i32, libc::F_DUPFD_CLOEXEC, 0) as i64),
+        "dup2" => {
+            let (src, dst) = (number(0)? as i32, number(1)? as i32);
+            status((if a[2].is_true() { libc::dup2(src, dst) } else { libc::dup3(src, dst, libc::O_CLOEXEC) }) as i64)
+        },
         // Wait for readability, writability or an exceptional condition on
         // each set of descriptors, as CPython's select module does; the
         // module checks ranges and converts objects before calling.
