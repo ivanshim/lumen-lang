@@ -564,7 +564,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
         "fcntl" => {
             let descriptor = number(0)? as i32;
             let command = number(1)? as libc::c_int;
-            let argument = number(2)? as libc::c_int;
+            let argument = number(2)? as libc::c_long;
             loop {
                 let result = status(libc::fcntl(descriptor, command, argument) as i64);
                 if matches!(result, Err(libc::EINTR)) { check_signals()?; continue; }

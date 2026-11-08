@@ -20,9 +20,17 @@ _BUFFER_LIMIT = 1024
 
 
 def _descriptor(fd):
-    if type(fd) is int:
-        return fd
-    return fd.fileno()
+    if not isinstance(fd, int):
+        fileno = getattr(fd, "fileno", None)
+        if fileno is None:
+            raise TypeError("argument must be an int, or have a fileno() method")
+        fd = fileno()
+        if not isinstance(fd, int):
+            raise TypeError("fileno() returned a non-integer")
+    fd = _c_int(fd)
+    if fd < 0:
+        raise ValueError("file descriptor cannot be a negative integer")
+    return fd
 
 
 def _c_int(value):
@@ -40,12 +48,19 @@ def fcntl(fd, cmd, arg=0):
     from posix import _call
     fd = _descriptor(fd)
     cmd = _c_int(cmd)
-    if type(arg) is str:
-        raw = arg.encode("utf-8", "surrogateescape")
-    elif type(arg) is bytes:
-        raw = arg
+    if isinstance(arg, str):
+        raw = arg.encode("utf-8")
     else:
-        return _call("fcntl", fd, cmd, _c_int(arg))
+        try:
+            view = memoryview(arg)
+        except TypeError:
+            number = _index(arg)
+            if number < -9223372036854775808 or number > 9223372036854775807:
+                raise OverflowError("Python int too large to convert to C long")
+            return _call("fcntl", fd, cmd, number)
+        if not view.c_contiguous:
+            raise BufferError("memoryview: underlying buffer is not C-contiguous")
+        raw = view.tobytes()
     if len(raw) > _BUFFER_LIMIT:
         raise ValueError("fcntl string arg too long")
     return _call("fcntl_buf", fd, cmd, raw)

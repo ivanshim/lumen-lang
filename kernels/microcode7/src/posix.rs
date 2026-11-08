@@ -546,7 +546,7 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
             "fcntl" => {
                 let held = int(0)? as libc::c_int;
                 let request = int(1)? as libc::c_int;
-                let argument = int(2)? as libc::c_int;
+                let argument = int(2)? as libc::c_long;
                 loop {
                     let outcome = checked(libc::fcntl(held, request, argument) as i64);
                     if matches!(outcome, Err(libc::EINTR)) { interrupted()?; continue; }
