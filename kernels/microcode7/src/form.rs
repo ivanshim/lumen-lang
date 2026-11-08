@@ -1319,13 +1319,19 @@ impl Form {
                     let right = if empty_else { after } else { limbs[2].suite_head(second_arm) };
                     out.push((cursor * 2, left * 2, right * 2));
                 }
-                Self::Cycle { test, body, .. } => {
+                Self::Cycle { test, body, step, otherwise, .. } => {
                     let test_cursor = cursor + 1;
                     let body_cursor = test_cursor + test.row_count();
-                    let mut exit = cursor + node.row_count();
-                    while matches!(nodes.get(exit.saturating_sub(1)), Some(Self::Release(_) | Self::Forget(_))) {
-                        exit += 1;
-                    }
+                    let exit = if let Some(else_arm) = otherwise.as_deref() {
+                        let step_rows = step.as_deref().map_or(0, Self::row_count);
+                        else_arm.suite_head(body_cursor + body.row_count() + step_rows)
+                    } else {
+                        let mut after = cursor + node.row_count();
+                        while matches!(nodes.get(after.saturating_sub(1)), Some(Self::Release(_) | Self::Forget(_))) {
+                            after += 1;
+                        }
+                        after
+                    };
                     let collection_walk = matches!(test.as_ref(), Self::Apply(Callee::Prim(Prim::MoreYet, _), _));
                     let (source, left) = if collection_walk {
                         (cursor, test_cursor)
