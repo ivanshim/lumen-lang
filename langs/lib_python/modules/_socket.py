@@ -344,6 +344,7 @@ A socket object represents one endpoint of a network connection."""
     # No instance dictionary and no weak-reference slot of its own, like
     # the reference's C type: the public subclass adds those in its slots.
     __slots__ = ('_fd', '_family', '_type', '_proto', '_timeout')
+    __native_type_name__ = 'socket'
 
     def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
         family, type, proto = _index(family), _index(type), _index(proto)
@@ -720,6 +721,9 @@ def getnameinfo(sockaddr, flags, /):
     # The host part must name exactly one numeric address, which decides
     # the family; an IPv4 address takes a pair, IPv6 up to four fields.
     if not isinstance(sockaddr, tuple) or not 2 <= len(sockaddr) <= 4:
+        # The C function has no frame, so a rejected argument must not stay
+        # reachable from this traceback.
+        del sockaddr
         raise TypeError('getnameinfo() argument 1 must be a tuple')
     host, port = sockaddr[0], _index(sockaddr[1])
     flowinfo = _index(sockaddr[2]) if len(sockaddr) > 2 else 0
