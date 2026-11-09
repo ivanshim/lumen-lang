@@ -327,6 +327,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("encodings.zlib_codec", include_str!("encodings/zlib_codec.py"), "encodings/zlib_codec.py"),
     ("enum", include_str!("enum.py"), "enum.py"),
     ("errno", include_str!("errno.py"), "errno.py"),
+    ("fcntl", include_str!("fcntl.py"), "fcntl.py"),
     ("filecmp", include_str!("filecmp.py"), "filecmp.py"),
     ("fileinput", include_str!("fileinput.py"), "fileinput.py"),
     ("fnmatch", include_str!("fnmatch.py"), "fnmatch.py"),
