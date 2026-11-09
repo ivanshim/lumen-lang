@@ -18,6 +18,7 @@ def _lumen_interact(source, filename, namespace, quiet=False, version="3.14.8"):
         # whether it ended by joining the next line. Only the line just
         # added is walked, so a long session costs no more than its text.
         frames = state[11]
+        state[12] = False
         logical_start = not frames and state[1] == 0 and not state[8]
         state[8] = False
         at = 0
@@ -58,6 +59,7 @@ def _lumen_interact(source, filename, namespace, quiet=False, version="3.14.8"):
                         at = closing + 1 if closing >= 0 else end
                         continue
                 if formatted and mark == '{':
+                    state[12] = True
                     if frame[0] == 'string' and text[at + 1:at + 2] == '{':
                         at += 2
                         continue
@@ -72,6 +74,8 @@ def _lumen_interact(source, filename, namespace, quiet=False, version="3.14.8"):
                 continue
             if mark == '#':
                 break
+            if not mark.isspace():
+                state[12] = True
             if mark == '\\':
                 if text[at + 1:] in ('', '\n', '\r\n'):
                     state[8] = True
@@ -130,7 +134,7 @@ def _lumen_interact(source, filename, namespace, quiet=False, version="3.14.8"):
     def _lumen_fresh():
         # literal pending, depth, last sign, first word, assignment, separator,
         # decorator, blank, joined, compound, header indent, literal/field stack.
-        return [False, 0, None, None, False, False, False, False, False, False, 0, []]
+        return [False, 0, None, None, False, False, False, False, False, False, 0, [], False]
 
 
     import codeop
@@ -174,6 +178,8 @@ def _lumen_interact(source, filename, namespace, quiet=False, version="3.14.8"):
             pending.append(line.rstrip('\n'))
             _lumen_advance(state, line)
             if state[0] or state[1] > 0 or state[8] or state[6]:
+                if state[12] and not state[6] and not state[8]:
+                    compiler('\n'.join(pending), '<stdin>', 'single')
                 continue
             if state[9]:
                 if not state[7]:

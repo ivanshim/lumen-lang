@@ -177,8 +177,8 @@ fn prune_notable(notable: &mut Notable) {
 }
 
 /// Why a step must look at what is going.
-const G_STIRRED: u8 = 1;
-const G_POLL: u8 = 2;
+pub(crate) const G_STIRRED: u8 = 1;
+pub(crate) const G_POLL: u8 = 2;
 const G_ANCHOR: u8 = 4;
 
 fn ghost_raise(mask: u8) { ghost_set(mask, true); }
@@ -329,7 +329,8 @@ pub fn bidding() -> bool {
 /// the machine so that a step does not go through the thread's table of
 /// statics each time. They are the very cells the rest of this file sets.
 pub struct Tap {
-    state: Rc<Cell<u8>>,
+    // Read beside the value step. A quiet step then does not call in here.
+    pub(crate) state: Rc<Cell<u8>>,
     anchored: Rc<RefCell<Vec<Hold>>>,
 }
 
@@ -345,10 +346,20 @@ pub fn tap() -> Tap {
 pub fn stirred(tap: &Tap) -> bool {
     let flags = tap.state.get();
     if flags == 0 { return false; }
-    stirred_by(flags, tap)
+    stirred_by(flags, tap, true)
 }
 
-fn stirred_by(flags: u8, tap: &Tap) -> bool {
+/// Listeners and explicit wakes only. A value is read too often to walk
+/// every owner that is still alive; statement, loop, and return edges use
+/// `stirred`, which still looks at each of them.
+#[inline(always)]
+pub fn stirred_light(tap: &Tap) -> bool {
+    let flags = tap.state.get();
+    if flags & (G_STIRRED | G_POLL) == 0 { return false; }
+    stirred_by(flags, tap, false)
+}
+
+fn stirred_by(flags: u8, tap: &Tap, anchors: bool) -> bool {
     if flags & G_POLL != 0 {
         let gone_method = LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_) | Ghost::Code(_)) && listener.departed()))).unwrap_or(false);
         if gone_method {
@@ -362,7 +373,7 @@ fn stirred_by(flags: u8, tap: &Tap) -> bool {
         }
     }
     if flags & G_STIRRED != 0 { return true; }
-    if flags & G_ANCHOR != 0 { return anchor_ready(&tap.anchored); }
+    if anchors && flags & G_ANCHOR != 0 { return anchor_ready(&tap.anchored); }
     false
 }
 

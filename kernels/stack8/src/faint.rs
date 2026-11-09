@@ -212,6 +212,8 @@ thread_local! {
     /// only the references that existed before finalization began.
     /// A finalizable instance stays itself while its last words run.
     static ANCHORED: RefCell<Vec<Keep>> = const { RefCell::new(Vec::new()) };
+    // Addresses already anchored, so a repeat anchor does not walk the vector.
+    static ANCHORED_ADDRS: RefCell<HashSet<usize, BuildHasherDefault<PlaceHasher>>> = RefCell::new(HashSet::default());
     /// Anchored objects whose only remaining handle is that list.
     static ANCHOR_SOLO: Cell<i32> = const { Cell::new(0) };
     static ANCHOR_TICK: Cell<u32> = const { Cell::new(0) };
@@ -262,17 +264,22 @@ pub fn clear_group(group: &[Value]) -> Vec<(Value, Value)> {
 }
 
 pub fn anchor(object: &Keep) {
-    let _ = ANCHORED.try_with(|all| {
-        let mut all = all.borrow_mut();
-        let seen = all.iter().any(|item| Keep::ptr_eq(item, object));
-        if !seen {
+    let addr = crate::value::Keep::as_ptr(object) as usize;
+    let added = ANCHORED.try_with(|all| {
+        let known = ANCHORED_ADDRS.try_with(|book| book.borrow().contains(&addr)).unwrap_or(false);
+        if !known {
+            let mut all = all.borrow_mut();
             // The list's own handle is taken before the flag is raised,
             // so this clone is not mistaken for a share of an anchored object.
             all.push(object.clone());
         }
         object.anchored.set(true);
         let _ = PENDING.try_with(|flags| flags.set(flags.get() | 2));
-    });
+        !known
+    }).unwrap_or(false);
+    if added {
+        let _ = ANCHORED_ADDRS.try_with(|book| { book.borrow_mut().insert(addr); });
+    }
 }
 
 pub fn note_anchor_alone() {
@@ -296,6 +303,8 @@ pub fn anchored_values() -> Vec<Value> {
 }
 
 pub fn release_anchor(object: &Keep) {
+    let addr = crate::value::Keep::as_ptr(object) as usize;
+    let _ = ANCHORED_ADDRS.try_with(|book| { book.borrow_mut().remove(&addr); });
     let _ = ANCHORED.try_with(|objects| {
         let mut objects = objects.borrow_mut();
         let listed = objects.iter().any(|item| Keep::ptr_eq(item, object));
@@ -319,6 +328,7 @@ pub fn release_all_anchors() {
         }
         all.clear();
     });
+    let _ = ANCHORED_ADDRS.try_with(|book| book.borrow_mut().clear());
     let _ = ANCHOR_SOLO.try_with(|slot| slot.set(0));
     let _ = PENDING.try_with(|flags| flags.set(flags.get() & 1));
 }
@@ -458,6 +468,10 @@ pub fn settle() -> (Vec<(Keep, Value)>, Vec<Rc<RefCell<Generator>>>, Vec<(Value,
         for held in &ready {
             held.anchored.set(false);
         }
+        let _ = ANCHORED_ADDRS.try_with(|book| {
+            let mut book = book.borrow_mut();
+            for item in &ready { book.remove(&(crate::value::Keep::as_ptr(item) as usize)); }
+        });
         let _ = ANCHOR_SOLO.try_with(|slot| slot.set(0));
         if kept.is_empty() { let _ = PENDING.try_with(|flags| flags.set(flags.get() & 1)); }
         *all = kept;

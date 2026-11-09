@@ -526,16 +526,13 @@ def _letter_quote(tok, c):
     if c != quote:
         _backup(tok, c)
     while end_quote_size != quote_size:
-        # Ordinary buffered text needs no per-character tokenizer calls.
-        cur = tok.cur
-        end = tok.inp
-        for special in (quote, '\\', '\n'):
-            found = tok.buf.find(special, cur - tok.line_start, end - tok.line_start)
-            if found >= 0:
-                end = tok.line_start + found
-        if end != cur:
-            end_quote_size = 0
-            tok.cur = end
+        # Track buffered quotes and escapes together; refills and errors stay here.
+        scanned = _scan_token(tok, quote, quote_size, end_quote_size)
+        if scanned is not None:
+            end_quote_size, escaped = scanned
+            has_escaped_quote = has_escaped_quote or escaped
+            if end_quote_size == quote_size:
+                break
         c = _nextc(tok)
         if c is None or (quote_size == 1 and c == '\n'):
             tok.cur = tok.start + 1
