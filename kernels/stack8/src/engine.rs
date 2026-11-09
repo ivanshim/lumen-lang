@@ -94,6 +94,22 @@ static WAKEUP_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::n
 static WAKEUP_WARN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 static WAKEUP_ERROR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
+fn pend_signal(number: i32) {
+    unsafe {
+        let saved = *libc::__errno_location();
+        SIGNALS_PENDING.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+        let fd = WAKEUP_FD.load(std::sync::atomic::Ordering::Relaxed);
+        let byte = number as u8;
+        if fd >= 0 && libc::write(fd, (&byte as *const u8).cast(), 1) < 0 {
+            let error = *libc::__errno_location();
+            if error != libc::EAGAIN || WAKEUP_WARN.load(std::sync::atomic::Ordering::Relaxed) {
+                WAKEUP_ERROR.store(error, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        *libc::__errno_location() = saved;
+    }
+}
+
 extern "C" fn signal_arrived(number: i32) {
     unsafe {
         let saved = *libc::__errno_location();
@@ -102,15 +118,7 @@ extern "C" fn signal_arrived(number: i32) {
         if owner > 0 && owner != here {
             libc::syscall(libc::SYS_tgkill, libc::getpid() as libc::c_long, owner as libc::c_long, number as libc::c_long);
         } else if (1..=64).contains(&number) {
-            SIGNALS_PENDING.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
-            let fd = WAKEUP_FD.load(std::sync::atomic::Ordering::Relaxed);
-            let byte = number as u8;
-            if fd >= 0 && libc::write(fd, (&byte as *const u8).cast(), 1) < 0 {
-                let error = *libc::__errno_location();
-                if error != libc::EAGAIN || WAKEUP_WARN.load(std::sync::atomic::Ordering::Relaxed) {
-                    WAKEUP_ERROR.store(error, std::sync::atomic::Ordering::Relaxed);
-                }
-            }
+            pend_signal(number);
         }
         *libc::__errno_location() = saved;
     }
@@ -753,7 +761,7 @@ impl Drop for Engine<'_> {
     fn drop(&mut self) {
         if !self.lang.signals_between_statements {return;}
         for (&number, handler) in &self.signal_handlers {
-            if !matches!(handler.contents(), Value::Small(0 | 1)) {
+            if !matches!(handler.contents(), Value::Null | Value::Small(0 | 1)) {
                 unsafe {libc::signal(number as i32, libc::SIG_DFL);}
             }
         }
@@ -2290,6 +2298,19 @@ impl<'a> Engine<'a> {
     pub fn let_things_go(&mut self) {
         if !self.lang.trace_fields.is_empty() {
             self.finalizing = true;
+            if self.lang.signals_between_statements {
+                // Keep cleared slots distinct from the implicit initial SIGINT handler.
+                for number in 1..=64 {
+                    let previous = self.signal_handlers.insert(number, Value::Null);
+                    let reset = match previous {
+                        Some(Value::Small(0 | 1) | Value::Null) => false,
+                        None => number == i64::from(libc::SIGINT),
+                        Some(_) => true,
+                    };
+                    if reset { unsafe { libc::signal(number as i32, libc::SIG_DFL); } }
+                }
+                SIGNALS_PENDING.store(0, std::sync::atomic::Ordering::Relaxed);
+            }
             // CPython clears the import cache before module-owned finalizers.
             // Existing references to a module continue to own its dictionary.
             if let [owner, member] = self.lang.module_cache.as_slice() {
@@ -2535,6 +2556,11 @@ impl<'a> Engine<'a> {
         if let Err(words) = self.call_held(callee, args) {
             let fault = self.carried.take().unwrap_or(Fault::Note(words));
             self.ignore_fault(fault, &shown, kind);
+        }
+        if self.lang.signals_between_statements {
+            if let Err(fault) = self.deliver_signals() {
+                self.ignore_fault(fault, &shown, kind);
+            }
         }
     }
 
@@ -20915,11 +20941,11 @@ impl<'a> Engine<'a> {
             if pending & bit == 0 { continue; }
             handled |= bit;
             let handler = self.signal_handlers.get(&(number as i64)).cloned();
-            // Finalization has dropped the chance to run a Python handler.
-            // The reference reports that as a race instead of calling it.
-            let outcome: Flow<()> = if self.finalizing {
-                Err(Fault::Note(format!("OSError: Signal {number} ignored due to race condition")))
-            } else { match handler {
+            let outcome: Flow<()> = match handler {
+                Some(Value::Null | Value::Small(0 | 1)) if self.lang.python_numbers => {
+                    self.ignore_fault(Fault::Note(format!("OSError: Signal {number} ignored due to race condition")), &Value::Null, "signal_handler");
+                    Ok(())
+                }
                 Some(Value::Small(1)) => Ok(()),
                 Some(routine) if !matches!(routine, Value::Small(_)) => {
                     match self.call_held(routine, vec![Value::Small(number as i64), Value::Null]) {
@@ -20929,7 +20955,7 @@ impl<'a> Engine<'a> {
                 }
                 _ if number == 2 => Err(Fault::Note("\0KeyboardInterrupt:".to_string())),
                 _ => Ok(()),
-            }};
+            };
             if let Err(fault) = outcome {
                 let later = pending & !handled;
                 if later != 0 { SIGNALS_PENDING.fetch_or(later, std::sync::atomic::Ordering::Relaxed); }
@@ -28496,8 +28522,7 @@ impl<'a> Engine<'a> {
                             Some(_) => true,
                         };
                         if schedule {
-                            SIGNALS_PENDING.fetch_or(1u64 << (which - 1), std::sync::atomic::Ordering::Relaxed);
-                            if self.finalizing { self.signal_checkpoint()?; }
+                            pend_signal(which as i32);
                         }
                         Value::Null
                     }

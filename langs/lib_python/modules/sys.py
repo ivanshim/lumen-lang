@@ -736,7 +736,7 @@ __displayhook__ = displayhook
 
 def _report_unraisable(exc_value, exc_traceback, about, kind):
     # A failed native signal write has no Python traceback.
-    if exc_traceback is None and kind != 'signal':
+    if exc_traceback is None and kind not in ('signal', 'signal_handler'):
         try:
             raise exc_value
         except BaseException as raised:
@@ -749,11 +749,13 @@ def _report_unraisable(exc_value, exc_traceback, about, kind):
         message = 'Exception ignored while finalizing coroutine ' + repr(about)
     elif kind == 'generator':
         message = 'Exception ignored while closing generator ' + repr(about)
+    elif kind == 'signal_handler':
+        message = 'Exception ignored while calling signal handler'
     elif kind == 'signal':
         message = 'Exception ignored while trying to write to the signal wakeup fd'
     else:
         message = None
-    target = None if kind in ('generator', 'coroutine', 'file', 'signal') else about
+    target = None if kind in ('generator', 'coroutine', 'file', 'signal', 'signal_handler') else about
     try:
         unraisablehook(UnraisableHookArgs(type(exc_value), exc_value,
                                          exc_traceback, message, target))
