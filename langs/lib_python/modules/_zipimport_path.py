@@ -15,15 +15,14 @@ def find(fullname, path):
         if getattr(finder, "_native_source_finder", False):
             return None
         if type(spec.loader) is _bootstrap_external.SourceFileLoader:
-            import os
             native_file = __load_module(fullname, True)
             if native_file is not None:
-                native_file = os.path.abspath(native_file)
-                source_file = os.path.abspath(spec.origin)
+                native_file = _bootstrap_external._path_abspath(native_file)
+                source_file = _bootstrap_external._path_abspath(spec.origin)
                 # Some embedded packages retain a flat source file and a virtual initializer.
-                virtual_package = native_file.endswith('/__init__.py') and not os.path.isfile(native_file)
-                library_root = os.path.dirname(os.path.dirname(_bootstrap_external.__file__))
-                embedded = source_file.startswith(library_root + os.sep)
+                virtual_package = native_file.endswith('/__init__.py') and not _bootstrap_external._path_isfile(native_file)
+                library_root = _bootstrap_external._path_split(_bootstrap_external._path_split(_bootstrap_external.__file__)[0])[0]
+                embedded = source_file.startswith(library_root + _bootstrap_external.path_sep)
                 if embedded and (source_file == native_file or virtual_package and source_file == native_file[:-12] + '.py'):
                     return None
         return spec

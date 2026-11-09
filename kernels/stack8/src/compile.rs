@@ -1100,6 +1100,12 @@ fn compile_pass(
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
         a.skip_seps();
+        // The expression is the text's one statement, which a tracer hears as a line.
+        if !a.exhausted() && !a.lang.trace_native.is_empty() {
+            let row = ast_line((a.look().row as u32).saturating_sub(a.before), a.look().column);
+            a.put(Instr::Line(row));
+            a.piece().line = row;
+        }
         if let Err(said) = a.tuple_read(false) {
             a.record_stop();
             return Err(said);
@@ -5386,6 +5392,7 @@ impl<'a> Compiler<'a> {
     /// the value bound from it at the head of each pass.
     fn walk(&mut self, bag: &str, key: Option<&str>, value: &str, shared: bool, place: Option<usize>) -> Res<()> {
         let lang = self.lang;
+        let head_row = (!lang.trace_native.is_empty()).then(|| (self.piece().line, self.tokens[self.pos.saturating_sub(1)].row));
         // A walk that hands out the items' own cells goes over the array
         // as it stands: what the body does to the array it does to the
         // walk. One that walks a copy takes the copy here, and what the
@@ -5499,6 +5506,9 @@ impl<'a> Compiler<'a> {
         }
         self.body()?;
         let again = self.mark();
+        // A tracer hears of the loop's head again at the end of every pass.
+        // (A loop written on one line has told its tracer of that line already.)
+        if let Some((row, written)) = head_row { if self.tokens[self.pos.saturating_sub(1)].row != written { self.put(Instr::Line(row)); } }
         match &held {
             // The place the walk goes on from is the one past where the
             // item it handed out now lies, which is not where it lay

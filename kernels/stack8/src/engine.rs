@@ -71,8 +71,8 @@ struct Beside {
     in_pipe: Option<std::process::ChildStdin>,
     out_pipe: Option<std::process::ChildStdout>,
     err_pipe: Option<std::process::ChildStderr>,
-    out_capture: Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>>,
-    err_capture: Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>>,
+    out_capture: Option<(std::thread::JoinHandle<std::io::Result<()>>, std::sync::Arc<std::sync::Mutex<Vec<u8>>>)>,
+    err_capture: Option<(std::thread::JoinHandle<std::io::Result<()>>, std::sync::Arc<std::sync::Mutex<Vec<u8>>>)>,
 }
 
 /// One bit for each signal number waiting to be taken up: the host's
@@ -162,6 +162,9 @@ pub struct Engine<'a> {
     deque_routine_bits: [u64; 4],
     deque_layouts: std::collections::HashMap<usize, (u64, u64, Value, Vec<String>), crate::value::FxBuildHasher>,
     trace_hook: Value,
+    /// The routine told of monitoring events (sys.monitoring), and whether it wants every instruction.
+    monitor_hook: Value,
+    monitor_instructions: bool,
     coroutine_depth: usize,
     annotation_scope: Option<(Rc<Routine>, Option<Rc<Class>>, Vec<(Weak<Instance>, String)>)>,
     async_firstiter: Value,
@@ -366,6 +369,11 @@ pub struct Engine<'a> {
     /// one in its way, and whether it is being told one just now.
     profiler: RefCell<Option<Value>>,
     profiling: std::cell::Cell<bool>,
+    /// Set while a loop steps a walk, which then reports the exhaustion it ends in to a tracer.
+    looping: bool,
+    /// Set once a program has asked a frame for per-instruction events, so that
+    /// the instruction loop looks for them only after that.
+    opcode_events: bool,
     /// Whether a builtin already stands told of, so that what it does
     /// inside itself is not told again; calls of the program's own
     /// routines made from within it begin afresh.
@@ -1861,6 +1869,8 @@ impl<'a> Engine<'a> {
             deque_routine_bits: [0; 4],
             deque_layouts: std::collections::HashMap::with_hasher(crate::value::FxBuildHasher::default()),
             trace_hook: Value::Null,
+            monitor_hook: Value::Null,
+            monitor_instructions: false,
             coroutine_depth: 0,
             annotation_scope: None,
             async_firstiter: Value::Null,
@@ -1893,6 +1903,8 @@ impl<'a> Engine<'a> {
             untaken: RefCell::new(None),
             profiler: RefCell::new(None),
             profiling: std::cell::Cell::new(false),
+            looping: false,
+            opcode_events: false,
             native_open: std::cell::Cell::new(false),
             call_site: std::cell::Cell::new(false),
             written_out: std::cell::Cell::new(false),
@@ -2303,6 +2315,7 @@ impl<'a> Engine<'a> {
             }
         }
         self.trace_hook = Value::Null;
+        self.monitor_hook = Value::Null;
         // The top-level run has returned; shutdown callbacks have no Python caller.
         if !self.lang.warning_backend.is_empty() { self.trace_frame = None; self.location = None; }
         self.settle_departed();
@@ -2432,9 +2445,11 @@ impl<'a> Engine<'a> {
     /// of them raises is written to the error stream and dropped, since
     /// nothing in the program stands where it could be caught.
     fn settle_departed(&mut self) {
+        // Cleanup callbacks must not consume the exception crossing a native boundary.
+        let pending_fault = self.carried.take();
         loop {
             let (words, walks, gone) = crate::faint::settle();
-            if words.is_empty() && walks.is_empty() && gone.is_empty() { return; }
+            if words.is_empty() && walks.is_empty() && gone.is_empty() { break; }
             for (told, bearer) in gone {
                 self.speak_ignoring(told, vec![bearer], "callback");
             }
@@ -2448,6 +2463,7 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        self.carried = pending_fault;
     }
 
     fn warn_unawaited_coroutine(&mut self, walk: &Rc<RefCell<Generator>>) -> Flow<Value> {
@@ -2620,6 +2636,14 @@ impl<'a> Engine<'a> {
     /// Discount every retired version, including versions already absent
     /// from the inventory; current modules retain ordinary world roots.
     fn quiet_replaced_modules(&mut self) -> Vec<usize> {
+        // Compiler temporaries remain live until their module body finishes.
+        let initializing: Vec<_> = self.module_slots.values().filter_map(|(offset, path)| {
+            if !self.importing.contains(path) { return None; }
+            let prefix = format!("\0module:{offset}:{path}:");
+            let count = self.registry.idents[*offset..].iter().take_while(|name| name.starts_with(&prefix)).count();
+            Some(*offset..*offset + count)
+        }).collect();
+        let retired = |slots: Vec<usize>| slots.into_iter().filter(|at| !initializing.iter().any(|range| range.contains(at))).collect();
         let Some(owner) = self.lang.module_cache.first().cloned() else { return Vec::new() };
         if self.cached_module_address("\0").is_none() { return Vec::new(); }
         let paths: Vec<String> = self.modules.keys().cloned().collect();
@@ -2665,7 +2689,7 @@ impl<'a> Engine<'a> {
         // collections. Reuse the classification instead of scanning every
         // namespace and reserved slot again for each weak-reference round.
         if !changed && self.quiet_module_slots.0 == self.world.len() && self.quiet_module_slots.1 == inventory {
-            return self.quiet_module_slots.2.clone();
+            return retired(self.quiet_module_slots.2.clone());
         }
         // Current inventory bindings already have real module roots. Keep
         // their world slots in the ordinary path instead of expanding the
@@ -2691,7 +2715,7 @@ impl<'a> Engine<'a> {
                 (!current).then_some(at)
             }).collect();
         self.quiet_module_slots = (self.world.len(), inventory, quiet.clone());
-        quiet
+        retired(quiet)
     }
 
     /// Build ownership including any nodes retained by this collection.
@@ -2725,7 +2749,11 @@ impl<'a> Engine<'a> {
                 (!quiet_positions[at] && !matches!(value, Value::Blank | Value::Null)).then_some(value));
             active_world.chain(&self.data).chain(&self.caught).chain(&self.buffer)
             .chain(self.given.iter().flatten()).chain(self.modules.values()).chain(self.memo.values())
-            .chain(self.native_exceptions.values()).chain(std::iter::once(&self.trace_hook)).cloned()
+            .chain(self.native_exceptions.values()).chain([&self.trace_hook, &self.monitor_hook]).cloned()
+            // Weak metadata keys must also be graph candidates: a function
+            // owned only by an active local can otherwise be absent, leaving
+            // no node from which to mark its still-live attribute dictionary.
+            .chain(self.function_members.iter().filter_map(|(function, _)| function.revive()))
             .chain(self.outer_book.iter().cloned().map(Value::Bond))
             .chain(self.function_books.iter().flatten().cloned().map(Value::Bond))
             .chain(self.natives.iter().cloned().map(Value::Bond)).collect() };
@@ -5428,6 +5456,15 @@ impl<'a> Engine<'a> {
             self.data.push(Value::Generator(walk));
             return Ok(());
         }
+        // Monitoring hears of the call from the caller's side, before anything is entered.
+        if !matches!(self.monitor_hook, Value::Null) && !self.in_trace_hook && !program.body_of_all && program.ident != "<comprehension>"
+            && !Self::stand_in_routine(self.running_routine.as_ref()) {
+            if let Some(caller) = self.trace_frame.clone() {
+                let mut call = vec![Value::Routine(program.clone())];
+                if !program.formals.is_empty() { if let Some(first) = frame.first() { call.push(first.contents()); } }
+                self.tell_monitor("call", &caller, Value::tuple(call))?;
+            }
+        }
         let base = self.data.len();
         // A routine written in a file of its own is run as being in it:
         // a complaint names that file, and a file the routine asks for
@@ -5456,10 +5493,10 @@ impl<'a> Engine<'a> {
         let reported = watched && entered.is_ok();
         let natives_were_open = self.native_open.replace(false);
         self.call_site.set(false);
-        let outcome = if let Err(fault) = entered { Err(fault) } else if matches!(self.trace_hook, Value::Null) { self.run_instrs(program, &mut frame) } else { self.trace_event("call", Value::Null).and_then(|()| self.run_instrs(program, &mut frame)) };
+        let outcome = if let Err(fault) = entered { Err(fault) } else if matches!(self.trace_hook, Value::Null) { self.run_instrs(program, &mut frame).and_then(|()| { self.settle_gone(); Ok(()) }) } else { self.trace_event_named("call", "start", Value::Null, None).and_then(|()| self.run_instrs(program, &mut frame).and_then(|()| { self.settle_gone(); Ok(()) })) };
         let outcome = if matches!(self.trace_hook, Value::Null) { outcome } else { match outcome {
             Ok(()) => { let result = self.data.last().cloned().unwrap_or(Value::Null); self.trace_event("return", result) },
-            Err(fault) => match self.trace_event("return", Value::Null) {
+            Err(fault) => match self.trace_event_named("return", "unwind", Value::Null, Some(if let Fault::Thrown(raised) = &fault { raised.clone() } else { Value::Null })) {
                 Ok(()) => Err(fault),
                 Err(callback) => { self.trace_outside_body(&callback); Err(callback) },
             },
@@ -5554,13 +5591,19 @@ impl<'a> Engine<'a> {
     /// being told already, so its own calls go unseen; a routine that
     /// fails is let go and the failure passes on to the call it saw.
     fn tell_profiler(&mut self, event: &str, frame: &Option<Keep>, result: Value) -> Flow<()> {
+        // Native types construct values; they are not C function calls in the profile protocol.
+        if event.starts_with("c_") && matches!(&result, Value::Native(op, _) if Self::kind_builtin(op)) { return Ok(()); }
         if self.profiling.get() { return Ok(()); }
         let Some(frame) = frame else { return Ok(()) };
         let Some(put) = self.profiler.borrow().clone() else { return Ok(()) };
         let Value::Routine(listener) = self.what_it_spells(put) else { return Ok(()) };
         self.profiling.set(true);
         let mark = self.data.len();
+        let aside = crate::faint::set_aside_walks();
         let told = self.invoke(&listener, vec![Value::Object(frame.clone()), Value::text(event), result]);
+        // What the routine let go of is seen to while it is still being told of, unheard.
+        if crate::faint::pending() { self.settle_departed(); }
+        crate::faint::restore_walks(aside);
         self.profiling.set(false);
         self.data.truncate(mark);
         if told.is_err() { *self.profiler.borrow_mut() = None; }
@@ -5635,7 +5678,7 @@ impl<'a> Engine<'a> {
         if outcome.is_ok() && self.any_waiting.get() {
             outcome = self.hand_over_complaints();
         }
-        if crate::faint::pending() {
+        if crate::faint::pending() && !self.profiling.get() && !self.in_trace_hook {
             self.settle_departed();
         }
         if outcome.is_err() {
@@ -6740,6 +6783,7 @@ impl<'a> Engine<'a> {
             return Err(words.clone().into());
         }
         if let Some(item) = kept.current.take() { return Ok(Some(item)); }
+        let first_run = !kept.started;
         kept.started = true;
         let Some(program) = kept.program.clone() else {
             if !matches!(sent, Value::Null) { return Err(self.lang.yield_unsupported[0].clone().into()); }
@@ -6801,6 +6845,7 @@ impl<'a> Engine<'a> {
             kept.closed = item.is_none();
             return Ok(item);
         };
+        let looped = std::mem::take(&mut self.looping);
         let outer = std::mem::replace(&mut self.data, std::mem::take(&mut kept.stack));
         // The faults the body itself is handling stand above the
         // caller's, so that it sees its own first and the caller's behind
@@ -6842,13 +6887,17 @@ impl<'a> Engine<'a> {
             if let Value::Small(row) = &fields[0].1 { self.line = *row as u32; }
         }
         self.location = kept.suspended_position;
-        let result = if matches!(self.trace_hook, Value::Null) {
+        // Each resumption of the body is a call the profiler hears of, and each yield or end a return.
+        let profiled = self.profiler.borrow().is_some();
+        let profile_frame = self.trace_frame.clone();
+        let result = if let Err(fault) = if profiled { self.tell_profiler("call", &profile_frame, Value::Null) } else { Ok(()) } { Err(fault) }
+        else if matches!(self.trace_hook, Value::Null) {
             self.run_portion(&program, &mut locals, &program.instrs, (0, program.instrs.len()), Some(&mut kept))
-        } else { self.trace_event("call", Value::Null).and_then(|()|
+        } else { self.trace_event_named("call", if kept.hurled.is_some() { "throw" } else if first_run { "start" } else { "resume" }, Value::Null, None).and_then(|()|
             self.run_portion(&program, &mut locals, &program.instrs, (0, program.instrs.len()), Some(&mut kept))) };
         let result = if matches!(self.trace_hook, Value::Null) { result } else {
             let leaving = if result.is_ok() { kept.handed.clone().unwrap_or_else(|| self.data.last().cloned().unwrap_or(Value::Null)) } else { Value::Null };
-            match self.trace_event("return", leaving) {
+            match self.trace_event_named("return", if result.is_ok() && kept.handed.is_some() { "yield" } else { "return" }, leaving, None) {
                 Ok(()) => result,
                 Err(Fault::Thrown(value)) if result.is_ok() && kept.handed.is_some() => {
                     // A failed yield callback raises at the yield expression. The
@@ -6865,6 +6914,14 @@ impl<'a> Engine<'a> {
                     Err(fault)
                 }
         } };
+        let result = if !profiled { result } else {
+            // A yield hands its item; the body's end hands what it returned, still on its stack.
+            let given = if result.is_ok() { kept.handed.clone().unwrap_or_else(|| self.data.last().cloned().unwrap_or(Value::Null)) } else { Value::Null };
+            match self.tell_profiler("return", &profile_frame, given) {
+                Err(fault) if result.is_ok() => Err(fault),
+                _ => result,
+            }
+        };
         if let Err(Fault::Thrown(value)) = &result { self.record_trace(value, &program); }
         kept.suspended_position = self.location;
         self.running_routine = previous_routine;
@@ -6908,6 +6965,15 @@ impl<'a> Engine<'a> {
             kept.resume.clear();
             kept.held.clear();
         }
+        // A body that ends by returning a value ends in the exhaustion carrying it,
+        // which the caller's tracer is told of as raised in the caller's frame.
+        if looped && result.is_ok() && kept.closed && !matches!(kept.returned, Value::Null) && !matches!(self.trace_hook, Value::Null) {
+            let word = self.lang.special_stop.first().cloned();
+            if let Some(Value::Class(class)) = word.and_then(|name| self.native_exceptions.get(&name).cloned()) {
+                let instance = self.exception_instance(class.clone(), vec![kept.returned.clone()], Value::Null);
+                self.trace_event_named("exception", "stop_iteration", Value::tuple(vec![Value::Class(class), instance.clone(), Value::Null]), Some(instance))?;
+            }
+        }
         result?;
         Ok(kept.handed.take())
     }
@@ -6941,8 +7007,37 @@ impl<'a> Engine<'a> {
         Value::Adapter(handle)
     }
 
+    /// Whether the routine running is one of the runtime's own stand-ins for
+    /// a built-in module (sys, the import machinery ...): in the reference
+    /// these are native, so a tracer never sees their frames.
+    fn running_in_native_stand_in(&self) -> bool {
+        Self::stand_in_routine(self.running_routine.as_ref())
+    }
+
+    fn stand_in_routine(routine: Option<&Rc<Routine>>) -> bool {
+        let Some(file) = routine.and_then(|routine| routine.written_in.as_deref()) else { return false };
+        if file == "<native _io>" { return true; }
+        let Some((home, name)) = file.rsplit_once('/') else { return false };
+        home.ends_with("lib_python/modules")
+            && ["sys", "builtins", "_io", "posix", "_imp", "_thread", "_weakref", "marshal", "_warnings", "_runtime_import", "_zipimport_path"]
+                .iter().any(|stand_in| name.strip_suffix(".py") == Some(stand_in))
+    }
+
     fn trace_event(&mut self, event: &str, argument: Value) -> Flow<()> {
-        if self.in_trace_hook || matches!(self.trace_hook, Value::Null) { return Ok(()); }
+        self.trace_event_named(event, event, argument, None)
+    }
+
+    /// Whatever went away during the body is seen to before the body's return is told of.
+    fn settle_gone(&mut self) {
+        if crate::faint::pending() && !self.profiling.get() && !self.in_trace_hook { self.settle_departed(); }
+    }
+
+    /// Tell the program's tracer of an event, and the monitoring routine of it
+    /// under the name monitoring knows it by, with `monitored` standing for the
+    /// argument where that is another value than the tracer's.
+    fn trace_event_named(&mut self, event: &str, named: &str, argument: Value, monitored: Option<Value>) -> Flow<()> {
+        if self.in_trace_hook || matches!(self.trace_hook, Value::Null) || self.running_in_native_stand_in() { return Ok(()); }
+        self.plant_step();
         let Some(frame) = self.trace_frame.clone() else { return Ok(()) };
         if event == "line" {
             frame.fields.borrow_mut().retain(|(key, value)| key != "\0traced_exception" || self.caught.iter().any(|held| held.same_place(value)));
@@ -6950,14 +7045,23 @@ impl<'a> Engine<'a> {
         if event == "exception" {
             if let Value::Tuple(parts) = &argument { frame.fields.borrow_mut().push(("\0traced_exception".into(), parts[1].clone())); }
         }
+        if !matches!(self.monitor_hook, Value::Null) && (named != "instruction" || self.monitor_instructions) {
+            self.tell_monitor(named, &frame, monitored.unwrap_or_else(|| argument.clone()))?;
+        }
+        // With only monitoring on, the trace hook is a mere marker: no tracer is called.
+        if matches!(self.trace_hook, Value::Flag(_)) { return Ok(()); }
         if event == "line" && frame.fields.borrow().iter().any(|(key, value)| key == "f_trace_lines" && matches!(value, Value::Flag(false))) { return Ok(()); }
+        if event == "opcode" && !frame.fields.borrow().iter().any(|(key, value)| key == "f_trace_opcodes" && matches!(value, Value::Flag(true))) { return Ok(()); }
         let callback = if event == "call" { self.trace_hook.clone() } else {
             frame.fields.borrow().iter().find(|(key, _)| key == "f_trace").map(|(_, value)| value.clone()).unwrap_or(Value::Null)
         };
         if matches!(callback, Value::Null) { return Ok(()); }
         let location = (self.line, self.location);
         self.in_trace_hook = true;
+        let aside = crate::faint::set_aside_walks();
         let result = self.call_held(callback, vec![Value::Object(frame.clone()), Value::text(event), argument]);
+        if crate::faint::pending() { self.settle_departed(); }
+        crate::faint::restore_walks(aside);
         self.in_trace_hook = false;
         (self.line, self.location) = location;
         match result {
@@ -6968,12 +7072,36 @@ impl<'a> Engine<'a> {
                 Ok(())
             }
             Err(message) => {
-                self.trace_hook = Value::Null;
+                self.trace_hook = if matches!(self.monitor_hook, Value::Null) { Value::Null } else { Value::Flag(true) };
                 if let Some((_, callback)) = frame.fields.borrow_mut().iter_mut().find(|(key, _)| key == "f_trace") { *callback = Value::Null; }
                 let failure = self.carried.take().unwrap_or(Fault::Note(message));
                 let failure = self.raised_of_note::<()>(Err(failure)).expect_err("trace callback failed");
                 if event == "exception" { self.trace_outside_body(&failure); }
                 Err(failure)
+            }
+        }
+    }
+
+    /// Hand a monitoring event to the routine sys.monitoring put in the way: the
+    /// frame, the event's name and what it carries. A routine that fails is let
+    /// go of no more than the failure it raises: that goes on up to the program.
+    fn tell_monitor(&mut self, name: &str, frame: &Keep, argument: Value) -> Flow<()> {
+        self.plant_step();
+        let hook = self.monitor_hook.clone();
+        let location = (self.line, self.location);
+        self.in_trace_hook = true;
+        let aside = crate::faint::set_aside_walks();
+        let offset = Self::frame_instruction(frame).max(0).saturating_mul(2);
+        let result = self.call_held(hook, vec![Value::Object(frame.clone()), Value::text(name), argument, Value::Small(offset)]);
+        if crate::faint::pending() { self.settle_departed(); }
+        crate::faint::restore_walks(aside);
+        self.in_trace_hook = false;
+        (self.line, self.location) = location;
+        match result {
+            Ok(_) => Ok(()),
+            Err(message) => {
+                let failure = self.carried.take().unwrap_or(Fault::Note(message));
+                Err(self.raised_of_note::<()>(Err(failure)).expect_err("monitoring callback failed"))
             }
         }
     }
@@ -7478,7 +7606,8 @@ impl<'a> Engine<'a> {
         // A routine marked native has no frame of its own on the Python
         // frame chain: its own link is the caller's frame, and a child
         // reaches past it the same way, as a walk past a C routine does.
-        let hidden = self.native_frame_routines.contains(&(Rc::as_ptr(program) as usize));
+        let hidden = program.written_in.as_deref() == Some("<native _io>")
+            || self.native_frame_routines.contains(&(Rc::as_ptr(program) as usize));
         let back = match back {
             Some(parent) if parent.fields.borrow().get(9).is_some_and(|(word, held)| word == "\0native" && matches!(held, Value::Flag(true))) => {
                 match parent.fields.borrow()[2].1.clone() { Value::Object(grand) => Some(grand), _ => None }
@@ -7503,6 +7632,7 @@ impl<'a> Engine<'a> {
         if !matches!(self.trace_hook, Value::Null) {
             fields.push(("f_trace".into(), Value::Null));
             fields.push(("f_trace_lines".into(), Value::Flag(true)));
+            fields.push(("f_trace_opcodes".into(), Value::Flag(false)));
         }
         Some(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class, mark: self.made, fields: RefCell::new(fields) }))
     }
@@ -7553,6 +7683,18 @@ impl<'a> Engine<'a> {
                 }
                 if body.lineless { return Some(Value::Null); }
             }
+        }
+        if index == 11 {
+            // A caller that is one of the runtime's own stand-ins for a native routine
+            // is no frame the reference would show: the frame behind it is the caller.
+            let mut back = object.fields.borrow()[2].1.clone();
+            while let Value::Object(caller) = &back {
+                let hidden = matches!(&caller.fields.borrow()[6].1, Value::Routine(body) if Self::stand_in_routine(Some(body)));
+                if !hidden { break; }
+                let behind = caller.fields.borrow()[2].1.clone();
+                back = behind;
+            }
+            return Some(back);
         }
         if index != 12 { return None; }
         // A fresh proxy for every read, as the reference makes one: a
@@ -7811,6 +7953,9 @@ impl<'a> Engine<'a> {
             // The running index stays beside the frame. Copying it into
             // the frame on every word dominated straight-line code.
             self.step_at = pc as i64;
+            if (self.opcode_events || self.monitor_instructions) && !matches!(self.trace_hook, Value::Null) && !matches!(instrs[pc], Instr::Line(_)) {
+                self.trace_event_named("opcode", "instruction", Value::Null, None)?;
+            }
             match &instrs[pc] {
                 Instr::Const(Value::Routine(program)) if self.lang.closes_over && (!self.lang.class_special.is_empty() || !program.enclosing.is_empty() || program.annotation.is_some()) => {
                     let mut closed = (**program).clone();
@@ -8263,7 +8408,8 @@ impl<'a> Engine<'a> {
                     self.line = *row;
                     // Whatever went away during the last statement is seen
                     // to between statements, never in the middle of one.
-                    if crate::faint::pending() {
+                    // (Not while a tracer or profiler is being told: what went away waits.)
+                    if crate::faint::pending() && !self.profiling.get() && !self.in_trace_hook {
                         self.settle_departed();
                     }
                     if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(*row as i64); }
@@ -14724,7 +14870,8 @@ impl<'a> Engine<'a> {
 
         let result = match op {
             Action::Invoke(name) => {
-                self.call_site.set(true);
+                // Argument expansion is interpreter work, before the native invocation begins.
+                self.call_site.set(false);
                 let top = self.drop_top()?;
                 let callee = self.what_it_spells(top.contents());
                 return match callee {
@@ -14785,14 +14932,16 @@ impl<'a> Engine<'a> {
                         self.perform(&Action::Invoke(name.clone()), count)
                     }
                     Value::TextMethod(subject, op, called) => {
+                        let callable = Value::TextMethod(subject.clone(), op, called.clone());
                         let mut args = self.drop_many(argc - 1)?;
                         if op != crate::strings::TextOp::Maketrans { args.insert(0, Value::Text(subject)); }
                         let answer = if self.profiler.borrow().is_none() && self.lang.bind_names && !args.iter().any(|value| matches!(value, Value::Tie(_))) {
+                            self.call_site.set(true);
                             self.builtin(Builtin::Text(op), &called, &mut args)?
                         } else {
                             let opened = self.expanded_call_items(args)?;
                             self.call_site.set(true);
-                            self.builtin_call_expanded(Builtin::Text(op), &called, opened)?
+                            self.native_call_items(callable, opened, |this, named| this.builtin_call_inner(Builtin::Text(op), &called, named))?
                         };
                         self.data.push(answer);
                         Ok(())
@@ -14814,8 +14963,10 @@ impl<'a> Engine<'a> {
                     // over the row's members and not the row.
                     Value::Adapter(w) => {
                         let args = self.drop_many(argc - 1)?;
-                        let opened = self.expanded_call_items(args)?.into_iter()
-                            .map(|(key, value)| match key { Some(word) => Value::Tie(Rc::new((word, value))), None => value }).collect();
+                        let opened = if matches!(w.0, 3 | 131) { args } else {
+                            self.expanded_call_items(args)?.into_iter()
+                            .map(|(key, value)| match key { Some(word) => Value::Tie(Rc::new((word, value))), None => value }).collect()
+                        };
                         let v = self.class_apply(Value::Adapter(w), opened)?;
                         self.data.push(v);
                         Ok(())
@@ -14887,6 +15038,7 @@ impl<'a> Engine<'a> {
                     Value::Text(word) if !self.lang.core_words.contains_key("core.uncallable") => match self.lang.builtins.get(word.as_ref()).copied() {
                         Some(native) => {
                             let mut given = self.drop_many(argc - 1)?;
+                            self.call_site.set(true);
                             let outcome = self.builtin(native, &word, &mut given);
                             let held = match self.carried.take() {
                                 Some(fled) => return Err(fled),
@@ -17140,7 +17292,10 @@ impl<'a> Engine<'a> {
             => {
                 let pair = self.drop_many(2)?;
                 if let Value::Generator(held) = &pair[0] {
-                    let item = self.resume_generator(held, Value::Null)?;
+                    self.looping = true;
+                    let item = self.resume_generator(held, Value::Null);
+                    self.looping = false;
+                    let item = item?;
                     let more = item.is_some();
                     held.borrow_mut().current = item;
                     self.data.push(Value::Flag(more));
@@ -17362,6 +17517,7 @@ impl<'a> Engine<'a> {
                     return Ok(());
                 }
                 let result = if self.lang.bind_names {
+                    self.call_site.set(false);
                     let items = self.call_items_named(name, std::mem::take(&mut args))?;
                     self.call_site.set(true);
                     self.builtin_call_expanded(*builtin, name, items)
@@ -20978,7 +21134,7 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin_call(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {
-        if !self.call_site.replace(false) || self.profiler.borrow().is_none() || self.profiling.get() || self.native_open.get() {
+        if !self.call_site.replace(false) || self.natives_unwatched() || self.profiling.get() || self.native_open.get() {
             return self.builtin_call_inner(builtin, name, items);
         }
         let mut keywords = std::collections::HashSet::new();
@@ -21275,7 +21431,7 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
-        if !self.call_site.replace(false) || self.profiler.borrow().is_none() || self.profiling.get() || self.native_open.get() || operation.starts_with("__") {
+        if !self.call_site.replace(false) || self.natives_unwatched() || self.profiling.get() || self.native_open.get() || operation.starts_with("__") {
             return self.value_method_inner(receiver, operation, args, named);
         }
         for (index, (key, _)) in named.iter().enumerate() {
@@ -26081,7 +26237,7 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
-        if !self.call_site.replace(false) || self.profiler.borrow().is_none() || self.profiling.get() || self.native_open.get() {
+        if !self.call_site.replace(false) || self.natives_unwatched() || self.profiling.get() || self.native_open.get() {
             return self.builtin_inner(builtin, name, args);
         }
         let callable = Value::Native(builtin, Rc::from(name));
@@ -26090,17 +26246,29 @@ impl<'a> Engine<'a> {
 
     /// Tells the routine put in the way of calls that a builtin is
     /// entered and left, with the builtin itself, around the work.
+    /// Whether neither the profiler nor monitoring wants to hear of builtins.
+    fn natives_unwatched(&self) -> bool {
+        self.profiler.borrow().is_none() && matches!(self.monitor_hook, Value::Null)
+    }
+
     fn around_native(&mut self, callable: Value, work: impl FnOnce(&mut Self) -> Res<Value>) -> Res<Value> {
         let seen = self.trace_frame.clone();
         self.native_open.set(true);
-        let entered = self.tell_profiler("c_call", &seen, callable.clone());
+        let mut entered = self.tell_profiler("c_call", &seen, callable.clone());
+        let monitored = !matches!(self.monitor_hook, Value::Null) && !self.in_trace_hook && !self.running_in_native_stand_in();
+        if entered.is_ok() && monitored {
+            if let Some(frame) = &seen { entered = self.tell_monitor("call", frame, Value::tuple(vec![callable.clone()])); }
+        }
         let answer = match entered {
             Ok(()) => work(self),
             Err(fault) => { self.carried = Some(fault); Err(String::new()) }
         };
         self.native_open.set(false);
         let word = if answer.is_ok() { "c_return" } else { "c_exception" };
-        let left = self.tell_profiler(word, &seen, callable);
+        let mut left = self.tell_profiler(word, &seen, callable.clone());
+        if left.is_ok() && monitored {
+            if let Some(frame) = &seen { left = self.tell_monitor(if answer.is_ok() { "c_return" } else { "c_raise" }, frame, Value::tuple(vec![callable])); }
+        }
         match (answer, left) {
             (Ok(_), Err(fault)) => { self.carried = Some(fault); Err(String::new()) }
             (answer, _) => answer,
@@ -28745,10 +28913,10 @@ impl<'a> Engine<'a> {
                             let mut kept = self.beside.borrow_mut();
                             if let Some(beside) = kept.get_mut(&which) {
                                 let capture = if stream == 0 { &mut beside.out_capture } else { &mut beside.err_capture };
-                                if let Some(reader) = capture.take() {
+                                if let Some((reader, bytes)) = capture.take() {
                                     piped = true;
                                     match reader.join() {
-                                        Ok(Ok(bytes)) => all = bytes,
+                                        Ok(Ok(())) => match bytes.lock() { Ok(mut bytes) => all = std::mem::take(&mut *bytes), Err(_) => broken = true },
                                         _ => broken = true,
                                     }
                                 } else {
@@ -28836,6 +29004,21 @@ impl<'a> Engine<'a> {
                             if let Some(pipe) = process.err_pipe.take() { process.err_capture = Some(capture_pipe(pipe)); }
                             Value::Flag(true)
                         } else { Value::Flag(false) }
+                    }
+                    9 => {
+                        arity(2)?;
+                        let which = as_index(&args[1])? as i64;
+                        let mut ready = Vec::new();
+                        if let Some(process) = self.beside.borrow().get(&which) {
+                            for capture in [&process.out_capture, &process.err_capture] {
+                                let bytes = match capture {
+                                    Some((_, bytes)) => std::mem::take(&mut *bytes.lock().map_err(|_| "OSError: capture lock poisoned")?),
+                                    None => Vec::new(),
+                                };
+                                ready.push(self.byte_make(bytes, false));
+                            }
+                        } else { return Err("OSError: Bad file descriptor".into()); }
+                        Value::tuple(ready)
                     }
                     _ => return Err(format!("{}() unknown step {}", name, step)),
                 }
@@ -31570,12 +31753,21 @@ fn text_width(s: &str, as_bytes: bool) -> usize {
 /// a list keeps them plainly, a thing of keys and worths keeps them
 /// under their keys, and a cell that names share is looked through.
 /// Read a captured stream concurrently so a full pipe cannot stall the child.
-fn capture_pipe<R: std::io::Read + Send + 'static>(mut pipe: R) -> std::thread::JoinHandle<std::io::Result<Vec<u8>>> {
-    std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        pipe.read_to_end(&mut bytes)?;
-        Ok(bytes)
-    })
+fn capture_pipe<R: std::io::Read + Send + 'static>(mut pipe: R) -> (std::thread::JoinHandle<std::io::Result<()>>, std::sync::Arc<std::sync::Mutex<Vec<u8>>>) {
+    let bytes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let output = bytes.clone();
+    let worker = std::thread::spawn(move || {
+        let mut chunk = [0u8; 8192];
+        loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) => return Ok(()),
+                Ok(n) => output.lock().map_err(|_| std::io::Error::other("capture lock poisoned"))?.extend_from_slice(&chunk[..n]),
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            }
+        }
+    });
+    (worker, bytes)
 }
 
 /// Empty a pipe of everything it has to say, into `all`. `piped` says
@@ -33533,8 +33725,22 @@ impl Engine<'_> {
                 arity(1, 2)?;
                 if self.lang.trace_native.is_empty() { return Err(self.core_fault("core.unready", name)); }
                 match args[0] {
-                    Value::Small(0) => self.trace_hook.clone(),
-                    Value::Small(1) if args.len() == 2 => { self.trace_hook = args[1].clone(); Value::Null },
+                    Value::Small(0) => if matches!(self.trace_hook, Value::Flag(_)) { Value::Null } else { self.trace_hook.clone() },
+                    Value::Small(1) if args.len() == 2 => {
+                        self.trace_hook = if matches!(args[1], Value::Null) && !matches!(self.monitor_hook, Value::Null) { Value::Flag(true) } else { args[1].clone() };
+                        Value::Null
+                    },
+                    Value::Small(13) if args.len() == 2 => {
+                        self.monitor_hook = args[1].clone();
+                        if matches!(self.monitor_hook, Value::Null) {
+                            self.monitor_instructions = false;
+                            if matches!(self.trace_hook, Value::Flag(_)) { self.trace_hook = Value::Null; }
+                        } else if matches!(self.trace_hook, Value::Null) {
+                            self.trace_hook = Value::Flag(true);
+                        }
+                        Value::Null
+                    },
+                    Value::Small(14) if args.len() == 2 => { self.monitor_instructions = args[1].is_true(); Value::Null },
                     Value::Small(2) if args.len() == 2 => self.inspect_instructions(&args[1])?,
                     Value::Small(3) => Value::Small(self.coroutine_depth as i64),
                     Value::Small(4) if args.len() == 2 => {

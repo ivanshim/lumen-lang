@@ -46,3 +46,16 @@ def _setup(sys_module, _imp_module):
     _blocking_on = _WeakValueDictionary()
     if _imp._NativeFinder not in sys.meta_path:
         sys.meta_path.append(_imp._NativeFinder)
+    # The reference's own importers for builtin and frozen modules.
+    for importer in (BuiltinImporter, FrozenImporter):
+        if importer not in sys.meta_path:
+            sys.meta_path.append(importer)
+
+
+
+# The reference defines the importers in its frozen module _frozen_importlib,
+# and what is defined there carries that module's name.
+for _name, _value in list(globals().items()):
+    if getattr(_value, '__module__', None) == __name__ and isinstance(_value, (type, type(_setup))):
+        _value.__module__ = '_frozen_importlib'
+del _name, _value

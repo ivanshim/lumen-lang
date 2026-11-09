@@ -2499,7 +2499,8 @@ impl<'a> Machine<'a> {
             if let Some(fault) = self.symbolic_access(&f) { return Err(fault.into()); }
             if matches!(f, Value::Shared(_)) { f = self.what_it_spells(f); }
             match f {
-                Value::Wrapped(3 | 132, kept) => {
+                Value::Wrapped(3 | 132, kept) if self.watcher.borrow().is_none()
+                    && !values.iter().any(|value| matches!(value, Value::Couple(pair) if matches!(pair.0, Value::Flag(_)))) => {
                     values.insert(0, kept[1].clone());
                     if !self.rules.words_ext_stmt_class_builder.is_empty()
                         && matches!(kept[0].settled(), Value::Intrinsic(..) | Value::OctetKind { .. } | Value::Text(_))
@@ -3419,7 +3420,69 @@ impl<'a> Machine<'a> {
                             None => Err(self.core_complaint("core.exhausted", "").into()),
                         }
                     }
-                    3 | 132=>{values.insert(0,kept[1].clone());if !self.rules.words_ext_stmt_class_builder.is_empty() && matches!(kept[0].settled(), Value::Intrinsic(..) | Value::OctetKind { .. } | Value::Text(_)){self.apply_held(kept[0].clone(),values)}else{self.apply_class_member(kept[0].clone(),values)}},
+                    3 | 132 => {
+                        let routine = kept[0].settled();
+                        let method = tag == 132;
+                        let expanded = values.iter().any(|value| matches!(value, Value::Couple(pair) if matches!(pair.0, Value::Flag(_))));
+                        let intrinsic = matches!(&routine, Value::Intrinsic(..) | Value::Member(..) | Value::TextCall { .. })
+                            || matches!(&routine, Value::Wrapped(..) if routine.kind_word() == "builtin_function_or_method");
+                        let loose = matches!(&routine, Value::Wrapped(..) if matches!(routine.kind_word().as_str(), "method_descriptor" | "classmethod_descriptor"));
+                        let title = if !expanded { None } else { match &routine {
+                            Value::Intrinsic(_, word) => Some(word.to_string()),
+                            Value::Routine(body) | Value::Bound(body, _) => {
+                                let name = self.routine_called(body);
+                                Some(match self.routine_module(body).settled() {
+                                    Value::Text(module) if !module.is_empty() && &*module != "builtins" => format!("{module}.{name}"),
+                                    _ => name,
+                                })
+                            }
+                            _ if intrinsic || loose => {
+                                let field = self.detail("qualified").to_owned();
+                                Some(self.read_class_member(routine.clone(), &field, false)?.bare())
+                            }
+                            _ => None,
+                        } };
+                        let (mut passed, keywords) = if self.wrapper_takes_raw_keys(&Value::Wrapped(tag, kept.clone())) {
+                            (values, Vec::new())
+                        } else { match title {
+                            Some(name) => self.open_arguments_shown(values, &format!("{name}() "))?,
+                            None => self.open_arguments(values)?,
+                        } };
+                        passed.extend(keywords.into_iter().map(|(key, value)| Value::Couple(Rc::new((Value::text(&key), value)))));
+                        let watching = self.watcher.borrow().is_some() && !self.watching_now.get() && !self.natives_told.get();
+                        if !method && (intrinsic || loose) && watching {
+                            let callable = Value::Wrapped(tag, kept.clone());
+                            let target = Form::Const(callable.clone());
+                            let arguments = passed.into_iter().map(Form::Const).collect::<Vec<_>>();
+                            let scope = self.outermost.clone();
+                            return self.call_told(callable, &target, &arguments, &scope);
+                        }
+                        let callable = if method && loose && !expanded && watching {
+                            let field = self.detail("descriptor.get").to_owned();
+                            let getter = self.read_class_member(routine.clone(), &field, false)?;
+                            let bind = if routine.kind_word() == "classmethod_descriptor" {
+                                vec![Value::Nil, kept[1].clone()]
+                            } else { vec![kept[1].clone()] };
+                            let before = self.natives_told.replace(true);
+                            let binding = self.apply_class_member(getter, bind);
+                            self.natives_told.set(before);
+                            binding?
+                        } else {
+                            passed.insert(0, kept[1].clone());
+                            routine
+                        };
+                        let already_told = self.natives_told.get();
+                        if method && expanded && (intrinsic || loose) { self.natives_told.set(true); }
+                        let answer = if !self.rules.words_ext_stmt_class_builder.is_empty()
+                            && matches!(kept[0].settled(), Value::Intrinsic(..) | Value::OctetKind { .. } | Value::Text(_))
+                        {
+                            self.apply_held(callable, passed)
+                        } else {
+                            self.apply_class_member(callable, passed)
+                        };
+                        self.natives_told.set(already_told);
+                        answer
+                    },
                     // An entry a native kind carries, standing loose:
                     // the first value handed to it is the one it works
                     // upon, the rest being what the entry itself takes.
@@ -3607,7 +3670,7 @@ impl<'a> Machine<'a> {
                             4 => Ok(items[0].clone()),
                             5 => {
                                 let owner = match supplied { Some(owner) => owner.clone(), None => self.apply_held(self.kind_builder_word(), vec![instance.clone()])? };
-                                Ok(Self::wrap(3, vec![items[0].clone(), owner]))
+                                Ok(Self::wrap(132, vec![items[0].clone(), owner]))
                             }
                             _ => Err(self.class_unready()),
                         }
@@ -3678,7 +3741,7 @@ impl<'a> Machine<'a> {
                     }
                     31 if matches!(values.len(),1|2)=>{
                         if matches!(&kept[0],Value::Wrapped(9,_)){return self.super_descriptor(kept[0].clone(),values[0].clone());}
-                        if matches!(&kept[0],Value::Method(..)) || matches!(&kept[0],Value::Wrapped(3,record) if matches!(&record[0],Value::Routine(_)|Value::Bound(..))) {
+                        if matches!(&kept[0],Value::Method(..) | Value::Wrapped(132, _)) || matches!(&kept[0],Value::Wrapped(3,record) if matches!(&record[0],Value::Routine(_)|Value::Bound(..))) {
                             let no_owner=values.get(1).map_or(true,|owner|matches!(owner.settled(),Value::Nil));
                             if no_owner && matches!(values[0].settled(),Value::Nil){return Err(String::from("TypeError: __get__(None, None) is invalid").into());}
                             return Ok(kept[0].clone());
@@ -3689,7 +3752,7 @@ impl<'a> Machine<'a> {
                                 if matches!(values[0].settled(),Value::Nil) && given.is_none(){return Err("TypeError: __get__(None, None) is invalid".to_owned().into());}
                                 if *kind==4 {return Ok(contents[0].clone());}
                                 let owner=if let Some(owner)=given {owner.clone()} else {self.class_from_type(vec![values[0].clone()])?};
-                                return Ok(Self::wrap(3,vec![contents[0].clone(),owner]));
+                                return Ok(Self::wrap(132,vec![contents[0].clone(),owner]));
                             }
                         }
                         let receiver=match &values[0]{Value::Nil=>None,other=>Some(other.clone())};
@@ -4529,7 +4592,7 @@ impl<'a> Machine<'a> {
             Value::Wrapped(48 | 133 | 136 | 60 | 120 | 123 | 124 | 125 | 127 | 155 | 156 | 157 | 158 | 240 | 241 | 242, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(133, _) => return Ok(entry),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
-            Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),self.visible_blueprint(owner)])),
+            Value::Wrapped(5,items)=>return Ok(Self::wrap(132,vec![items[0].clone(),self.visible_blueprint(owner)])),
             Value::Wrapped(205, layout) if receiver.is_some() => {
                 let target = receiver.unwrap();
                 self.check_getset_receiver(layout, &target)?;
@@ -6239,7 +6302,7 @@ impl<'a> Machine<'a> {
         if key == "__reduce__" {
             let parts = match &value {
                 Value::Method(code, receiver, _) => Some((Value::Routine(code.clone()), Value::Thing(receiver.clone()))),
-                Value::Wrapped(3, entries) if matches!(entries.first(), Some(Value::Routine(_) | Value::Bound(..) | Value::Intrinsic(Prim::Textual(_), _))) => Some((entries[0].clone(), entries[1].clone())),
+                Value::Wrapped(3 | 132, entries) if matches!(entries.first(), Some(Value::Routine(_) | Value::Bound(..) | Value::Intrinsic(Prim::Textual(_), _))) => Some((entries[0].clone(), entries[1].clone())),
                 _ => None,
             };
             if let Some((function, receiver)) = parts {
@@ -6249,7 +6312,7 @@ impl<'a> Machine<'a> {
             }
         }
         if key == self.detail("allocate") && matches!(&value, Value::Intrinsic(op, _) if !Self::names_a_kind(op)) { return Ok(self.common_allocation()); }
-        if key == "__reduce_ex__" && matches!(&value, Value::Intrinsic(working, _) if !Self::names_a_kind(working)) || key == "__reduce_ex__" && matches!(&value, Value::Member(..) | Value::TextCall { .. } | Value::Method(..) | Value::Wrapped(3, _)) {
+        if key == "__reduce_ex__" && matches!(&value, Value::Intrinsic(working, _) if !Self::names_a_kind(working)) || key == "__reduce_ex__" && matches!(&value, Value::Member(..) | Value::TextCall { .. } | Value::Method(..) | Value::Wrapped(3 | 132, _)) {
             return Ok(Value::Member(Rc::new(value), "callable_reduce_ex".into()));
         }
         let raw_descriptor = matches!(&value, Value::Wrapped(4 | 5, _)) || matches!(&value, Value::Wrapped(60, parts) if parts.len() == 3);
@@ -7456,7 +7519,7 @@ impl<'a> Machine<'a> {
             // a function is bound this way, and its name, its full name
             // and what it says of itself are the function's.
             if matches!(*tag, 3 | 132) {
-                if *tag==3 && key==self.detail("descriptor.get") && matches!(&items[0],Value::Routine(_)|Value::Bound(..)){return Ok(Self::wrap(31,vec![value.clone()]));}
+                if key==self.detail("descriptor.get") && (*tag == 132 || *tag == 3 && matches!(&items[0],Value::Routine(_)|Value::Bound(..))){return Ok(Self::wrap(31,vec![value.clone()]));}
                 if *tag == 3 && key == self.detail("kind") { return Ok(self.kind_named_after(&value)); }
                 if key==self.detail("receiver"){return Ok(items[1].clone());}
                 if key==self.detail("function"){return Ok(items[0].clone());}
@@ -7703,6 +7766,7 @@ impl<'a> Machine<'a> {
             Value::Shared(_) | Value::Mutable(_, _) if matches!(subject.settled(), Value::Blueprint(_) | Value::Thing(_)) => subject.settled(),
             _ => subject,
         };
+        if key == "f_trace_opcodes" && replacement.as_ref().is_some_and(|held| held.settled().is_true()) { self.step_events = true; }
         let is_namespace = self.namespace_holding(&subject).is_some();
         if is_namespace { self.revised_members.borrow_mut().clear(); }
         let replacement = if is_namespace {
@@ -8281,7 +8345,12 @@ impl<'a> Machine<'a> {
                     let evaluator = self.rules.words_ext_stmt_class_detail_code_fields.get(10).cloned().unwrap_or_default();
                     Self::change_entry(&mut b.shared.borrow_mut(), &evaluator, Some(Value::Nil));
                 }
-                Self::change_entry(&mut b.shared.borrow_mut(),key,replacement)
+                // Whatever this write displaces is released after the borrow ends: a
+                // finalizer run by its release may look the class up again.
+                let leaving = b.shared.borrow().iter().find(|entry| entry.0 == key).map(|entry| entry.1.clone());
+                let changed = Self::change_entry(&mut b.shared.borrow_mut(),key,replacement);
+                drop(leaving);
+                changed
             },
             Value::Routine(_)|Value::Bound(..)=>{
                 if key == self.detail("namespace") {

@@ -381,7 +381,7 @@ impl Value {
             // A routine bound to a value hashes by the routine and by
             // where the value lies, never by asking the value itself.
             Self::Wrapped(3, contents) if matches!(contents.first(), Some(Self::Wrapped(60, _) | Self::Intrinsic(..))) => Self::bound_owner_hash(contents.get(1)?)? ^ contents[0].hash_number()?,
-            Self::Wrapped(3, parts) if parts.len() == 2 => {
+            Self::Wrapped(3 | 132, parts) if parts.len() == 2 => {
                 let receiver = match &parts[1] {
                     Self::Thing(thing) => crate::data::Hold::as_ptr(thing) as usize / 16,
                     Self::Mutable(cell, _) | Self::Shared(cell) => std::rc::Rc::as_ptr(cell) as usize / 16,
