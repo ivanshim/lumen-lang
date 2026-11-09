@@ -89,6 +89,10 @@ static HOST_WATCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 
 // Keep a kernel thread number rather than a pointer to a pthread descriptor.
 static SIGNAL_OWNER: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+// A nonblocking descriptor that receives one byte per delivered signal.
+static WAKEUP_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static WAKEUP_WARN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static WAKEUP_ERROR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 // Forward signals without dereferencing a thread that may already have exited.
 extern "C" fn signal_arrived(number: i32) {
     unsafe {
@@ -99,6 +103,16 @@ extern "C" fn signal_arrived(number: i32) {
             libc::syscall(libc::SYS_tgkill, libc::getpid() as libc::c_long, owner as libc::c_long, number as libc::c_long);
         } else if (1..=64).contains(&number) {
             SIGNALS_PENDING.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+            let fd = WAKEUP_FD.load(std::sync::atomic::Ordering::Relaxed);
+            if fd >= 0 {
+                let byte = number as u8;
+                if libc::write(fd, (&byte as *const u8).cast(), 1) < 0 {
+                    let errno = *libc::__errno_location();
+                    if errno != libc::EAGAIN || WAKEUP_WARN.load(std::sync::atomic::Ordering::Relaxed) {
+                        WAKEUP_ERROR.store(errno, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            }
         }
         *libc::__errno_location() = saved;
     }
@@ -432,6 +446,8 @@ pub struct Engine<'a> {
     /// one keeps its own way. Only a language taking signals up between
     /// statements ever writes here.
     signal_handlers: HashMap<i64, Value>,
+    /// Reports a failed wakeup write once the signal is taken up.
+    wakeup_reporter: Option<Value>,
     /// The member last found absent, and the object it was sought on,
     /// for the attribute fault that tells of it.
     absent_member: Option<(String, Value)>,
@@ -750,6 +766,9 @@ impl Drop for Engine<'_> {
         SIGNAL_OWNER.store(0, std::sync::atomic::Ordering::Relaxed);
         HOST_WATCHING.store(false, std::sync::atomic::Ordering::Relaxed);
         SIGNALS_PENDING.store(0, std::sync::atomic::Ordering::Relaxed);
+        WAKEUP_FD.store(-1, std::sync::atomic::Ordering::Relaxed);
+        WAKEUP_ERROR.store(0, std::sync::atomic::Ordering::Relaxed);
+        WAKEUP_WARN.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -1911,6 +1930,7 @@ impl<'a> Engine<'a> {
             read_already: RefCell::new(std::collections::HashSet::new()),
             carried: None,
             signal_handlers: HashMap::new(),
+            wakeup_reporter: None,
             absent_member: None,
             absent_key: RefCell::new(None),
             complainer: RefCell::new(None),
@@ -20888,6 +20908,14 @@ impl<'a> Engine<'a> {
     /// waits for the next edge instead.
     fn deliver_signals(&mut self) -> Flow<()> {
         let pending = SIGNALS_PENDING.swap(0, std::sync::atomic::Ordering::Relaxed);
+        let errno = WAKEUP_ERROR.swap(0, std::sync::atomic::Ordering::Relaxed);
+        if errno != 0 {
+            if let Some(reporter) = self.wakeup_reporter.clone() {
+                if self.call_held(reporter, vec![Value::Small(i64::from(errno))]).is_err() {
+                    self.carried = None;
+                }
+            }
+        }
         if pending == 0 { return Ok(()); }
         let mut handled = 0u64;
         for number in 1..=64u32 {
@@ -28394,6 +28422,12 @@ impl<'a> Engine<'a> {
             => {
                 if args.is_empty() { return Err(format!("{}() expects at least 1 argument", name)); }
                 let step = as_index(&args[0])?;
+                if step == 5 || step == 6 {
+                    let caller = unsafe { libc::syscall(libc::SYS_gettid) } as i32;
+                    if caller != SIGNAL_OWNER.load(std::sync::atomic::Ordering::Relaxed) {
+                        return Err("ValueError: set_wakeup_fd only works in main thread of the main interpreter".to_string());
+                    }
+                }
                 match step {
                     0 => {
                         arity(3)?;
@@ -28419,7 +28453,7 @@ impl<'a> Engine<'a> {
                         arity(2)?;
                         let which = as_index(&args[1])?;
                         if (1..=64).contains(&which) {
-                            SIGNALS_PENDING.fetch_or(1u64 << (which - 1), std::sync::atomic::Ordering::Relaxed);
+                            unsafe { libc::raise(which as i32); }
                         }
                         Value::Null
                     }
@@ -28439,6 +28473,17 @@ impl<'a> Engine<'a> {
                             libc::pthread_sigmask(libc::SIG_SETMASK, &before, std::ptr::null_mut());
                         }
                         self.signal_checkpoint()?;
+                        Value::Null
+                    }
+                    5 => {
+                        arity(4)?;
+                        let fd = args[1].as_big()?.to_i32().ok_or("OverflowError: Python int too large to convert to C int")?;
+                        WAKEUP_WARN.store(as_index(&args[2])? != 0, std::sync::atomic::Ordering::Relaxed);
+                        self.wakeup_reporter = Some(args[3].clone());
+                        Value::Small(i64::from(WAKEUP_FD.swap(fd, std::sync::atomic::Ordering::Relaxed)))
+                    }
+                    6 => {
+                        arity(1)?;
                         Value::Null
                     }
                     _ => return Err(format!("{name}() knows no step {step}")),

@@ -98,6 +98,10 @@ pub(crate) static SIGNALS_DUE: std::sync::atomic::AtomicU64 = std::sync::atomic:
 static HOST_ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 static PYTHON_THREAD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+// Wakeup pipe, whether a full buffer is mentioned, and the deferred write error.
+static SIGNAL_WAKE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static WARN_WAKE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static WAKE_FAULT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 // Let the kernel validate the destination instead of retaining a pthread pointer.
 extern "C" fn note_signal(number: i32) {
     let errno_address = unsafe {libc::__errno_location()};
@@ -110,6 +114,17 @@ extern "C" fn note_signal(number: i32) {
         }
         _ if (1..=64).contains(&number) => {
             SIGNALS_DUE.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+            let pipe = SIGNAL_WAKE.load(std::sync::atomic::Ordering::Relaxed);
+            if pipe >= 0 {
+                let payload = [number as u8];
+                let wrote = unsafe { libc::write(pipe, payload.as_ptr().cast(), 1) };
+                if wrote < 0 {
+                    let code = unsafe { *errno_address };
+                    if code != libc::EAGAIN || WARN_WAKE.load(std::sync::atomic::Ordering::Relaxed) {
+                        WAKE_FAULT.store(code, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            }
         }
         _ => (),
     }
@@ -922,6 +937,8 @@ pub struct Machine<'a> {
     /// the mark for the signal's own way. A number never given one
     /// keeps its own way.
     signal_takers: Vec<(i64, Value)>,
+    /// Callable told about a wakeup write that did not complete.
+    wake_report: Option<Value>,
     /// Whether the run watches the edge between one statement and the
     /// next for signals left waiting (ext.builtin.signal).
     watches_signals: bool,
@@ -1124,6 +1141,9 @@ impl Drop for Machine<'_> {
             PYTHON_THREAD.swap(0, std::sync::atomic::Ordering::Relaxed);
             SIGNALS_DUE.store(0, std::sync::atomic::Ordering::Relaxed);
             HOST_ASKED.store(false, std::sync::atomic::Ordering::Relaxed);
+            SIGNAL_WAKE.store(-1, std::sync::atomic::Ordering::Relaxed);
+            WAKE_FAULT.store(0, std::sync::atomic::Ordering::Relaxed);
+            WARN_WAKE.store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }
@@ -2424,6 +2444,7 @@ impl<'a> Machine<'a> {
             ready_arguments: None,
             builds_places: table.flag("ext.op.index.makes"),
             signal_takers: Vec::new(),
+            wake_report: None,
             watches_signals: table.has_any("ext.builtin.signal"),
             names_in_calls: table.flag("ext.syntax.call.bind_names"),
             native_slot_names: if table.flag("ext.syntax.call.bind_names") {
@@ -14905,6 +14926,14 @@ impl<'a> Machine<'a> {
     /// whatever is still waiting then waits for the next edge instead.
     fn signals_due_now(&mut self) -> Res<()> {
         let due = SIGNALS_DUE.swap(0, std::sync::atomic::Ordering::Relaxed);
+        let fault = WAKE_FAULT.swap(0, std::sync::atomic::Ordering::Relaxed);
+        if fault != 0 {
+            if let Some(report) = self.wake_report.clone() {
+                if self.apply_held(report, vec![Value::Small(i64::from(fault))]).is_err() {
+                    self.got_away.take();
+                }
+            }
+        }
         if due == 0 { return Ok(()); }
         let mut left = due;
         while left != 0 {
@@ -29895,6 +29924,13 @@ impl<'a> Machine<'a> {
             => {
                 if v.is_empty() { return Err(format!("{}() wants a step first", name)); }
                 let step = as_index(&v[0])?;
+                if step == 5 || step == 6 {
+                    let owner = PYTHON_THREAD.load(std::sync::atomic::Ordering::Relaxed);
+                    let here = unsafe { libc::syscall(libc::SYS_gettid) } as i32;
+                    if here != owner {
+                        return Err(String::from("ValueError: set_wakeup_fd only works in main thread of the main interpreter"));
+                    }
+                }
                 match step {
                     0 => {
                         n(3)?;
@@ -29925,7 +29961,7 @@ impl<'a> Machine<'a> {
                         n(2)?;
                         let number = as_index(&v[1])?;
                         if (1..=64).contains(&number) {
-                            SIGNALS_DUE.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+                            unsafe { libc::raise(number as libc::c_int); }
                         }
                         Value::Nil
                     }
@@ -29945,6 +29981,18 @@ impl<'a> Machine<'a> {
                         }
                         unsafe { libc::pthread_sigmask(libc::SIG_SETMASK, &original, std::ptr::null_mut()); }
                         self.observe_host_interrupts()?;
+                        Value::Nil
+                    }
+                    5 => {
+                        n(4)?;
+                        let replacement = v[1].as_big()?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?;
+                        WARN_WAKE.store(as_index(&v[2])? != 0, std::sync::atomic::Ordering::Relaxed);
+                        self.wake_report = Some(v[3].clone());
+                        let previous = SIGNAL_WAKE.swap(replacement, std::sync::atomic::Ordering::Relaxed);
+                        Value::Small(i64::from(previous))
+                    }
+                    6 => {
+                        n(1)?;
                         Value::Nil
                     }
                     _ => return Err(format!("{name}() knows no step {step}")),

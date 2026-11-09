@@ -707,9 +707,15 @@ def unraisablehook(unraisable):
         print('Exception ignored in: ' + repr(unraisable.object), file=stderr)
     else:
         print(unraisable.err_msg, file=stderr)
-    import traceback
-    traceback.print_exception(unraisable.exc_type, unraisable.exc_value,
-                              unraisable.exc_traceback, file=stderr, chain=False)
+    # Finalization refuses a first import, and this hook is what shows
+    # an error raised from a finalizer.
+    try:
+        import traceback
+        traceback.print_exception(unraisable.exc_type, unraisable.exc_value,
+                                  unraisable.exc_traceback, file=stderr, chain=False)
+    except BaseException:
+        kind = getattr(unraisable.exc_type, '__name__', 'Exception')
+        stderr.write(kind + ': ' + str(unraisable.exc_value) + '\n')
 
 
 __unraisablehook__ = unraisablehook
@@ -729,7 +735,8 @@ __displayhook__ = displayhook
 
 
 def _report_unraisable(exc_value, exc_traceback, about, kind):
-    if exc_traceback is None:
+    # A failed native signal write has no Python traceback to invent.
+    if exc_traceback is None and kind != 'signal':
         try:
             raise exc_value
         except BaseException as raised:
@@ -742,9 +749,11 @@ def _report_unraisable(exc_value, exc_traceback, about, kind):
         message = 'Exception ignored while finalizing coroutine ' + repr(about)
     elif kind == 'generator':
         message = 'Exception ignored while closing generator ' + repr(about)
+    elif kind == 'signal':
+        message = 'Exception ignored while trying to write to the signal wakeup fd'
     else:
         message = None
-    target = None if kind in ('generator', 'coroutine', 'file') else about
+    target = None if kind in ('generator', 'coroutine', 'file', 'signal') else about
     try:
         unraisablehook(UnraisableHookArgs(type(exc_value), exc_value,
                                          exc_traceback, message, target))

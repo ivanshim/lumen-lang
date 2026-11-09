@@ -76,3 +76,11 @@ class RLock:
         return False
 
 error = RuntimeError
+
+def interrupt_main(signum=2, /):
+    # Finalizers run after imports have been closed, so the flag is read
+    # from the program namespace rather than through sys.
+    if __program_namespace()['__program_finalizing']:
+        raise OSError('Signal %s ignored due to race condition' % signum)
+    from posix import _cint
+    __signal(2, _cint(signum))
