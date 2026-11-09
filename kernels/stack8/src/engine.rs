@@ -38646,6 +38646,9 @@ fn host_civil_clock(task: &str, args: &[Value]) -> Option<Result<Value, String>>
     if task == "zone" {
         return Some(civil_zone(args));
     }
+    if task == "mktime" {
+        return Some(civil_mktime(args));
+    }
     if task == "picture" {
         return Some(civil_picture(args));
     }
@@ -38699,24 +38702,71 @@ fn civil_locale(args: &[Value]) -> Result<Value, String> {
     Ok(Value::text(&found))
 }
 
+#[repr(C)]
+struct CivilWhen {
+    sec: i32,
+    min: i32,
+    hour: i32,
+    mday: i32,
+    mon: i32,
+    year: i32,
+    wday: i32,
+    yday: i32,
+    isdst: i32,
+    gmtoff: i64,
+    zone: *const std::ffi::c_char,
+}
+
+extern "C" {
+    fn mktime(when: *mut CivilWhen) -> i64;
+}
+
+fn civil_mktime(args: &[Value]) -> Result<Value, String> {
+    let [_, Value::Tuple(fields)] = args else {
+        return Err("TypeError: Tuple or struct_time argument required".to_string());
+    };
+    if fields.len() != 9 {
+        return Err("TypeError: mktime(): illegal time tuple argument".to_string());
+    }
+    let mut parts = [0i32; 9];
+    for (slot, item) in fields.iter().enumerate() {
+        let wide = match item {
+            Value::Small(number) => *number,
+            Value::Huge(big) => big.to_i64().ok_or_else(|| "OverflowError: Python int too large to convert to C long".to_string())?,
+            _ => return Err("TypeError: an integer is required".to_string()),
+        };
+        if wide > i64::from(i32::MAX) {
+            return Err("OverflowError: signed integer is greater than maximum".to_string());
+        }
+        if wide < i64::from(i32::MIN) {
+            return Err("OverflowError: signed integer is less than minimum".to_string());
+        }
+        parts[slot] = wide as i32;
+    }
+    let Some(year) = parts[0].checked_sub(1900) else {
+        return Err("OverflowError: year out of range".to_string());
+    };
+    let mut when = CivilWhen {
+        sec: parts[5],
+        min: parts[4],
+        hour: parts[3],
+        mday: parts[2],
+        mon: parts[1].wrapping_sub(1),
+        year,
+        wday: -1,
+        yday: parts[7].wrapping_sub(1),
+        isdst: parts[8],
+        gmtoff: 0,
+        zone: std::ptr::null(),
+    };
+    let stamped = unsafe { mktime(&mut when) };
+    if stamped == -1 && when.wday == -1 {
+        return Err("OverflowError: mktime argument out of range".to_string());
+    }
+    Ok(Value::Small(stamped))
+}
+
 fn civil_zone_offsets(fallback: i64) -> (i64, i64) {
-    #[repr(C)]
-    struct CivilWhen {
-        sec: i32,
-        min: i32,
-        hour: i32,
-        mday: i32,
-        mon: i32,
-        year: i32,
-        wday: i32,
-        yday: i32,
-        isdst: i32,
-        gmtoff: i64,
-        zone: *const std::ffi::c_char,
-    }
-    extern "C" {
-        fn mktime(when: *mut CivilWhen) -> i64;
-    }
     let mut winter: Option<i64> = None;
     let mut summer: Option<i64> = None;
     for month in [0i32, 6] {

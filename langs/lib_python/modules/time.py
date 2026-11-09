@@ -172,12 +172,23 @@ def _break_down(seconds):
     return (year, month, day, int(hours), int(minutes), int(secs),
             weekday, day_of_year, 0)
 
+def _tm_int(value):
+    if isinstance(value, int):
+        return int.__index__(value)
+    index = getattr(type(value), '__index__', None)
+    if index is None:
+        raise TypeError("'" + type(value).__name__ + "' object cannot be interpreted as an integer")
+    res = index(value)
+    if not isinstance(res, int):
+        raise TypeError('__index__ returned non-int (type ' + type(res).__name__ + ')')
+    return int.__index__(res)
+
 def mktime(fields):
-    parts = list(fields)
-    if len(parts) != 9:
-        raise TypeError('mktime() requires a 9-sequence, not ' + type(fields).__name__)
-    days = _ymd2ord(parts[0], parts[1], parts[2]) - _EPOCH_ORD
-    return float(days * 86400 + parts[3] * 3600 + parts[4] * 60 + parts[5])
+    if not isinstance(fields, tuple):
+        raise TypeError('Tuple or struct_time argument required')
+    if len(fields) != 9:
+        raise TypeError('mktime(): illegal time tuple argument')
+    return float(_host_clock('mktime', tuple(_tm_int(part) for part in fields)))
 
 def _pair(number):
     word = str(number)

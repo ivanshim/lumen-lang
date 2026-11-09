@@ -41965,6 +41965,8 @@ fn serve_civil_request(word: &str, given: &[Value]) -> Option<Result<Value, Stri
         read_process_locale(given)
     } else if word == "zone" {
         publish_zone_figures(given)
+    } else if word == "mktime" {
+        assemble_local_stamp(given)
     } else if word == "picture" {
         paint_host_picture(given)
     } else if word == "conv" {
@@ -42028,16 +42030,72 @@ fn read_process_locale(given: &[Value]) -> Result<Value, String> {
     Ok(Value::text(&found))
 }
 
+#[repr(C)]
+struct BrokenDown {
+    parts: [i32; 9],
+    shift: i64,
+    label: *const std::ffi::c_char,
+}
+
+extern "C" {
+    fn mktime(when: *mut BrokenDown) -> i64;
+}
+
+fn assemble_local_stamp(given: &[Value]) -> Result<Value, String> {
+    if given.len() != 2 {
+        return Err(String::from("TypeError: mktime() takes exactly one argument"));
+    }
+    let Value::Tuple(items) = &given[1] else {
+        return Err(String::from("TypeError: Tuple or struct_time argument required"));
+    };
+    if items.len() != 9 {
+        return Err(String::from("TypeError: mktime(): illegal time tuple argument"));
+    }
+    let mut figures = [0i32; 9];
+    let mut index = 0usize;
+    while index < 9 {
+        let whole = match &items[index] {
+            Value::Small(number) => *number,
+            Value::Huge(big) => match big.to_i64() {
+                Some(number) => number,
+                None => return Err(String::from("OverflowError: Python int too large to convert to C long")),
+            },
+            _ => return Err(String::from("TypeError: an integer is required")),
+        };
+        figures[index] = match i32::try_from(whole) {
+            Ok(narrow) => narrow,
+            Err(_) if whole > 0 => return Err(String::from("OverflowError: signed integer is greater than maximum")),
+            Err(_) => return Err(String::from("OverflowError: signed integer is less than minimum")),
+        };
+        index += 1;
+    }
+    let year = match figures[0].checked_sub(1900) {
+        Some(adjusted) => adjusted,
+        None => return Err(String::from("OverflowError: year out of range")),
+    };
+    let mut calendar = BrokenDown {
+        parts: [
+            figures[5],
+            figures[4],
+            figures[3],
+            figures[2],
+            figures[1].wrapping_sub(1),
+            year,
+            -1,
+            figures[7].wrapping_sub(1),
+            figures[8],
+        ],
+        shift: 0,
+        label: std::ptr::null(),
+    };
+    let epoch_seconds = unsafe { mktime(&mut calendar) };
+    if epoch_seconds == -1 && calendar.parts[6] < 0 {
+        return Err(String::from("OverflowError: mktime argument out of range"));
+    }
+    Ok(Value::Small(epoch_seconds))
+}
+
 fn calendar_offsets(fallback: i64) -> (i64, i64) {
-    #[repr(C)]
-    struct BrokenDown {
-        parts: [i32; 9],
-        shift: i64,
-        label: *const std::ffi::c_char,
-    }
-    extern "C" {
-        fn mktime(when: *mut BrokenDown) -> i64;
-    }
     let mut winter = fallback;
     let mut summer: Option<i64> = None;
     let mut month = 0i32;
