@@ -38830,7 +38830,7 @@ impl<'a> Machine<'a> {
                 // it; a lone surrogate cannot be encoded, so the kind
                 // that names that fault answers here.
                 if let Err(Escape::Thrown(fault)) = self.reject_type_surrogates(&v[0]) {
-                    self.got_away = Some(Escape::Thrown(fault));
+                    self.act.got_away = Some(Escape::Thrown(fault));
                     return Err(String::new());
                 }
                 return Err(self.source_refused());

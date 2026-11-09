@@ -37794,7 +37794,7 @@ impl Engine<'_> {
                     let end = row[start..].iter().take_while(|point| (0xd800..=0xdfff).contains(*point)).count() + start;
                     if let Some(Value::Class(class)) = self.native_exceptions.get("UnicodeEncodeError").cloned() {
                         let raised = self.exception_instance(class, vec![Value::text("utf-8"), args[0].contents(), Value::Small(start as i64), Value::Small(end as i64), Value::text("surrogates not allowed")], Value::Null);
-                        self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
+                        self.chain_context(&raised); self.thread.carried = Some(Fault::Thrown(raised));
                         return Err(String::new());
                     }
                 }
