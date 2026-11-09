@@ -21162,23 +21162,40 @@ impl<'a> Engine<'a> {
             if routed {
                 let route = self.lang.print_route.clone();
                 if matches!(destination, Value::Null) {
-                    for value in &args {
-                        let held = value.contents();
-                        if matches!(held, Value::Codepoints(_)) { self.codec_library("_encode_surrogates", vec![held])?; }
-                    }
                     let module = self.route_module(&route[0])?;
                     destination = self.member_of(module, &route[1])?.unwrap_or(Value::Null);
-                    if matches!(destination, Value::Null) { return Ok(Value::Null); }
+                    if matches!(destination, Value::Null) {
+                        for value in &args { self.printed_surrogate_check(value)?; }
+                        return Ok(Value::Null);
+                    }
                 }
-                for value in &args { self.printed_surrogate_check(value)?; }
+                // io.StringIO stores characters. Its encoding is missing or
+                // None, so a surrogate has to reach write() intact. An
+                // encoded stream still refuses one, as utf-8 strict would.
+                let encoding_name = self.lang.print_stream_encoding.first().cloned();
+                let keeps_raw = if let Some(name) = encoding_name {
+                    args.iter().any(|value| matches!(value.contents(), Value::Codepoints(_)))
+                        && match self.member_of(destination.clone(), &name)? {
+                            None => true,
+                            Some(encoding) => matches!(encoding.contents(), Value::Null),
+                        }
+                } else { false };
+                if !keeps_raw {
+                    for value in &args { self.printed_surrogate_check(value)?; }
+                }
                 let writer = match self.member_of(destination.clone(), &route[2])? {
                     Some(writer) => writer,
                     None => return Err(self.member_amiss(&destination, &route[2])),
                 };
                 for (index, value) in args.iter().enumerate() {
                     if index > 0 { self.call_held(writer.clone(), vec![Value::text(&between)])?; }
-                    let text = self.special_text(value, false)?;
-                    self.call_held(writer.clone(), vec![Value::text(&text)])?;
+                    if keeps_raw {
+                        let text = self.string_conversion(value, false)?;
+                        self.call_held(writer.clone(), vec![text])?;
+                    } else {
+                        let rendered = self.special_text(value, false)?;
+                        self.call_held(writer.clone(), vec![Value::text(&rendered)])?;
+                    }
                 }
                 self.call_held(writer, vec![Value::text(&ending)])?;
                 if flushed {
