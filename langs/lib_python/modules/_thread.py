@@ -78,9 +78,13 @@ class RLock:
 error = RuntimeError
 
 def interrupt_main(signum=2, /):
-    # Finalizers run after imports have been closed, so the flag is read
-    # from the program namespace rather than through sys.
-    if __program_namespace()['__program_finalizing']:
-        raise OSError('Signal %s ignored due to race condition' % signum)
-    from posix import _cint
-    __signal(2, _cint(signum))
+    # An IntEnum unwraps through __index__. Finalizers cannot import,
+    # and the kernel checks the range before it schedules anything.
+    if type(signum) is not int:
+        convert = getattr(signum, '__index__', None)
+        if convert is None:
+            raise TypeError("'" + type(signum).__name__ + "' object cannot be interpreted as an integer")
+        signum = convert()
+        if type(signum) is not int:
+            raise TypeError("'" + type(signum).__name__ + "' object cannot be interpreted as an integer")
+    __signal(7, signum)

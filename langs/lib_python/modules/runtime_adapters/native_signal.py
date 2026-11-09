@@ -279,18 +279,18 @@ def valid_signals():
 def _wakeup_error(number):
     import os
     import sys
-    sys._report_unraisable(OSError(number, os.strerror(number)), None, None, 'signal')
+    sys._report_unraisable(OSError(number, os.strerror(number)), None,
+                           None, 'signal')
+
 
 def set_wakeup_fd(fd, /, *, warn_on_full_buffer=True):
     import os
     from posix import _cint
-    # Reject a background caller before the descriptor is checked, so a
-    # bad fd cannot hide the main-thread error, including fd -1.
-    __signal(6)
     fd = _cint(fd)
+    __signal(6)
     if fd != -1:
         if fd < 0:
             raise ValueError('invalid fd')
         if os.get_blocking(fd):
             raise ValueError('the fd %s must be in non-blocking mode' % fd)
-    return __signal(5, fd, 1 if warn_on_full_buffer else 0, _wakeup_error)
+    return __signal(5, fd, int(bool(warn_on_full_buffer)), _wakeup_error)

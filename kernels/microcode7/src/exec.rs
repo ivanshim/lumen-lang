@@ -98,11 +98,11 @@ pub(crate) static SIGNALS_DUE: std::sync::atomic::AtomicU64 = std::sync::atomic:
 static HOST_ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 static PYTHON_THREAD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-// Wakeup pipe, whether a full buffer is mentioned, and the deferred write error.
-static SIGNAL_WAKE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
-static WARN_WAKE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
-static WAKE_FAULT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 // Let the kernel validate the destination instead of retaining a pthread pointer.
+static SIGNAL_PIPE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static REPORT_FULL_PIPE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static PIPE_FAILURE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
 extern "C" fn note_signal(number: i32) {
     let errno_address = unsafe {libc::__errno_location()};
     let errno_before = unsafe {*errno_address};
@@ -114,14 +114,14 @@ extern "C" fn note_signal(number: i32) {
         }
         _ if (1..=64).contains(&number) => {
             SIGNALS_DUE.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
-            let pipe = SIGNAL_WAKE.load(std::sync::atomic::Ordering::Relaxed);
-            if pipe >= 0 {
+            let pipe = SIGNAL_PIPE.load(std::sync::atomic::Ordering::Relaxed);
+            if pipe != -1 {
                 let payload = [number as u8];
-                let wrote = unsafe { libc::write(pipe, payload.as_ptr().cast(), 1) };
-                if wrote < 0 {
-                    let code = unsafe { *errno_address };
-                    if code != libc::EAGAIN || WARN_WAKE.load(std::sync::atomic::Ordering::Relaxed) {
-                        WAKE_FAULT.store(code, std::sync::atomic::Ordering::Relaxed);
+                let written = unsafe {libc::write(pipe, payload.as_ptr().cast(), payload.len())};
+                if written == -1 {
+                    let code = unsafe {*errno_address};
+                    if REPORT_FULL_PIPE.load(std::sync::atomic::Ordering::Relaxed) || code != libc::EAGAIN {
+                        PIPE_FAILURE.store(code, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
             }
@@ -937,8 +937,7 @@ pub struct Machine<'a> {
     /// the mark for the signal's own way. A number never given one
     /// keeps its own way.
     signal_takers: Vec<(i64, Value)>,
-    /// Callable told about a wakeup write that did not complete.
-    wake_report: Option<Value>,
+    pipe_diagnostic: Option<Value>,
     /// Whether the run watches the edge between one statement and the
     /// next for signals left waiting (ext.builtin.signal).
     watches_signals: bool,
@@ -1141,9 +1140,6 @@ impl Drop for Machine<'_> {
             PYTHON_THREAD.swap(0, std::sync::atomic::Ordering::Relaxed);
             SIGNALS_DUE.store(0, std::sync::atomic::Ordering::Relaxed);
             HOST_ASKED.store(false, std::sync::atomic::Ordering::Relaxed);
-            SIGNAL_WAKE.store(-1, std::sync::atomic::Ordering::Relaxed);
-            WAKE_FAULT.store(0, std::sync::atomic::Ordering::Relaxed);
-            WARN_WAKE.store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }
@@ -2444,7 +2440,7 @@ impl<'a> Machine<'a> {
             ready_arguments: None,
             builds_places: table.flag("ext.op.index.makes"),
             signal_takers: Vec::new(),
-            wake_report: None,
+            pipe_diagnostic: None,
             watches_signals: table.has_any("ext.builtin.signal"),
             names_in_calls: table.flag("ext.syntax.call.bind_names"),
             native_slot_names: if table.flag("ext.syntax.call.bind_names") {
@@ -14926,13 +14922,11 @@ impl<'a> Machine<'a> {
     /// whatever is still waiting then waits for the next edge instead.
     fn signals_due_now(&mut self) -> Res<()> {
         let due = SIGNALS_DUE.swap(0, std::sync::atomic::Ordering::Relaxed);
-        let fault = WAKE_FAULT.swap(0, std::sync::atomic::Ordering::Relaxed);
-        if fault != 0 {
-            if let Some(report) = self.wake_report.clone() {
-                if self.apply_held(report, vec![Value::Small(i64::from(fault))]).is_err() {
-                    self.got_away.take();
-                }
-            }
+        match PIPE_FAILURE.swap(0, std::sync::atomic::Ordering::Relaxed) {
+            0 => (),
+            code => if let Some(report) = self.pipe_diagnostic.clone() {
+                let _ = self.apply_held(report, vec![Value::Small(i64::from(code))]);
+            },
         }
         if due == 0 { return Ok(()); }
         let mut left = due;
@@ -14941,7 +14935,9 @@ impl<'a> Machine<'a> {
             left ^= bit;
             let number = bit.trailing_zeros() as i64 + 1;
             let taker = self.signal_takers.iter().find(|(held, _)| *held == number).map(|(_, taker)| taker.clone());
-            let outcome: Res<()> = match taker {
+            let outcome: Res<()> = if self.shutting_down {
+                Err(Escape::Error(format!("OSError: Signal {number} ignored due to race condition")))
+            } else { match taker {
                 Some(Value::Small(1)) => Ok(()),
                 Some(callable) if !matches!(callable, Value::Small(_)) => {
                     self.apply_held(callable, vec![Value::Small(number), Value::Nil]).map(|_| ())
@@ -14959,7 +14955,7 @@ impl<'a> Machine<'a> {
                     _ => Err(Escape::Error("\0KeyboardInterrupt:".to_owned())),
                 },
                 _ => Ok(()),
-            };
+            }};
             if let Err(escape) = outcome {
                 if left != 0 { SIGNALS_DUE.fetch_or(left, std::sync::atomic::Ordering::Relaxed); }
                 return Err(escape);
@@ -29924,10 +29920,9 @@ impl<'a> Machine<'a> {
             => {
                 if v.is_empty() { return Err(format!("{}() wants a step first", name)); }
                 let step = as_index(&v[0])?;
-                if step == 5 || step == 6 {
+                if matches!(step, 5 | 6) {
                     let owner = PYTHON_THREAD.load(std::sync::atomic::Ordering::Relaxed);
-                    let here = unsafe { libc::syscall(libc::SYS_gettid) } as i32;
-                    if here != owner {
+                    if unsafe {libc::syscall(libc::SYS_gettid)} != libc::c_long::from(owner) {
                         return Err(String::from("ValueError: set_wakeup_fd only works in main thread of the main interpreter"));
                     }
                 }
@@ -29961,7 +29956,7 @@ impl<'a> Machine<'a> {
                         n(2)?;
                         let number = as_index(&v[1])?;
                         if (1..=64).contains(&number) {
-                            unsafe { libc::raise(number as libc::c_int); }
+                            unsafe {libc::raise(number as libc::c_int);}
                         }
                         Value::Nil
                     }
@@ -29986,13 +29981,38 @@ impl<'a> Machine<'a> {
                     5 => {
                         n(4)?;
                         let replacement = v[1].as_big()?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?;
-                        WARN_WAKE.store(as_index(&v[2])? != 0, std::sync::atomic::Ordering::Relaxed);
-                        self.wake_report = Some(v[3].clone());
-                        let previous = SIGNAL_WAKE.swap(replacement, std::sync::atomic::Ordering::Relaxed);
-                        Value::Small(i64::from(previous))
+                        let warn = as_index(&v[2])?;
+                        REPORT_FULL_PIPE.store(warn != 0, std::sync::atomic::Ordering::Relaxed);
+                        self.pipe_diagnostic = Some(v[3].clone());
+                        let old = SIGNAL_PIPE.swap(replacement, std::sync::atomic::Ordering::Relaxed);
+                        Value::Small(i64::from(old))
                     }
-                    6 => {
-                        n(1)?;
+                    6 => { n(1)?; Value::Nil }
+                    7 => {
+                        n(2)?;
+                        let number = match v[1].as_big() {
+                            Ok(wide) => wide.to_i64().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?,
+                            Err(_reason) => return Err(String::from("TypeError: an integer is required")),
+                        };
+                        if number < 1 || number > 64 {
+                            return Err(String::from("ValueError: signal number out of range"));
+                        }
+                        let installed = self.signal_takers.iter().find(|(held, _)| *held == number).map(|pair| &pair.1);
+                        let schedule = match installed {
+                            Some(Value::Small(mark)) if *mark == 0 || *mark == 1 => false,
+                            None => number == 2,
+                            Some(_) => true,
+                        };
+                        if schedule {
+                            SIGNALS_DUE.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+                            if self.shutting_down {
+                                match self.signals_due_now() {
+                                    Ok(()) => {}
+                                    Err(Escape::Error(words)) => return Err(words),
+                                    Err(other) => { self.got_away = Some(other); return Err(String::from("OSError: signal delivery failed")); }
+                                }
+                            }
+                        }
                         Value::Nil
                     }
                     _ => return Err(format!("{name}() knows no step {step}")),

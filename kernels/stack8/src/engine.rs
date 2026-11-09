@@ -89,11 +89,11 @@ static HOST_WATCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 
 // Keep a kernel thread number rather than a pointer to a pthread descriptor.
 static SIGNAL_OWNER: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-// A nonblocking descriptor that receives one byte per delivered signal.
+// Forward signals without dereferencing a thread that may already have exited.
 static WAKEUP_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static WAKEUP_WARN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 static WAKEUP_ERROR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-// Forward signals without dereferencing a thread that may already have exited.
+
 extern "C" fn signal_arrived(number: i32) {
     unsafe {
         let saved = *libc::__errno_location();
@@ -104,13 +104,11 @@ extern "C" fn signal_arrived(number: i32) {
         } else if (1..=64).contains(&number) {
             SIGNALS_PENDING.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
             let fd = WAKEUP_FD.load(std::sync::atomic::Ordering::Relaxed);
-            if fd >= 0 {
-                let byte = number as u8;
-                if libc::write(fd, (&byte as *const u8).cast(), 1) < 0 {
-                    let errno = *libc::__errno_location();
-                    if errno != libc::EAGAIN || WAKEUP_WARN.load(std::sync::atomic::Ordering::Relaxed) {
-                        WAKEUP_ERROR.store(errno, std::sync::atomic::Ordering::Relaxed);
-                    }
+            let byte = number as u8;
+            if fd >= 0 && libc::write(fd, (&byte as *const u8).cast(), 1) < 0 {
+                let error = *libc::__errno_location();
+                if error != libc::EAGAIN || WAKEUP_WARN.load(std::sync::atomic::Ordering::Relaxed) {
+                    WAKEUP_ERROR.store(error, std::sync::atomic::Ordering::Relaxed);
                 }
             }
         }
@@ -446,7 +444,6 @@ pub struct Engine<'a> {
     /// one keeps its own way. Only a language taking signals up between
     /// statements ever writes here.
     signal_handlers: HashMap<i64, Value>,
-    /// Reports a failed wakeup write once the signal is taken up.
     wakeup_reporter: Option<Value>,
     /// The member last found absent, and the object it was sought on,
     /// for the attribute fault that tells of it.
@@ -766,9 +763,6 @@ impl Drop for Engine<'_> {
         SIGNAL_OWNER.store(0, std::sync::atomic::Ordering::Relaxed);
         HOST_WATCHING.store(false, std::sync::atomic::Ordering::Relaxed);
         SIGNALS_PENDING.store(0, std::sync::atomic::Ordering::Relaxed);
-        WAKEUP_FD.store(-1, std::sync::atomic::Ordering::Relaxed);
-        WAKEUP_ERROR.store(0, std::sync::atomic::Ordering::Relaxed);
-        WAKEUP_WARN.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -20908,12 +20902,10 @@ impl<'a> Engine<'a> {
     /// waits for the next edge instead.
     fn deliver_signals(&mut self) -> Flow<()> {
         let pending = SIGNALS_PENDING.swap(0, std::sync::atomic::Ordering::Relaxed);
-        let errno = WAKEUP_ERROR.swap(0, std::sync::atomic::Ordering::Relaxed);
-        if errno != 0 {
+        let error = WAKEUP_ERROR.swap(0, std::sync::atomic::Ordering::Relaxed);
+        if error != 0 {
             if let Some(reporter) = self.wakeup_reporter.clone() {
-                if self.call_held(reporter, vec![Value::Small(i64::from(errno))]).is_err() {
-                    self.carried = None;
-                }
+                let _ = self.call_held(reporter, vec![Value::Small(error as i64)]);
             }
         }
         if pending == 0 { return Ok(()); }
@@ -20923,7 +20915,11 @@ impl<'a> Engine<'a> {
             if pending & bit == 0 { continue; }
             handled |= bit;
             let handler = self.signal_handlers.get(&(number as i64)).cloned();
-            let outcome: Flow<()> = match handler {
+            // Finalization has dropped the chance to run a Python handler.
+            // The reference reports that as a race instead of calling it.
+            let outcome: Flow<()> = if self.finalizing {
+                Err(Fault::Note(format!("OSError: Signal {number} ignored due to race condition")))
+            } else { match handler {
                 Some(Value::Small(1)) => Ok(()),
                 Some(routine) if !matches!(routine, Value::Small(_)) => {
                     match self.call_held(routine, vec![Value::Small(number as i64), Value::Null]) {
@@ -20933,7 +20929,7 @@ impl<'a> Engine<'a> {
                 }
                 _ if number == 2 => Err(Fault::Note("\0KeyboardInterrupt:".to_string())),
                 _ => Ok(()),
-            };
+            }};
             if let Err(fault) = outcome {
                 let later = pending & !handled;
                 if later != 0 { SIGNALS_PENDING.fetch_or(later, std::sync::atomic::Ordering::Relaxed); }
@@ -28422,7 +28418,7 @@ impl<'a> Engine<'a> {
             => {
                 if args.is_empty() { return Err(format!("{}() expects at least 1 argument", name)); }
                 let step = as_index(&args[0])?;
-                if step == 5 || step == 6 {
+                if matches!(step, 5 | 6) {
                     let caller = unsafe { libc::syscall(libc::SYS_gettid) } as i32;
                     if caller != SIGNAL_OWNER.load(std::sync::atomic::Ordering::Relaxed) {
                         return Err("ValueError: set_wakeup_fd only works in main thread of the main interpreter".to_string());
@@ -28478,12 +28474,31 @@ impl<'a> Engine<'a> {
                     5 => {
                         arity(4)?;
                         let fd = args[1].as_big()?.to_i32().ok_or("OverflowError: Python int too large to convert to C int")?;
-                        WAKEUP_WARN.store(as_index(&args[2])? != 0, std::sync::atomic::Ordering::Relaxed);
                         self.wakeup_reporter = Some(args[3].clone());
-                        Value::Small(i64::from(WAKEUP_FD.swap(fd, std::sync::atomic::Ordering::Relaxed)))
+                        WAKEUP_WARN.store(as_index(&args[2])? != 0, std::sync::atomic::Ordering::Relaxed);
+                        Value::Small(WAKEUP_FD.swap(fd, std::sync::atomic::Ordering::Relaxed) as i64)
                     }
-                    6 => {
-                        arity(1)?;
+                    6 => { arity(1)?; Value::Null }
+                    7 => {
+                        arity(2)?;
+                        let which = match args[1].as_big() {
+                            Ok(number) => number.to_i64().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_string())?,
+                            Err(_) => return Err("TypeError: an integer is required".to_string()),
+                        };
+                        if !(1..=64).contains(&which) {
+                            return Err("ValueError: signal number out of range".to_string());
+                        }
+                        // SIG_DFL and SIG_IGN do nothing. No stored handler is
+                        // SIG_DFL, except signal 2, which Python handles.
+                        let schedule = match self.signal_handlers.get(&which) {
+                            Some(Value::Small(0) | Value::Small(1)) => false,
+                            None => which == 2,
+                            Some(_) => true,
+                        };
+                        if schedule {
+                            SIGNALS_PENDING.fetch_or(1u64 << (which - 1), std::sync::atomic::Ordering::Relaxed);
+                            if self.finalizing { self.signal_checkpoint()?; }
+                        }
                         Value::Null
                     }
                     _ => return Err(format!("{name}() knows no step {step}")),

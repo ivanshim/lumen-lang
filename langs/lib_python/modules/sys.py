@@ -735,7 +735,7 @@ __displayhook__ = displayhook
 
 
 def _report_unraisable(exc_value, exc_traceback, about, kind):
-    # A failed native signal write has no Python traceback to invent.
+    # A failed native signal write has no Python traceback.
     if exc_traceback is None and kind != 'signal':
         try:
             raise exc_value
