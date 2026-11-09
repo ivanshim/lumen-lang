@@ -428,6 +428,10 @@ def dup(fd):
     return _call('dup', _cint(fd))
 
 
+def dup2(fd, fd2, inheritable=True):
+    return _call('dup2', _cint(fd), _cint(fd2), bool(inheritable))
+
+
 def read(fd, length, /):
     error, data = _host('read', fd if type(fd) is int and -2147483648 <= fd <= 2147483647 else _cint(fd), length if type(length) is int else _fd(length))
     if error:
