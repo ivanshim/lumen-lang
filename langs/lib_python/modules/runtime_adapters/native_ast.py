@@ -337,7 +337,9 @@ def _real(body, source):
         if floating:
             return float(body)
         return int(body)
-    except Exception:
+    except Exception as exc:
+        if 'Exceeds the limit ' in str(exc):
+            raise SyntaxError(str(exc) + ' - Consider hexadecimal for huge integer literals to avoid decimal conversion limits.')
         _malformed(source)
 
 class _Reader:
@@ -647,14 +649,43 @@ class AST:
 
     # Represent the actual fields, without source positions or private parser state.
     def __repr__(self):
-        parts = []
-        for field in self._fields:
-            try:
-                value = getattr(self, field)
-            except AttributeError:
-                continue
-            parts.append(field + '=' + repr(value))
-        return type(self).__name__ + '(' + ', '.join(parts) + ')'
+        return _node_repr(self, 0)
+
+
+_REPR_SEEN = set()
+
+
+def _node_repr(value, depth):
+    if isinstance(value, AST):
+        obj_id = id(value)
+        if depth >= 3 or obj_id in _REPR_SEEN:
+            return type(value).__name__ + '(...)'
+        _REPR_SEEN.add(obj_id)
+        try:
+            parts = []
+            for field in value._fields:
+                try:
+                    item = getattr(value, field)
+                except AttributeError:
+                    continue
+                parts.append(field + '=' + _node_repr(item, depth + 1))
+            return type(value).__name__ + '(' + ', '.join(parts) + ')'
+        finally:
+            _REPR_SEEN.remove(obj_id)
+    if isinstance(value, list):
+        if not value:
+            return '[]'
+        obj_id = id(value)
+        if obj_id in _REPR_SEEN:
+            return '[...]'
+        _REPR_SEEN.add(obj_id)
+        try:
+            if len(value) <= 2:
+                return '[' + ', '.join(_node_repr(item, depth) for item in value) + ']'
+            return '[' + _node_repr(value[0], depth) + ', ..., ' + _node_repr(value[-1], depth) + ']'
+        finally:
+            _REPR_SEEN.remove(obj_id)
+    return repr(value)
 
 
 class mod(AST):
@@ -3120,16 +3151,35 @@ class _Parser:
             self.expect_op(':')
             while self.toks[self.at].kind == 'newline':
                 self.pop()
-            indent = self.toks[self.at].scol
-            if indent <= first.scol:
+            case_tok = self.toks[self.at]
+            indent = self.indent_col(case_tok)
+            alt = self.alt_indent_col(case_tok)
+            parent = self.indent_col(first)
+            if indent <= parent:
+                # A tab and spaces can share a column. That is a TabError
+                # when the spellings differ, before the missing-indent error.
+                if (case_tok.srow != first.srow and indent == parent
+                        and alt != self.alt_stack[-1]):
+                    _tab('inconsistent use of tabs and spaces in indentation')
                 raise IndentationError('expected an indented block')
+            # Wider on the screen can still be a shallower alternate column,
+            # which is a tab under a space indent. Same-line text is not a case level.
+            if case_tok.srow != first.srow and alt <= self.alt_stack[-1]:
+                _tab('inconsistent use of tabs and spaces in indentation')
             # The case clauses sit at a level of their own between the
             # subject and each body; register it so that a body's dedent
-            # back to the next case is a step the reader knows.
+            # back to the next case is a step the reader knows. The width
+            # is indent_col: a tab is one character wide in scol and eight
+            # wide here, and parse_block dedents with indent_col.
             self.indent_stack.append(indent)
-            self.alt_stack.append(self.alt_indent_col(self.toks[self.at]))
+            self.alt_stack.append(alt)
             cases = []
-            while self.at_name('case') and self.toks[self.at].scol == indent:
+            while self.at_name('case') and self.indent_col(self.toks[self.at]) == indent:
+                # An inline suite returns without an indent check, and a
+                # body dedent returns before the alternate column is read,
+                # so a sibling case has to be checked here.
+                if self.alt_indent_col(self.toks[self.at]) != self.alt_stack[-1]:
+                    _tab('inconsistent use of tabs and spaces in indentation')
                 header = self.pop()
                 pattern, vs, ve = self.parse_case_as()
                 if isinstance(pattern, MatchStar) and not self.at_op(','):
