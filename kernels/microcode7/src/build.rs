@@ -1819,11 +1819,13 @@ impl<'a> Builder<'a> {
     }
 
     fn on_any(&self, key: &str) -> bool {
-        self.table.strings(key).iter().any(|w| self.lexeme_of(w))
+        let current = self.look();
+        matches!(current.shape, Shape::Sign | Shape::Bare) && self.table.spells(key, &current.lexeme)
     }
 
     fn key(&self, key: &str) -> bool {
-        self.look().shape == Shape::Bare && self.table.spells(key, self.look().spelling())
+        let current = self.look();
+        current.shape == Shape::Bare && self.table.spells(key, current.spelling())
     }
 
     fn on_stmt_end(&self) -> bool {
