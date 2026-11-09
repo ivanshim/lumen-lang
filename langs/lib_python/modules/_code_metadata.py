@@ -201,3 +201,17 @@ def lnotab(code):
         output.extend((offset, delta & 255))
         old_offset, old_line = start, line
     return bytes(output)
+
+# Map a native byte offset to its source line through the code line table.
+def code_offset_to_line(code, offset):
+    if not hasattr(code, 'co_lines'):
+        raise TypeError('code_offset_to_line() argument 1 must be code, not ' + type(code).__name__)
+    offset = operator.index(offset)
+    if offset < -2147483648 or offset > 2147483647:
+        raise OverflowError('Python int too large to convert to C int')
+    if offset < 0:
+        return -1
+    for start, end, line in code.co_lines():
+        if start <= offset < end:
+            return -1 if line is None else line
+    return -1
