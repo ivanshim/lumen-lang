@@ -9220,6 +9220,7 @@ impl<'a> Builder<'a> {
                 let fill = Form::Write(target, Box::new(Form::Read(cell)));
                 steps.push(b.choose(absent, fill, constant(Value::Nil)));
             }
+            let expr_begin = b.pos;
             b.named_blocked = true;
             let outcome = b.expr_at(0, !table.has_any("ext.builtin.exceptions.syntax"));
             b.named_blocked = false;
@@ -9243,7 +9244,8 @@ impl<'a> Builder<'a> {
             // same escape a `return` statement takes, would lose it
             // (a lambda generator's exhaustion then answers `None`
             // where the expression's own value belongs).
-            steps.push(prim_call(Prim::Yield, vec![body]));
+            let expr_bounds = b.span_since(expr_begin);
+            steps.push(b.located(expr_bounds, prim_call(Prim::Yield, vec![body])));
             Ok(sequence(steps))
         })?;
         self.outside_lambda = prior;
@@ -13068,6 +13070,8 @@ impl<'a> Builder<'a> {
         let mut async_result = false;
         let surrounding_rule = self.forbids_await;
         self.forbids_await = false;
+        let group_open = self.tokens[..head].iter().rposition(|t| self.table.spells("syntax.group.open", &t.lexeme)).unwrap_or(head);
+        let enclosing_declared = std::mem::replace(&mut self.declared_at, tree_row((self.tokens[group_open].row as u32).saturating_sub(self.before), self.tokens[group_open].column));
         let routine = self.routine("<genexpr>", Holds::Every, Traps::Yields, vec![parameter.clone()], 1, |r| {
             r.layers.last_mut().unwrap().gathering_kind = Some("generator expression");
             r.pos = clause;
@@ -13082,7 +13086,9 @@ impl<'a> Builder<'a> {
             async_result = r.layers.last().unwrap().async_walk_seen;
             r.generator_seen = true;
             Ok(body)
-        })?;
+        });
+        self.declared_at = enclosing_declared;
+        let routine = routine?;
         self.forbids_await = surrounding_rule;
         self.source_before = previous;
         let walk = if self.table.spells("ext.op.comprehension.async", &self.tokens[clause].spelling()) { Prim::AsyncWalked } else { Prim::Walked };
@@ -13265,10 +13271,12 @@ impl<'a> Builder<'a> {
             self.pos = expression_at;
             let spread = self.on_any(if dictionary { "ext.syntax.map.spread" } else { "ext.syntax.array.spread" });
             if spread { self.move_past(); }
+            let term_begin = self.pos;
             let previous = self.reading_yield;
             self.reading_yield |= answer.is_empty();
             let mut term = self.expr(0)?;
             self.reading_yield = previous;
+            let term_bounds = self.span_since(term_begin);
             if dictionary && !spread {
                 self.need_sign(self.grammar.single_syntax_map_pair.unwrap(), "in a map comprehension")?;
                 let worth = self.expr(0)?;
@@ -13276,10 +13284,13 @@ impl<'a> Builder<'a> {
             }
             if !self.on_any("ext.op.comprehension.for") && !self.on_any("ext.op.comprehension.async") { return Err("Expected a comprehension clause after its expression".into()); }
             self.pos = after_clauses;
-            if answer.is_empty() { return Ok(prim_call(if spread { Prim::Delegate } else { Prim::Suspend }, vec![term])); }
+            if answer.is_empty() {
+                return Ok(self.located(term_bounds, prim_call(if spread { Prim::Delegate } else { Prim::Suspend }, vec![term])));
+            }
             let so_far = self.read_taking(answer);
             let enlarged = prim_call(Prim::ExtendLiteral(dictionary, spread), vec![so_far, term]);
-            return Ok(self.write(answer, enlarged));
+            let updated = self.write(answer, enlarged);
+            return Ok(self.located(term_bounds, updated));
         }
         let asynchronous = self.pos > 0 && self.table.spells("ext.op.comprehension.async", &self.tokens[self.pos - 1].spelling());
         self.move_past();
@@ -13290,10 +13301,13 @@ impl<'a> Builder<'a> {
             return Err(String::from("SyntaxError: cannot assign to expression"));
         }
         self.gathering_bindings(target_begin..target_stop, 0, true)?;
+        self.pos = target_stop;
+        let target_bounds = self.span_since(target_begin);
         self.pos = target_stop + 1;
         let walks = self.grammar.flag_ext_stmt_yield_suspends;
         let beginning = self.pos;
-        let source = match self.source_before.clone().filter(|(at, _, _)| *at == self.pos) {
+        let seeded = self.source_before.clone().filter(|(at, _, _)| *at == self.pos);
+        let source = match seeded.clone() {
             Some((_, end, parameter)) => {
                 self.pos = end;
                 let supplied = self.read(&parameter);
@@ -13306,7 +13320,7 @@ impl<'a> Builder<'a> {
             }
         };
         let bounds = self.span_since(beginning);
-        let source = self.located(bounds, source);
+        let source = if answer.is_empty() && seeded.is_some() { source } else { self.located(bounds, source) };
         let source_name = self.gather_name("gather_source");
         let hold = self.write(&source_name, source);
         let cursor = self.gather_name("gather_cursor");
@@ -13315,7 +13329,6 @@ impl<'a> Builder<'a> {
         let index = self.read(&cursor);
         let test = if walks { prim_call(Prim::MoreYet, vec![bag, index]) }
             else { prim_call(Prim::Lt, vec![index, prim_call(Prim::Length, vec![bag])]) };
-        let test = self.located(bounds, test);
         let bag = self.read(&source_name);
         let index = self.read(&cursor);
         let item = prim_call(if walks { Prim::AtHand } else { Prim::At }, vec![bag, index]);
@@ -13323,7 +13336,7 @@ impl<'a> Builder<'a> {
         let mut body = vec![self.write(&item_name, item)];
         let continue_at = self.pos;
         match self.distribute(target_begin..target_stop, &item_name) {
-            Ok(binding) => body.push(binding),
+            Ok(binding) => body.push(self.located(target_bounds, binding)),
             Err(error) => {
                 let message = self.loop_target_error(target_begin..target_stop, error);
                 if message.starts_with("SyntaxError: cannot assign to") { self.pos = target_begin; }
@@ -13334,7 +13347,7 @@ impl<'a> Builder<'a> {
         body.push(self.gather_tail(expression_at, answer, dictionary)?);
         let before = self.read(&cursor);
         let onward = self.write(&cursor, prim_call(Prim::Plus, vec![before, constant(Value::Small(1))]));
-        let cycle = Form::Cycle { test: Box::new(test), body: Box::new(sequence(body)), step: Some(Box::new(onward)), after: false, otherwise: None };
+        let cycle = self.located(bounds, Form::Cycle { test: Box::new(test), body: Box::new(sequence(body)), step: Some(Box::new(onward)), after: false, otherwise: None });
         Ok(sequence(vec![hold, begin, cycle]))
     }
 
