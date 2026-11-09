@@ -5386,6 +5386,7 @@ impl<'a> Compiler<'a> {
     /// the value bound from it at the head of each pass.
     fn walk(&mut self, bag: &str, key: Option<&str>, value: &str, shared: bool, place: Option<usize>) -> Res<()> {
         let lang = self.lang;
+        let header_location = self.piece().instrs.iter().rev().find(|op| matches!(op, Instr::Location(..))).cloned();
         // A walk that hands out the items' own cells goes over the array
         // as it stands: what the body does to the array it does to the
         // walk. One that walks a copy takes the copy here, and what the
@@ -5499,6 +5500,7 @@ impl<'a> Compiler<'a> {
         }
         self.body()?;
         let again = self.mark();
+        if let Some(location) = header_location { self.put(location); }
         match &held {
             // The place the walk goes on from is the one past where the
             // item it handed out now lies, which is not where it lay
@@ -9063,6 +9065,12 @@ impl<'a> Compiler<'a> {
                 let code = a.member_value()?;
                 a.replay(code, 0);
             } else {
+                let body_start = a.pos;
+                let location_slot = (!a.lang.trace_fields.is_empty()).then(|| {
+                    let slot = a.mark();
+                    a.put(Instr::Line(a.declared_at));
+                    slot
+                });
                 a.bare_named_blocked = true;
                 let outcome = a.expr_at(0, false);
                 a.bare_named_blocked = false;
@@ -9079,6 +9087,12 @@ impl<'a> Compiler<'a> {
                     a.stop_after(last);
                     a.pos = lambda_at;
                     return Err("SyntaxError: cannot assign to lambda".into());
+                }
+                if let Some(slot) = location_slot {
+                    let span = a.expression_location(body_start);
+                    a.piece().instrs[slot] = span.clone();
+                    a.piece().instrs[..=slot].rotate_right(1);
+                    a.put(span);
                 }
             }
             a.give_result();
@@ -13576,6 +13590,8 @@ impl<'a> Compiler<'a> {
         let prior = self.generator_source.replace((source_at, source_end, seed.clone()));
         let mut asynchronous = false;
         let enclosing_await_rule = std::mem::replace(&mut self.forbids_await, false);
+        let open_at = self.tokens[..head].iter().rposition(|t| t.lexeme == pair.open).unwrap_or(head);
+        let outer_declared = std::mem::replace(&mut self.declared_at, ast_line((self.tokens[open_at].row as u32).saturating_sub(self.before), self.tokens[open_at].column));
         let program = self.routine(&name, vec![seed.clone()], 1, true, |r| {
             r.piece().comprehension_kind = Some("generator expression");
             r.pos = clause;
@@ -13588,7 +13604,9 @@ impl<'a> Compiler<'a> {
             asynchronous = r.piece().asynchronous_walk;
             r.piece().generator = true;
             Ok(())
-        })?;
+        });
+        self.declared_at = outer_declared;
+        let program = program?;
         self.forbids_await = enclosing_await_rule;
         self.generator_source = prior;
         self.constant(Value::Routine(program));
@@ -13783,7 +13801,8 @@ impl<'a> Compiler<'a> {
             self.pos = target_end + 1;
             let expression_start = self.pos;
             let instruction_start = self.mark();
-            if let Some((_, end, seed)) = self.generator_source.clone().filter(|(at, _, _)| *at == self.pos) {
+            let seeded = self.generator_source.clone().filter(|(at, _, _)| *at == self.pos);
+            if let Some((_, end, seed)) = seeded.clone() {
                 self.read(&seed);
                 if !asynchronous && !self.lang.yield_input.is_empty() { self.act(Action::IteratorSeed, 1); }
                 self.pos = end;
@@ -13792,7 +13811,7 @@ impl<'a> Compiler<'a> {
                 self.act(if asynchronous { Action::AsyncWalk } else if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
             }
             let position = self.expression_location(expression_start);
-            if !self.lang.trace_fields.is_empty() {
+            if !self.lang.trace_fields.is_empty() && (!result.is_empty() || seeded.is_none()) {
                 let code: Vec<Instr> = self.piece().instrs.drain(instruction_start..).collect();
                 self.put(position.clone());
                 for op in relocated(code, 1) { self.put(op); }
@@ -13803,7 +13822,7 @@ impl<'a> Compiler<'a> {
             self.constant(Value::Small(0));
             self.write(&at);
             let test = self.mark();
-            if !self.lang.trace_fields.is_empty() { self.put(position); }
+            if !self.lang.trace_fields.is_empty() { self.put(position.clone()); }
             if self.lang.yield_suspends {
                 self.read(&bag);
                 self.read(&at);
@@ -13821,6 +13840,11 @@ impl<'a> Compiler<'a> {
             let item = self.gensym("comprehension_item");
             self.write(&item);
             let resume = self.pos;
+            if !self.lang.trace_fields.is_empty() {
+                self.pos = target_end;
+                let target_position = self.expression_location(target_start);
+                self.put(target_position);
+            }
             if let Err(error) = self.give_places(target_start, target_end, &item) {
                 let message = self.loop_target_error(target_start, target_end, error);
                 if message.starts_with("SyntaxError: cannot assign to") { self.pos = target_start; }
@@ -13828,6 +13852,7 @@ impl<'a> Compiler<'a> {
             }
             self.pos = resume;
             self.comprehension_clause(head, result, map)?;
+            if !self.lang.trace_fields.is_empty() { self.put(position); }
             self.read(&at);
             self.constant(Value::Small(1));
             self.act(Action::Add, 2);
@@ -13852,10 +13877,20 @@ impl<'a> Compiler<'a> {
             if !result.is_empty() { self.read_taking(result); }
             let spread = self.on_any(if map { &self.lang.map_spread } else { &self.lang.array_spread });
             if spread { self.pass_token(); }
+            let element_start = self.pos;
+            let element_slot = (!self.lang.trace_fields.is_empty()).then(|| {
+                let slot = self.mark();
+                self.put(Instr::Line(self.declared_at));
+                slot
+            });
             let before_yield = self.yield_operand;
             if result.is_empty() { self.yield_operand = true; }
             self.expr(0)?;
             self.yield_operand = before_yield;
+            let element_span = self.expression_location(element_start);
+            if let Some(slot) = element_slot {
+                self.piece().instrs[slot] = element_span.clone();
+            }
             if map && !spread {
                 let mark = self.lang.pair_mark.clone().expect("map pair mark");
                 self.want_sign(&mark, "between a comprehension key and value")?;
@@ -13863,6 +13898,7 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Tie, 2);
             }
             if !self.on_any(&self.lang.comprehension_for) && !self.on_any(&self.lang.comprehension_async) { return Err("Expected a comprehension clause after its expression".to_string()); }
+            if !self.lang.trace_fields.is_empty() { self.put(element_span); }
             if result.is_empty() {
                 self.act(if spread { Action::Delegate } else { Action::Suspend }, 1);
                 self.discard();
