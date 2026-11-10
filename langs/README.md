@@ -3656,6 +3656,9 @@ only. The extension labels so far, all from PHP:
   method. Each position is a start/end line and start/end UTF-8 column;
   traceback instruction offsets select these records in two-byte units.
   A replacement leaves the original code value intact.
+- `ext.stmt.class.detail.code.branches` names the source-branch iterator
+  on a code object. Each branch gives the test, the taken arm and the
+  other arm, counted in the same two-byte units as the line table.
 - `ext.system.recursion.limit` and `.exceeded`: the most calls a run may
   have under way at once, the outermost body not counted, and the words
   said by the call that would pass it. The words name a class among the
@@ -5445,6 +5448,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.closure` | - | - | `__closure__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.amiss` | - | - | `TypeError: __code__ must be set to a code object` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.code.branches` | - | - | `co_branches` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.fields` | - | - | `co_name` `co_qualname` `co_posonlyargcount` `co_kwonlyargcount` `co_nlocals` `co_names` `co_consts` `co_flags` `co_filename` `co_firstlineno` `__annotate__` `co_freevars` `co_cellvars` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.free` | - | - | `ValueError: ` `() requires a code object with ` ` free vars, not ` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.mismatch` | - | - | `code object of non-matching type` | - | - | - | - | - | - | - |
