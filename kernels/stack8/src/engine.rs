@@ -38632,21 +38632,15 @@ fn civil_local_stamp(args: &[Value]) -> Result<Value, String> {
     if row.len() != 9 {
         return Err("TypeError: mktime(): illegal time tuple argument".to_string());
     }
-    let mut piece = [0i64; 9];
+    let mut piece = [0i32; 9];
     for (at, item) in row.iter().enumerate() {
         let unpacked = item.contents();
-        piece[at] = civil_whole(&unpacked)?;
+        piece[at] = i32::try_from(civil_whole(&unpacked)?)
+            .map_err(|_| "OverflowError: mktime argument out of range".to_string())?;
     }
-    let year = match piece[0].checked_sub(1900).and_then(|number| i32::try_from(number).ok()) {
+    let year = match piece[0].checked_sub(1900) {
         Some(year) => year,
         None => return Err("OverflowError: mktime argument out of range".to_string()),
-    };
-    let month = match piece[1].checked_sub(1).and_then(|number| i32::try_from(number).ok()) {
-        Some(month) => month,
-        None => return Err("OverflowError: mktime argument out of range".to_string()),
-    };
-    let narrow = |number: i64| -> Result<i32, String> {
-        i32::try_from(number).map_err(|_| "OverflowError: mktime argument out of range".to_string())
     };
     #[repr(C)]
     struct CivilWhen {
@@ -38667,16 +38661,17 @@ fn civil_local_stamp(args: &[Value]) -> Result<Value, String> {
         fn tzset();
     }
     let mut when = CivilWhen {
-        sec: narrow(piece[5])?,
-        min: narrow(piece[4])?,
-        hour: narrow(piece[3])?,
-        mday: narrow(piece[2])?,
-        mon: month,
+        sec: piece[5],
+        min: piece[4],
+        hour: piece[3],
+        mday: piece[2],
+        // CPython adjusts the C int month before libc normalizes it.
+        mon: piece[1].wrapping_sub(1),
         year,
         // Left at -1 so a real stamp of -1 is told apart from a refusal.
         wday: -1,
         yday: 0,
-        isdst: narrow(piece[8])?,
+        isdst: piece[8],
         gmtoff: 0,
         zone: std::ptr::null(),
     };

@@ -41986,10 +41986,13 @@ fn stamp_civil_time(given: &[Value]) -> Result<Value, String> {
     if fields.len() != 9 {
         return Err(String::from("TypeError: mktime(): illegal time tuple argument"));
     }
-    let mut raw = [0i64; 9];
+    let mut raw = [0i32; 9];
     let mut cursor = 0usize;
     while cursor < 9 {
-        raw[cursor] = expect_int(&fields[cursor].settled())?;
+        raw[cursor] = match i32::try_from(expect_int(&fields[cursor].settled())?) {
+            Ok(number) => number,
+            Err(_) => return Err(String::from("OverflowError: mktime argument out of range")),
+        };
         cursor += 1;
     }
     #[repr(C)]
@@ -42006,26 +42009,18 @@ fn stamp_civil_time(given: &[Value]) -> Result<Value, String> {
     let places = [5usize, 4, 3, 2];
     let mut slot = 0usize;
     while slot < places.len() {
-        broken.parts[slot] = match i32::try_from(raw[places[slot]]) {
-            Ok(number) => number,
-            Err(_) => return Err(String::from("OverflowError: mktime argument out of range")),
-        };
+        broken.parts[slot] = raw[places[slot]];
         slot += 1;
     }
-    broken.parts[4] = match raw[1].checked_sub(1).and_then(|month| i32::try_from(month).ok()) {
-        Some(month) => month,
-        None => return Err(String::from("OverflowError: mktime argument out of range")),
-    };
-    broken.parts[5] = match raw[0].checked_sub(1900).and_then(|year| i32::try_from(year).ok()) {
+    // Month subtraction has C int wraparound before host normalization.
+    broken.parts[4] = raw[1].wrapping_sub(1);
+    broken.parts[5] = match raw[0].checked_sub(1900) {
         Some(year) => year,
         None => return Err(String::from("OverflowError: mktime argument out of range")),
     };
     // Weekday stays -1 until the host accepts the stamp.
     broken.parts[6] = -1;
-    broken.parts[8] = match i32::try_from(raw[8]) {
-        Ok(flag) => flag,
-        Err(_) => return Err(String::from("OverflowError: mktime argument out of range")),
-    };
+    broken.parts[8] = raw[8];
     extern "C" {
         fn tzset();
         fn mktime(broken: *mut BrokenDown) -> i64;
