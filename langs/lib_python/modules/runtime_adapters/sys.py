@@ -59,3 +59,18 @@ def _environment(name):
 # known so a normal start can call them, and -S still leaves them unset.
 import builtins as _startup_builtins
 del _startup_builtins
+
+
+# CPython 3.13+ exposes the experimental JIT here. This runtime has none.
+class _jit:
+    @staticmethod
+    def is_available():
+        return False
+
+    @staticmethod
+    def is_enabled():
+        return False
+
+    @staticmethod
+    def is_active():
+        return False

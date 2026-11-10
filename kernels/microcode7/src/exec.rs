@@ -103,6 +103,24 @@ static SIGNAL_PIPE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32:
 static REPORT_FULL_PIPE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 static PIPE_FAILURE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
+fn queue_interrupt(number: i32) {
+    let errno_address = unsafe {libc::__errno_location()};
+    let original_errno = unsafe {*errno_address};
+    SIGNALS_DUE.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+    let pipe = SIGNAL_PIPE.load(std::sync::atomic::Ordering::Relaxed);
+    if pipe != -1 {
+        let payload = [number as u8];
+        let written = unsafe {libc::write(pipe, payload.as_ptr().cast(), payload.len())};
+        if written == -1 {
+            let code = unsafe {*errno_address};
+            if REPORT_FULL_PIPE.load(std::sync::atomic::Ordering::Relaxed) || code != libc::EAGAIN {
+                PIPE_FAILURE.store(code, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    }
+    unsafe {*errno_address = original_errno;}
+}
+
 extern "C" fn note_signal(number: i32) {
     let errno_address = unsafe {libc::__errno_location()};
     let errno_before = unsafe {*errno_address};
@@ -113,18 +131,7 @@ extern "C" fn note_signal(number: i32) {
             unsafe {libc::syscall(libc::SYS_tgkill, libc::getpid() as libc::c_long, target as libc::c_long, number as libc::c_long);}
         }
         _ if (1..=64).contains(&number) => {
-            SIGNALS_DUE.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
-            let pipe = SIGNAL_PIPE.load(std::sync::atomic::Ordering::Relaxed);
-            if pipe != -1 {
-                let payload = [number as u8];
-                let written = unsafe {libc::write(pipe, payload.as_ptr().cast(), payload.len())};
-                if written == -1 {
-                    let code = unsafe {*errno_address};
-                    if REPORT_FULL_PIPE.load(std::sync::atomic::Ordering::Relaxed) || code != libc::EAGAIN {
-                        PIPE_FAILURE.store(code, std::sync::atomic::Ordering::Relaxed);
-                    }
-                }
-            }
+            queue_interrupt(number);
         }
         _ => (),
     }
@@ -1132,7 +1139,7 @@ impl Drop for Machine<'_> {
             for (number, taker) in &self.signal_takers {
                 if *number == i64::from(libc::SIGINT) {default_interrupt = false;}
                 match taker.settled() {
-                    Value::Small(0) | Value::Small(1) => (),
+                    Value::Nil | Value::Small(0) | Value::Small(1) => (),
                     _ => {unsafe {libc::signal(*number as libc::c_int, libc::SIG_DFL);}}
                 }
             }
@@ -3162,6 +3169,19 @@ impl<'a> Machine<'a> {
     pub fn let_things_go(&mut self) {
         self.shutting_down = !self.rules.trace_words.is_empty();
         if self.shutting_down {
+            if self.watches_signals {
+                for signum in 1..=64i64 {
+                    let old = self.signal_takers.iter().find(|entry| entry.0 == signum);
+                    let restore = match old.map(|entry| &entry.1) {
+                        None => signum == 2,
+                        Some(Value::Nil | Value::Small(0) | Value::Small(1)) => false,
+                        _ => true,
+                    };
+                    if restore { unsafe { libc::signal(signum as libc::c_int, libc::SIG_DFL); } }
+                }
+                self.signal_takers = (1..=64).map(|signum| (signum, Value::Nil)).collect();
+                SIGNALS_DUE.swap(0, std::sync::atomic::Ordering::Relaxed);
+            }
             let cache = self.table.strings("ext.system.module.cache");
             if let [namespace, name] = cache {
                 if let Some(Value::Thing(module)) = self.imported.get(namespace) {
@@ -3384,6 +3404,10 @@ impl<'a> Machine<'a> {
         let about = callee.clone();
         if let Err(away) = self.apply_held(callee, arguments) {
             self.report_unraisable(away, &about, reason);
+        }
+        if self.watches_signals {
+            let remaining = self.signals_due_now();
+            if let Err(away) = remaining { self.report_unraisable(away, &about, reason); }
         }
     }
 
@@ -14936,6 +14960,11 @@ impl<'a> Machine<'a> {
             let number = bit.trailing_zeros() as i64 + 1;
             let taker = self.signal_takers.iter().find(|(held, _)| *held == number).map(|(_, taker)| taker.clone());
             let outcome: Res<()> = match taker {
+                Some(Value::Nil | Value::Small(0) | Value::Small(1)) if self.python_numbers => {
+                    let fault = Escape::Error(format!("OSError: Signal {number} ignored due to race condition"));
+                    self.report_unraisable(fault, &Value::Nil, "signal_handler");
+                    Ok(())
+                }
                 Some(Value::Small(1)) => Ok(()),
                 Some(callable) if !matches!(callable, Value::Small(_)) => {
                     self.apply_held(callable, vec![Value::Small(number), Value::Nil]).map(|_| ())
@@ -30009,6 +30038,26 @@ impl<'a> Machine<'a> {
                         Value::Small(i64::from(old))
                     }
                     6 => { n(1)?; Value::Nil }
+                    7 => {
+                        n(2)?;
+                        let number = match v[1].as_big() {
+                            Ok(wide) => wide.to_i64().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?,
+                            Err(_reason) => return Err(String::from("TypeError: an integer is required")),
+                        };
+                        if number < 1 || number > 64 {
+                            return Err(String::from("ValueError: signal number out of range"));
+                        }
+                        let installed = self.signal_takers.iter().find(|(held, _)| *held == number).map(|pair| &pair.1);
+                        let schedule = match installed {
+                            Some(Value::Small(mark)) if *mark == 0 || *mark == 1 => false,
+                            None => number == 2,
+                            Some(_) => true,
+                        };
+                        if schedule {
+                            queue_interrupt(number as libc::c_int);
+                        }
+                        Value::Nil
+                    }
                     _ => return Err(format!("{name}() knows no step {step}")),
                 }
             },
