@@ -36847,7 +36847,11 @@ impl<'a> Machine<'a> {
         if self.importing.contains("sys") {
             return Ok(Value::Mutable(self.natives_kept(), true));
         }
-        let namespace = self.load_namespace(&path)?;
+        // Function creation still uses the retained builtins after imports shut down.
+        let namespace = match self.imported.get(&path).cloned() {
+            Some(namespace) => namespace,
+            None => self.load_namespace(&path)?,
+        };
         self.builtin_dictionary(namespace)
     }
 
@@ -41809,9 +41813,16 @@ impl Machine<'_> {
         for (key, worth) in namespace.holds.borrow_mut().iter_mut() {
             if key != &names[1] { continue; }
             let mut pairs: Vec<_> = match worth.settled() {
-                Value::Dict(items) if imported_name != names[0] => items.to_vec(),
+                Value::Dict(items) => items.to_vec(),
                 _ => self.imported.iter().map(|(word, value)| (Value::text(word), value.clone())).collect(),
             };
+            if imported_name == names[0] {
+                // Keep registrations made by modules loaded before startup finishes.
+                let missing: Vec<_> = self.imported.iter()
+                    .filter(|(word, _)| !pairs.iter().any(|(key, _)| spells_key(key, word)))
+                    .map(|(word, value)| (Value::text(word), value.clone())).collect();
+                pairs.extend(missing);
+            }
             pairs.retain(|(word, _)| !spells_key(word, imported_name));
             if let Some(value) = self.imported.get(imported_name) { pairs.push((Value::text(imported_name), value.clone())); }
             let dictionary = Value::Dict(Rc::new(pairs.into()));

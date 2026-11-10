@@ -38480,11 +38480,18 @@ impl Engine<'_> {
         let Some(Value::Object(module)) = self.modules.get(owner) else { return };
         let mut fields = module.fields.borrow_mut();
         let Some((_, place)) = fields.iter_mut().find(|(name, _)| name == member) else { return };
-        let mut entries = if path == owner {
-            self.modules.iter().map(|(key, value)| (Value::text(key), value.clone())).collect::<Vec<_>>()
-        } else {
-            match place.contents() { Value::Map(row) => row.to_vec(), _ => Vec::new() }
+        let mut entries = match place.contents() {
+            Value::Map(row) => row.to_vec(),
+            _ => Vec::new(),
         };
+        if path == owner {
+            // Imports during startup can register aliases absent from the native map.
+            for (key, value) in &self.modules {
+                if !entries.iter().any(|(name, _)| key_spells(name, key)) {
+                    entries.push((Value::text(key), value.clone()));
+                }
+            }
+        }
         entries.retain(|(key, _)| !key_spells(key, path));
         if let Some(value) = self.modules.get(path) { entries.push((Value::text(path), value.clone())); }
         let map = Value::Map(Rc::new(entries.into()));
