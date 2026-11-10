@@ -335,6 +335,10 @@ class _BinaryInput(_StandardStream):
     def read(self, size=-1):
         self._ensure_open()
         return _host_stream_read(size, False, True)
+    def read1(self, size=-1):
+        # One host read. A text chunk must return while the writer is still open.
+        self._ensure_open()
+        return _host_stream_read(size, False, True, True)
     def readline(self, size=-1):
         self._ensure_open()
         return _host_stream_read(size, True, True)

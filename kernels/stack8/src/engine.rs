@@ -27512,6 +27512,30 @@ impl<'a> Engine<'a> {
             Builtin::StreamTake
             => {
                 use std::io::Read;
+                // One read, not a fill: a text chunk must return while the writer is still open.
+                if args.len() == 4 && self.truth(&args[2]) && self.truth(&args[3]) {
+                    let Value::Small(asked) = args[0].contents() else {
+                        return Err(self.lang.stream_amiss[0].clone());
+                    };
+                    let room = match asked {
+                        0 => return Ok(self.byte_make(Vec::<u8>::new(), false)),
+                        n if n < 0 => 8192usize,
+                        n => (n as usize).min(8192),
+                    };
+                    let mut pocket = [0u8; 8192];
+                    let mut held = std::io::stdin().lock();
+                    let gained = loop {
+                        match held.read(&mut pocket[..room]) {
+                            Ok(count) => break count,
+                            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                                self.signal_checkpoint()?;
+                                continue;
+                            }
+                            Err(_) => return Err(self.lang.stream_failed[0].clone()),
+                        }
+                    };
+                    return Ok(self.byte_make(pocket[..gained].to_vec(), false));
+                }
                 if args.len() == 3 && self.truth(&args[2]) {
                     let Value::Small(wanted) = args[0].contents() else { return Err(self.lang.stream_amiss[0].clone()); };
                     let by_line = self.truth(&args[1]);

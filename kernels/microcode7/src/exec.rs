@@ -32061,6 +32061,38 @@ impl<'a> Machine<'a> {
             Prim::DrawIn
             => {
                 use std::io::Read;
+                // The extra flag asks for a single pull. A counted read still gathers until it is full.
+                if v.len() == 4 && self.stands_true(&v[3]) {
+                    if !self.stands_true(&v[2]) {
+                        return Err(self.argument_fault("ext.builtin.stream.amiss", None));
+                    }
+                    let Value::Small(limit) = v[0].settled() else {
+                        return Err(self.argument_fault("ext.builtin.stream.amiss", None));
+                    };
+                    if limit == 0 {
+                        return Ok(self.octets(Vec::<u8>::new(), false));
+                    }
+                    let span = if limit < 0 { 8192usize } else { (limit as usize).min(8192) };
+                    let mut page = vec![0u8; span];
+                    let mut source = std::io::stdin().lock();
+                    let mut taken = 0usize;
+                    loop {
+                        match source.read(&mut page[taken..]) {
+                            Ok(0) => break,
+                            Ok(count) => {
+                                taken = count;
+                                break;
+                            }
+                            Err(problem) if problem.kind() == std::io::ErrorKind::Interrupted => {
+                                self.observe_host_interrupts()?;
+                                continue;
+                            }
+                            Err(_) => return Err(self.argument_fault("ext.builtin.stream.failed", None)),
+                        }
+                    }
+                    page.truncate(taken);
+                    return Ok(self.octets(page, false));
+                }
                 if v.len() == 3 && self.stands_true(&v[2]) {
                     let Value::Small(limit) = v[0].settled() else { return Err(self.argument_fault("ext.builtin.stream.amiss", None)); };
                     let by_line = self.stands_true(&v[1]);
