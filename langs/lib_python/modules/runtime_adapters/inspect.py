@@ -238,3 +238,5 @@ def isabstract(object):
     if not isinstance(object, type):
         return False
     return bool(getattr(object, '__abstractmethods__', False))
+# CPython re-exports annotationlib.get_annotations on inspect.
+from annotationlib import get_annotations

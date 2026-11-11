@@ -113,9 +113,39 @@ def confstr(name, /):
     return _call('confstr', _cint(name))
 
 
+# The path configuration names follow glibc; an integer is passed through.
+pathconf_names = {name: number for number, name in enumerate((
+    'PC_LINK_MAX', 'PC_MAX_CANON', 'PC_MAX_INPUT', 'PC_NAME_MAX', 'PC_PATH_MAX',
+    'PC_PIPE_BUF', 'PC_CHOWN_RESTRICTED', 'PC_NO_TRUNC', 'PC_VDISABLE', 'PC_SYNC_IO',
+    'PC_ASYNC_IO', 'PC_PRIO_IO', 'PC_SOCK_MAXBUF', 'PC_FILESIZEBITS',
+    'PC_REC_INCR_XFER_SIZE', 'PC_REC_MAX_XFER_SIZE', 'PC_REC_MIN_XFER_SIZE',
+    'PC_REC_XFER_ALIGN', 'PC_ALLOC_SIZE_MIN', 'PC_SYMLINK_MAX', 'PC_2_SYMLINKS'))}
+
+
+def fpathconf(fd, name, /):
+    if isinstance(name, str):
+        try:
+            name = pathconf_names[name]
+        except KeyError:
+            raise ValueError('unrecognized configuration name') from None
+    return _call('fpathconf', _descriptor(fd), _cint(name))
+
+
+def pathconf(path, name):
+    if isinstance(name, str):
+        try:
+            name = pathconf_names[name]
+        except KeyError:
+            raise ValueError('unrecognized configuration name') from None
+    if _is_fd_path(path):
+        return _call('fpathconf', _descriptor(path), _cint(name))
+    original = _path(path)
+    return _call('pathconf', original, _cint(name), filename=original)
+
+
 (O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_CREAT, O_EXCL, O_TRUNC,
- O_NONBLOCK, O_CLOEXEC, O_DIRECTORY, O_NOFOLLOW, SEEK_SET, SEEK_CUR,
- SEEK_END, F_OK, R_OK, W_OK, X_OK, O_TMPFILE, O_NOCTTY) = _call('constants')
+ O_NONBLOCK, O_CLOEXEC, O_DIRECTORY, O_NOFOLLOW, _SEEK_SET, _SEEK_CUR,
+ _SEEK_END, F_OK, R_OK, W_OK, X_OK, O_TMPFILE, O_NOCTTY) = _call('constants')
 
 # These feature names describe implemented host entry points, not test expectations.
 _have_functions = ['HAVE_FACCESSAT', 'HAVE_FCHMODAT', 'HAVE_FSTATAT', 'HAVE_LSTAT',
@@ -396,6 +426,10 @@ def close(fd):
 
 def dup(fd):
     return _call('dup', _cint(fd))
+
+
+def dup2(fd, fd2, inheritable=True):
+    return _call('dup2', _cint(fd), _cint(fd2), bool(inheritable))
 
 
 def read(fd, length, /):
@@ -701,6 +735,9 @@ def waitstatus_to_exitcode(status):
 
 class DirEntry:
     __slots__ = ('_name', '_path', '_inode', '_type', '_dir_fd', '_stat', '_lstat')
+    def __class_getitem__(cls, item):
+        import types
+        return types.GenericAlias(cls, item)
     def __init__(self, directory, name, inode, kind):
         import posixpath
         self._name = name
@@ -1020,6 +1057,13 @@ class _BuiltinFunction(staticmethod):
 
     def __repr__(self):
         return '<built-in function ' + self.__name__ + '>'
+
+
+
+
+# Reap any child using the same interruptible wait machinery.
+def wait():
+    return waitpid(-1, 0)
 
 
 for _name, _entry in list(globals().items()):

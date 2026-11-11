@@ -136,3 +136,9 @@ class Random:
 # for index conversion, invalid calls and lazily opened streams.
 Random.random = __random('method', 'next', Random.random)
 Random.getrandbits = __random('method', 'bits', Random.getrandbits)
+
+def _bind_randrange(fallback, randbelow):
+    # One native rejection loop for randrange(stop) on the stock
+    # generator. Other calls, and any instance that replaced
+    # getrandbits or _randbelow, run the Python method.
+    return __random('method', 'range', fallback, randbelow)

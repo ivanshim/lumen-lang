@@ -668,8 +668,13 @@ impl Request<'_> {
         };
         let part=if valid {&s[cut(lo)..cut(hi)]} else {""};
         if self.operation=="startswith"||self.operation=="endswith"{
-            let patterns=if let Value::Row(row)=&self.given[0]{row.to_vec()}else{vec![self.given[0].clone()]};
-            for pattern in patterns{let text=letters(&pattern,self.complaint)?;let matches=if self.operation=="startswith"{part.starts_with(&text)}else{part.ends_with(&text)};if valid&&matches{return Ok(Value::Flag(true));}}
+            let patterns=match &self.given[0]{Value::Row(row)=>row.as_slice(),single=>std::slice::from_ref(single)};
+            for pattern in patterns {
+                let held=pattern.settled();
+                let Value::Text(text)=held else{return Err(self.fail("arguments"));};
+                let matches=if self.operation=="startswith"{part.starts_with(text.as_ref())}else{part.ends_with(text.as_ref())};
+                if valid&&matches{return Ok(Value::Flag(true));}
+            }
             return Ok(Value::Flag(false));
         }
         let held=self.given[0].settled();

@@ -1627,6 +1627,9 @@
     "TypeError: print option must be a string or None"
   ],
   "ext.builtin.print.real_point": true,
+  "ext.builtin.print.stream.encoding": [
+    "encoding"
+  ],
   "ext.builtin.print.redirect": [
     "sys",
     "stdout",
@@ -1676,6 +1679,9 @@
   "ext.builtin.range.zero_start": true,
   "ext.builtin.range.zero_step": [
     "ValueError: range step must not be zero"
+  ],
+  "ext.builtin.readonly_member": [
+    "__readonly_member__"
   ],
   "ext.builtin.repr": [
     "repr"

@@ -304,7 +304,7 @@ impl Value {
             (Self::Dict(a), Self::Dict(b)) => Rc::ptr_eq(a, b),
             (Self::Set(a), Self::Set(b)) => Rc::ptr_eq(a, b),
             (Self::Text(a), Self::Text(b)) => Rc::ptr_eq(a, b),
-            (Self::Thing(a), Self::Thing(b)) => Rc::ptr_eq(a, b),
+            (Self::Thing(a), Self::Thing(b)) => crate::data::Hold::ptr_eq(a, b),
             (Self::Octets { cell: here, .. }, Self::Octets { cell: there, .. }) => Rc::ptr_eq(here, there),
             (Self::Small(a), Self::Small(b)) => a == b,
             (Self::Flag(a), Self::Flag(b)) => a == b,
@@ -315,7 +315,7 @@ impl Value {
 
     fn bound_owner_hash(value: &Self) -> Option<i64> {
         let pointer = match value {
-            Self::Thing(object) => std::rc::Rc::as_ptr(object) as usize,
+            Self::Thing(object) => crate::data::Hold::as_ptr(object) as usize,
             Self::Shared(slot) | Self::Mutable(slot, _) => std::rc::Rc::as_ptr(slot) as usize,
             Self::Vector(items) => std::rc::Rc::as_ptr(items) as usize,
             Self::Dict(items) => std::rc::Rc::as_ptr(items) as usize,
@@ -335,7 +335,7 @@ impl Value {
                         let initial = std::rc::Rc::as_ptr(class) as usize / 16;
                         let called = match contents.get(1) { Some(Self::Text(word)) => word.as_ref(), _ => "__init__" };
                         let signature = called.bytes().fold(initial, |part, byte| part.rotate_left(5) ^ usize::from(byte));
-                        (signature ^ (std::rc::Rc::as_ptr(instance) as usize / 16)) as i64
+                        (signature ^ (crate::data::Hold::as_ptr(instance) as usize / 16)) as i64
                     }
                     _ => (std::rc::Rc::as_ptr(contents) as usize / 16) as i64,
                 }
@@ -359,7 +359,7 @@ impl Value {
                     Self::Vector(row) => std::rc::Rc::as_ptr(row) as usize / 16,
                     Self::Dict(pairs) => std::rc::Rc::as_ptr(pairs) as usize / 16,
                     Self::Set(group) => std::rc::Rc::as_ptr(group) as usize / 16,
-                    Self::Thing(thing) => std::rc::Rc::as_ptr(thing) as usize / 16,
+                    Self::Thing(thing) => crate::data::Hold::as_ptr(thing) as usize / 16,
                     Self::Octets { cell, .. } => std::rc::Rc::as_ptr(cell) as usize / 16,
                     value => value.hash_number()? as usize,
                 };
@@ -377,13 +377,13 @@ impl Value {
             Self::Wrapped(7, _) => return Self::code_worth_hash(self),
             Self::Wrapped(4..=6, contents) => (std::rc::Rc::as_ptr(contents) as usize / 16) as i64,
             Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,
-            Self::Method(program, receiver, _) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(receiver) as usize / 16)) as i64,
+            Self::Method(program, receiver, _) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (crate::data::Hold::as_ptr(receiver) as usize / 16)) as i64,
             // A routine bound to a value hashes by the routine and by
             // where the value lies, never by asking the value itself.
             Self::Wrapped(3, contents) if matches!(contents.first(), Some(Self::Wrapped(60, _) | Self::Intrinsic(..))) => Self::bound_owner_hash(contents.get(1)?)? ^ contents[0].hash_number()?,
             Self::Wrapped(3, parts) if parts.len() == 2 => {
                 let receiver = match &parts[1] {
-                    Self::Thing(thing) => std::rc::Rc::as_ptr(thing) as usize / 16,
+                    Self::Thing(thing) => crate::data::Hold::as_ptr(thing) as usize / 16,
                     Self::Mutable(cell, _) | Self::Shared(cell) => std::rc::Rc::as_ptr(cell) as usize / 16,
                     Self::Vector(values) => std::rc::Rc::as_ptr(values) as usize / 16,
                     Self::Dict(values) => std::rc::Rc::as_ptr(values) as usize / 16,

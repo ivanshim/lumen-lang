@@ -2,7 +2,20 @@
 # ordinary annotators keep the one-argument format protocol; fallback calls
 # use copied globals and replacement closure cells without changing helpers.
 
-class Format:
+import enum
+
+__all__ = [
+    "Format",
+    "ForwardRef",
+    "call_annotate_function",
+    "call_evaluate_function",
+    "get_annotate_from_class_namespace",
+    "get_annotations",
+    "annotations_to_string",
+    "type_repr",
+]
+
+class Format(enum.IntEnum):
     VALUE = 1
     VALUE_WITH_FAKE_GLOBALS = 2
     FORWARDREF = 3
@@ -60,8 +73,11 @@ def _call_with_names(annotate, names, symbolic):
                     copied.append(cell)
             closure = tuple(copied)
         namespace = {} if symbolic else {**annotate.__builtins__, **annotate.__globals__}
-        isolated = types.FunctionType(code, namespace,
-                                      argdefs=annotate.__defaults__, closure=closure)
+        # Defaults are attached after the function is made: binding the
+        # closure and the parameter defaults in one call leaves the closure
+        # reachable from the wrong frame on one kernel.
+        isolated = types.FunctionType(code, namespace, closure=closure)
+        isolated.__defaults__ = annotate.__defaults__
         isolated.__kwdefaults__ = annotate.__kwdefaults__
         annotate = isolated
     return __annotation_call__(annotate, names, symbolic)
@@ -98,6 +114,16 @@ def call_annotate_function(annotate, format, owner=None, *, _is_evaluate=False):
         # First read with the real globals and builtins, a name nowhere
         # defined standing for a reference; if that fails, read again with
         # none of them, so that every name is one.
+        # A user callable that is not a function has no builtins of its own.
+        # Reading them is how FORWARDREF reports that it cannot be built,
+        # and the missing name is __builtins__. A kernel annotator is a
+        # plain object and is called through the native path instead.
+        # Kernel annotators report their type as object, but that type is
+        # not the builtin object, so the name is what distinguishes them.
+        kind = type(annotate)
+        if not (kind.__module__ == "builtins" and kind.__name__ == "object") and not isinstance(annotate, types.FunctionType):
+            annotate.__builtins__
+            annotate.__globals__
         is_class = isinstance(owner, type)
         scope = getattr(annotate, '__globals__', None)
         names = _StringifierDict({}, globals=scope, owner=owner, is_class=is_class, format=format)
@@ -129,6 +155,8 @@ def _stringify_single(anno):
     # We have to handle str specially to support PEP 563 stringified annotations.
     elif isinstance(anno, str):
         return anno
+    elif _is_template(anno):
+        return _get_ast().unparse(_template_to_ast(anno))
     else:
         return repr(anno)
 
@@ -267,6 +295,13 @@ def get_annotations(obj, *, globals=None, locals=None, eval_str=False, format=1)
             globals = obj_globals
         if locals is None:
             locals = obj_locals
+
+    # A string annotation with no scope of its own is evaluated in this
+    # module's frame, as the reference does.
+    if globals is None:
+        globals = _module_namespace()
+        if locals is None:
+            locals = globals
 
     # "Inject" type parameters into the local namespace
     # (unless they are shadowed by assignments *in* the local namespace),
@@ -529,10 +564,7 @@ class ForwardRef:
             names = self.__extra_names__
 
             if names:
-                # The names made up for values that have no name stand,
-                # in the text, for the way those values are written.
-                for unique in sorted(names, key=len, reverse=True):
-                    resolved_str = resolved_str.replace(unique, type_repr(names[unique]))
+                resolved_str = _replace_names(resolved_str, names)
 
             self.__resolved_str_cache__ = resolved_str
 
@@ -634,6 +666,13 @@ class _SynNode:
 class _SynName(_SynNode):
     def __init__(self, id):
         self.id = id
+
+
+class _SynSource(_SynNode):
+    # A fragment already written in source form. The private tree has no
+    # template node, and the public template tree is not one of its nodes.
+    def __init__(self, text):
+        self.text = text
 
 
 class _SynConstant(_SynNode):
@@ -738,6 +777,8 @@ def _syn_operand(node, least):
 
 
 def _syn_unparse(node):
+    if isinstance(node, _SynSource):
+        return node.text
     if isinstance(node, _SynName):
         return node.id
     if isinstance(node, _SynConstant):
@@ -874,6 +915,8 @@ class _Stringifier:
             if isinstance(other.__ast_node__, str):
                 return _syn.Name(id=other.__ast_node__), other.__extra_names__
             return other.__ast_node__, other.__extra_names__
+        elif _is_template(other):
+            return _SynSource(_get_ast().unparse(_template_to_ast(other))), None
         elif (
             # In STRING format we don't bother with the create_unique_name() dance;
             # it's better to emit the repr() of the object instead of an opaque name.
@@ -950,6 +993,14 @@ class _Stringifier:
             stringifier_dict=self.__stringifier_dict__,
             extra_names=new_extra_names or None,
         )
+        # A compound expression replaces this node. A single closed-over
+        # name is one cell; the compound keeps every such cell so a later
+        # evaluate can see the nonlocal.
+        cell = self.__cell__
+        if isinstance(cell, types.CellType) and isinstance(self.__ast_node__, str):
+            stringifier.__cell__ = {self.__ast_node__: cell}
+        elif isinstance(cell, dict):
+            stringifier.__cell__ = dict(cell)
         self.__stringifier_dict__.stringifiers.append(stringifier)
         return stringifier
 
@@ -963,6 +1014,11 @@ class _Stringifier:
         # as '__classdict__["x"]'.
         if self.__ast_node__ == "__classdict__":
             raise KeyError
+        # A name read from an enclosing frame's own locals map stands for
+        # the name itself, so a symbolic read spells it the way its source
+        # did instead of subscripting the map.
+        if isinstance(self.__ast_node__, str) and self.__ast_node__.startswith("#locals") and isinstance(other, str):
+            return self.__make_new(other)
         if isinstance(other, tuple):
             extra_names = {}
             elts = []
@@ -1141,3 +1197,173 @@ def annotations_to_string(annotations):
         n: t if isinstance(t, str) else type_repr(t)
         for n, t in annotations.items()
     }
+
+
+def _get_ast():
+    global ast
+    if "ast" not in globals():
+        import ast
+    return ast
+
+
+def __getattr__(name):
+    if name == "ast":
+        return _get_ast()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def _module_namespace():
+    _get_ast()
+    return globals()
+
+
+_Template = None
+
+def _is_template(value):
+    global _Template
+    if _Template is None:
+        from string.templatelib import Template
+        _Template = Template
+    return isinstance(value, _Template)
+
+
+def _quoted_end(text, start):
+    """The index just past the string literal that opens at *start*."""
+    quote = text[start]
+    triple = text.startswith(quote * 3, start)
+    index = start + (3 if triple else 1)
+    length = len(text)
+    while index < length:
+        letter = text[index]
+        if letter == "\\":
+            index += 2
+            continue
+        if triple:
+            if text.startswith(quote * 3, index):
+                return index + 3
+        elif letter == quote:
+            return index + 1
+        index += 1
+    return length
+
+
+def _replace_names(text, names):
+    """Spell each known name in *text* as the value it stands for, reading
+    only the places an expression reads a name: not inside a string literal,
+    not an attribute name after a dot, and not a keyword name before '='."""
+    pieces = []
+    index = 0
+    length = len(text)
+    previous = ""
+    while index < length:
+        letter = text[index]
+        if letter in "'\"":
+            stop = _quoted_end(text, index)
+            pieces.append(text[index:stop])
+            index = stop
+            previous = ")"
+            continue
+        if letter.isalpha() or letter == "_":
+            stop = index + 1
+            while stop < length and (text[stop].isalnum() or text[stop] == "_"):
+                stop += 1
+            word = text[index:stop]
+            after = stop
+            while after < length and text[after] in " \t":
+                after += 1
+            if (
+                len(word) <= 2
+                and all(part in "rbfut" for part in word)
+                and after < length
+                and text[after] in "'\""
+            ):
+                end = _quoted_end(text, after)
+                pieces.append(text[index:end])
+                index = end
+                previous = ")"
+                continue
+            attribute = previous == "."
+            keyword = (
+                after < length
+                and text[after] == "="
+                and (after + 1 >= length or text[after + 1] != "=")
+            )
+            if attribute or keyword or word not in names:
+                pieces.append(word)
+            else:
+                pieces.append(type_repr(names[word]))
+            index = stop
+            previous = "a"
+            continue
+        pieces.append(letter)
+        if not letter.isspace():
+            previous = letter
+        index += 1
+    return "".join(pieces)
+
+
+def _template_to_ast_constructor(template):
+    """Convert a template instance to a non-literal AST."""
+    ast = _get_ast()
+    args = []
+    for part in template:
+        if isinstance(part, str):
+            args.append(ast.Constant(value=part))
+        else:
+            interp = ast.Call(
+                func=ast.Name(id="Interpolation"),
+                args=[
+                    ast.Constant(value=part.value),
+                    ast.Constant(value=part.expression),
+                    ast.Constant(value=part.conversion),
+                    ast.Constant(value=part.format_spec),
+                ],
+                keywords=[],
+            )
+            args.append(interp)
+    return ast.Call(func=ast.Name(id="Template"), args=args, keywords=[])
+
+
+def _template_to_ast_literal(template, parsed):
+    """Convert a template instance to a t-string literal AST."""
+    ast = _get_ast()
+    values = []
+    interp_count = 0
+    for part in template:
+        if isinstance(part, str):
+            values.append(ast.Constant(value=part))
+        else:
+            interp = ast.Interpolation(
+                str=part.expression,
+                value=parsed[interp_count],
+                conversion=ord(part.conversion) if part.conversion else -1,
+                format_spec=ast.Constant(value=part.format_spec)
+                if part.format_spec
+                else None,
+            )
+            values.append(interp)
+            interp_count += 1
+    return ast.TemplateStr(values=values)
+
+
+def _template_to_ast(template):
+    """Make a best-effort conversion of a template instance to an AST."""
+    ast = _get_ast()
+    if any(part.expression.strip() == "" for part in template.interpolations):
+        return _template_to_ast_constructor(template)
+    try:
+        parsed = tuple(
+            ast.parse(f"({part.expression})", mode="eval").body
+            for part in template.interpolations
+        )
+    except SyntaxError:
+        for part in template.interpolations:
+            try:
+                compile(f"({part.expression})", "<template>", "eval")
+            except SyntaxError:
+                return _template_to_ast_constructor(template)
+        return _template_to_ast_literal(
+            template,
+            [ast.Constant(value=None) for _ in template.interpolations],
+        )
+    return _template_to_ast_literal(template, parsed)

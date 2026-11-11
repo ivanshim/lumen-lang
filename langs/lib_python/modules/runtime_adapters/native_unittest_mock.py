@@ -46,30 +46,46 @@ class _Call:
     # The reference library records each call as the arguments it was
     # given and the keywords it was given, and that pair also answers
     # for the two by the names `args` and `kwargs`. The stand-in keeps
-    # the pair here so a test that asks either name reads it.
-    def __init__(self, args, kwargs):
+    # the pair here so a test that asks either name reads it. A call
+    # made under a name of its own - one of the methods a stand-in
+    # answered for - is the name beside that pair, as the reference
+    # gives it, so the three read out of it in that order.
+    def __init__(self, args, kwargs, name=None):
+        self.name = name
         self.args = tuple(args)
         self.kwargs = kwargs
 
+    def _record(self):
+        if self.name is None:
+            return (self.args, self.kwargs)
+        return (self.name, self.args, self.kwargs)
+
     def __eq__(self, other):
         if isinstance(other, _Call):
-            return self.args == other.args and self.kwargs == other.kwargs
-        return (self.args, self.kwargs) == other
+            return self._record() == other._record()
+        if isinstance(other, list):
+            other = tuple(other)
+        return self._record() == other
 
     def __ne__(self, other):
         return not self.__eq__(other)
 
     def __getitem__(self, at):
-        return (self.args, self.kwargs)[at]
+        return self._record()[at]
 
     def __len__(self):
-        return 2
+        return len(self._record())
 
     def __iter__(self):
-        return iter((self.args, self.kwargs))
+        return iter(self._record())
 
     def __repr__(self):
-        return repr((self.args, self.kwargs))
+        # The reference shows a call by the name it was answered for,
+        # when it was a method, and the arguments it was given.
+        given = [repr(item) for item in self.args]
+        given += [word + '=' + repr(value) for word, value in self.kwargs.items()]
+        named = '' if self.name is None else '.' + self.name
+        return 'call' + named + '(' + ', '.join(given) + ')'
 # The double-underscore names the reference lets a test put on a stand-in:
 # a name here is put on the stand-in's own class, because the reader looks
 # such a name up on the class and never on the thing itself.
@@ -84,6 +100,11 @@ _SETTABLE_MAGICS = frozenset(
     + ['__r' + word + '__' for word in _MAGIC_NUMERICS])
 
 
+# A name a test has taken off a stand-in keeps this in its place, so the
+# stand-in stops answering a name the reference has deleted.
+_DELETED = _Sentinel('DELETED')
+
+
 class Mock:
     def __new__(cls, *args, **kwargs):
         # Each stand-in has a class of its own, so that a name put on it
@@ -92,6 +113,24 @@ class Mock:
         return object.__new__(own)
 
     def __setattr__(self, name, value):
+        children = None if name.startswith('_mock_') or name in ('return_value', 'side_effect') else self.__dict__.get('_mock_children')
+        if children is not None and isinstance(value, Mock):
+            if name in _SETTABLE_MAGICS:
+                children[name] = value
+            elif value._mock_parent is None and value._mock_name is None:
+                parent = self
+                while parent is not None and parent is not value:
+                    parent = parent._mock_parent
+                if parent is None:
+                    value._mock_parent = self
+                    value._mock_name = name
+                    children[name] = value
+                elif children.get(name) is _DELETED:
+                    del children[name]
+            elif children.get(name) is _DELETED:
+                del children[name]
+        elif children is not None and children.get(name) is _DELETED:
+            del children[name]
         if name in _SETTABLE_MAGICS:
             if isinstance(value, Mock):
                 # A stand-in is called as it stands, with no thing before
@@ -105,10 +144,20 @@ class Mock:
             return
         object.__setattr__(self, name, value)
 
+    def __delattr__(self, name):
+        if name in _SETTABLE_MAGICS and name in type(self).__dict__:
+            delattr(type(self), name)
+        elif name not in self.__dict__ and self._mock_children.get(name) is _DELETED:
+            raise AttributeError(name)
+        self.__dict__.pop(name, None)
+        self._mock_children[name] = _DELETED
+
     # Initialize defaults before applying configured attributes.
     def __init__(self, spec=None, side_effect=None, return_value=DEFAULT, wraps=None, name=None, **kwargs):
         self._mock_name = name
+        self._mock_parent = None
         self._mock_wraps = wraps
+        self.method_calls = []
         self._spec_class = None
         self._mock_children = {}
         if spec is not None and not isinstance(spec, (list, tuple)):
@@ -175,6 +224,14 @@ class Mock:
         self.call_count += 1
         self.call_args = _Call(args, kwargs)
         self.call_args_list.append(self.call_args)
+        # The reference gives each stand-in above the one called the
+        # call under the name it answered for, in the order it was made.
+        parts = []
+        holder = self
+        while holder._mock_name is not None and holder._mock_parent is not None:
+            parts.append(holder._mock_name)
+            holder = holder._mock_parent
+            holder.method_calls.append(_Call(args, kwargs, name='.'.join(reversed(parts))))
         effect = self.side_effect
         if effect is not None:
             if isinstance(effect, BaseException):
@@ -205,15 +262,19 @@ class Mock:
         return self.return_value
 
     def _mock_fresh(self):
-        return type(self)(name='()')
+        return type(self).__bases__[0](name='()')
 
     def reset_mock(self):
         self.called = False
         self.call_count = 0
         self.call_args = None
         self.call_args_list = []
+        self.method_calls = []
 
         for child in list(self._mock_children.values()):
+            # A removed name stays as a sentinel, which has nothing to reset.
+            if child is _DELETED:
+                continue
             child.reset_mock()
 
     def assert_called(self):
@@ -250,15 +311,28 @@ class Mock:
         # A name asked of a stand-in is a stand-in of its own, as the
         # reference library has it. A name that begins with an
         # underscore is the runtime's own business and is not answered
-        # for, so what looks inside a mock sees what is really there.
-        if name[:1] == '_':
+        # for, so what looks inside a mock sees what is really there --
+        # unless the thing it stands for answers to that name, which a
+        # spec records: sys carries __excepthook__ beside its own. Its
+        # own bookkeeping is refused before it is read, so a stand-in
+        # that has not been made yet cannot ask it of itself again.
+        if name in ('_mock_methods', '_mock_children'):
+            raise AttributeError(name)
+        methods = self._mock_methods
+        if name[:1] == '_' and not (methods is not None and name in methods):
             raise AttributeError(name)
         allowed = getattr(self, '_mock_allowed', None)
         if allowed is not None and name not in allowed:
             raise AttributeError(name)
-        if self._mock_methods is not None and name not in self._mock_methods:
+        if methods is not None and name not in methods:
             raise AttributeError(name)
-        child = type(self)(name=name)
+        if self._mock_children.get(name) is _DELETED:
+            raise AttributeError(name)
+        wraps = None
+        if self._mock_wraps is not None:
+            wraps = getattr(self._mock_wraps, name, None)
+        child = type(self).__bases__[0](name=name, wraps=wraps)
+        child._mock_parent = self
         setattr(self, name, child)
         self._mock_children[name] = child
         return child
@@ -302,6 +376,14 @@ class _MagicItem(Mock):
 
 
 class MagicMock(Mock):
+    def __new__(cls, *args, **kwargs):
+        # Keep operation defaults on the instance's class so deletion cannot
+        # uncover an inherited implementation of the same operation.
+        methods = {name: getattr(cls, name, method)
+                   for name, method in _MAGIC_METHODS.items()}
+        own = type(cls.__name__, (cls,), methods)
+        return object.__new__(own)
+
     # A stand-in that also answers the operations the reader reaches
     # through double-underscore names. Each of those is a stand-in of
     # its own, made once when the MagicMock is and kept on it under its
@@ -393,6 +475,11 @@ def _forwarder(word):
 
 for _word in _MAGIC_ITEMS:
     setattr(MagicMock, _word, _forwarder(_word))
+
+_MAGIC_METHODS = {name: method for name, method in MagicMock.__dict__.items()
+                  if name in _SETTABLE_MAGICS}
+for _word in _MAGIC_METHODS:
+    delattr(MagicMock, _word)
 
 
 def _is_module(target):
@@ -528,17 +615,27 @@ class _Patch:
                     if callable(member):
                         setattr(function, name, self.copy()(member))
             return function
-        patcher = self
+        # Stacked decorators share one wrapper; the innermost patch starts
+        # first and hands over the first stand-in.
+        patchings = getattr(function, 'patchings', None)
+        if patchings is not None:
+            patchings.append(self)
+            return function
+        patchings = [self]
         def patched(*args, **kwargs):
-            fresh = patcher.start()
+            started = []
+            given = list(args)
             try:
-                if patcher.new is DEFAULT:
-                    given = list(args)
-                    given.append(fresh)
-                    return function(*given, **kwargs)
-                return function(*args, **kwargs)
+                for patcher in patchings:
+                    fresh = patcher.start()
+                    started.append(patcher)
+                    if patcher.new is DEFAULT:
+                        given.append(fresh)
+                return function(*given, **kwargs)
             finally:
-                patcher.stop()
+                for patcher in reversed(started):
+                    patcher.stop()
+        patched.patchings = patchings
         setattr(patched, '__name__', getattr(function, '__name__', 'patched'))
         return patched
 
