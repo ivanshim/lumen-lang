@@ -27932,6 +27932,12 @@ impl<'a> Engine<'a> {
             => {
                 arity(1)?;
                 let Value::Text(name) = args[0].contents() else { return Err("TypeError: module name must be a string".into()); };
+                if name.as_ref() == "__main__" && self.root_source.contains(".zip/") && std::fs::read(self.root_source.as_ref()).is_err() {
+                    // The program names an archive entry. The host cannot read that path.
+                    let module = self.route_module("_tokenize")?;
+                    let archived = self.member_of(module, "_archived_source")?.ok_or_else(|| "ImportError: source decoder is unavailable".to_string())?;
+                    return self.call_held(archived, vec![Value::text(self.root_source.as_ref())]);
+                }
                 let raw = if name.as_ref() == "__main__" {
                     std::fs::read(self.root_source.as_ref()).ok()
                 } else {
