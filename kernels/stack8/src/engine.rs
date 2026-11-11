@@ -29362,6 +29362,12 @@ impl<'a> Engine<'a> {
             Builtin::MemberSet
             => {
                 arity(3)?;
+                if let Value::Class(class) = &args[0] {
+                    if class.constants.iter().any(|(key, _)| key == "\0native-name") {
+                        let member = args[1].display(&sp);
+                        return Err(format!("TypeError: cannot set '{member}' attribute of immutable type '{}'", class.name).into());
+                    }
+                }
                 if matches!(&args[0], Value::Object(object) if object.fields.borrow().iter().any(|(key, _)| key == "\0immutable"))
                     || matches!(&args[0], Value::Class(class) if class.sealed.get()) {
                     return Err("AttributeError: sealed storage is immutable".into());

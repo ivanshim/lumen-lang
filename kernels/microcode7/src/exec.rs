@@ -28205,6 +28205,11 @@ impl<'a> Machine<'a> {
             Prim::WriteMember
             => {
                 n(3)?;
+                if let Value::Blueprint(kind) = &v[0] {
+                    if kind.constants.iter().any(|(label, _)| label == "\0native-name") {
+                        return Err(format!("TypeError: cannot set '{}' attribute of immutable type '{}'", v[1].bare(), kind.name));
+                    }
+                }
                 let sealed = match &v[0] {
                     Value::Thing(instance) => instance.holds.borrow().iter().any(|entry| entry.0 == "\0immutable"),
                     Value::Blueprint(kind) => kind.sealed.get(),
