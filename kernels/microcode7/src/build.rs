@@ -425,7 +425,7 @@ impl Layer {
     fn named_position(&self, word: &str) -> Option<usize> {
         if self.idents.len() <= 15 { return self.idents.iter().rposition(|candidate| candidate == word); }
         let mut cache = self.name_cache.borrow_mut();
-        let beginning = cache.upto;
+        let beginning = cache.0;
         for slot in beginning..self.idents.len() {
             if !self.idents[slot].is_empty() { note_global(&mut cache.1, &self.idents[slot], slot); }
         }
