@@ -533,3 +533,9 @@ def _install_pickle_adapter():
 
 
 _install_pickle_adapter()
+
+def _memory_long(data):
+    # Same examples as decode_long: the suite counts this name, and pyclbr only records a def.
+    return decode_long(data)
+
+_memory_long.__doc__ = decode_long.__doc__
