@@ -168,7 +168,7 @@ def _install_pickle_adapter():
     _memory_unpack = unpack
     _memory_integer = int
     _memory_string = str
-    _memory_long = decode_long
+    _memory_long_ref = decode_long
     _memory_long_body = decode_long.__code__
     _memory_maxsize = maxsize
     _memory_all, _memory_type, _memory_length = all, type, len
@@ -254,7 +254,7 @@ def _install_pickle_adapter():
                             and io.BytesIO.readline is _memory_stream_line
                             and unpack is _memory_unpack and maxsize == _memory_maxsize
                             and int is _memory_integer and str is _memory_string
-                            and decode_long is _memory_long and sys.gettrace() is None
+                            and decode_long is _memory_long_ref and sys.gettrace() is None
                             and type(self.memo) is dict and len is _memory_length
                             and (not transferred or self.memo is memo)
                             and (transferred or _memory_all(_memory_type(index) is _memory_integer
