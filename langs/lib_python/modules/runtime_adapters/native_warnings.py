@@ -91,7 +91,10 @@ def _location(stacklevel):
     if type(stacklevel) != type(0) and type(stacklevel) != type(True):
         raise TypeError('stacklevel must be an integer')
     import sys
-    frame = sys._getframe(max(stacklevel, 1) + 1)
+    try:
+        frame = sys._getframe(max(stacklevel, 1) + 1)
+    except ValueError:
+        return ['<sys>', 0, '<sys>']
     return [frame.f_code.co_filename, frame.f_lineno,
             frame.f_globals.get('__name__', '<string>')]
 

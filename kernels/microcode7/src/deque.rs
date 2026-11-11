@@ -194,7 +194,7 @@ impl Machine<'_> {
     }
 
     // Reuse a validated storage plan until namespaces or the declaring lineage change.
-    fn deque_walk_fields(&mut self, thing: &Rc<super::Thing>, schema: &crate::tuples::Sequence) -> Option<Vec<(String, Value)>> {
+    fn deque_walk_fields(&mut self, thing: &crate::data::Hold, schema: &crate::tuples::Sequence) -> Option<Vec<(String, Value)>> {
         let of = thing.blueprint();
         let token = crate::data::BlueprintEntries::epoch();
         let lineage = of.base_epoch.get();

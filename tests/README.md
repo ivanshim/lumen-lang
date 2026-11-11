@@ -23,8 +23,12 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `python-3.14.8/test__colorize.py` | `Lib/test/test__colorize.py`, copied byte for byte (SHA-256 `4eda9d9052d4da5149eba3822348c7e2327e0e0789a45679fdfd88a5c891fbac`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/` | [python/cpython](https://github.com/python/cpython) `Lib/test`: core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, `test_super.py`, `test_csv.py`, `test_configparser.py`, `test_linecache.py`, `test_tokenize.py`, `test_abc.py`, `test_contextlib.py`, `test_ordered_dict.py`, `test_defaultdict.py`, `test_glob.py`, `test_timeit.py`, `test_datetime.py`, `test_getopt.py`, `test_optparse.py`, `test_unpack_ex.py`, `test_baseexception.py`, `test_wave.py`, `test_cmd.py`, `test_nturl2path.py`, `test_codeop.py`, and support data (`mathdata/`, `tokenizedata/`, `configdata/`, `exception_hierarchy.txt`, `audiodata/`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_raise.py`, `test_property.py`, `test_subclassinit.py` | `Lib/test/test_raise.py`, `Lib/test/test_property.py`, `Lib/test/test_subclassinit.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_code_module.py` | `Lib/test/test_code_module.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/code.py` | [python/cpython](https://github.com/python/cpython) `Lib/code.py`, copied byte for byte; `test_code_module.py` imports it | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_genericalias.py` | `Lib/test/test_genericalias.py`, copied byte for byte; language profile 1.0, not yet counted | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_univnewlines.py` | `Lib/test/test_univnewlines.py`, copied byte for byte; SHA-256 `ed8d2ba84cc3850a4fd801cffb071259ec984dc9138bd89925e051c015d9abf3` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_pstats.py`, `pstats.pck` | `Lib/test/test_pstats.py` and its binary fixture `Lib/test/pstats.pck`, copied byte for byte (`pstats.pck` sits beside the tests, where `support.findfile` looks) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_pyclbr.py`, `python-3.14.8/test/{pyclbr_input.py,test_importlib/}` and `langs/lib_python/modules/{pyclbr.py,test/pyclbr_input.py,test/test_pyclbr.py,test/test_importlib/}` | `Lib/test/test_pyclbr.py`, `Lib/test/pyclbr_input.py`, `Lib/test/test_importlib/{__init__,util}.py` and `Lib/pyclbr.py`, copied byte for byte. The embedded `test.test_importlib.util` is that copy with the absent `_testmultiphase` extension import omitted | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_codeccallbacks.py` | `Lib/test/test_codeccallbacks.py` (unchanged; SHA-256 `84306f89bdb5b1074c0b3067c465438170cce614dde70bf11f794cfdbd3ce0c7`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_multibytecodec.py`, `test_codecencodings_{cn,hk,iso2022,jp,kr,tw}.py`, `test/multibytecodec_support.py`, `test/cjkencodings/` | `Lib/test`: the CJK multibyte codec tests, their support module and encoded sample data, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
@@ -128,7 +132,7 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `langs/lib_python/modules/runtime_adapters/native_test_support{,_os_helper}.py`: `_force_run`, POSIX `_rmtree` | `Lib/test/support/__init__.py` and `Lib/test/support/os_helper.py`: unchanged cleanup helpers, restoring permissions after a filesystem error | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/pathlib/{types,_local}.py` | `Lib/pathlib/{types,_local}.py`, unchanged beneath a provenance/PSF header | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_mailbox.py` | `Lib/test/test_mailbox.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
-| `langs/lib_python/modules/mailbox.py` | `Lib/mailbox.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/mailbox.py`, `filecmp.py`, `fileinput.py`, `concurrent/futures/thread.py`, and `email/` | `Lib/mailbox.py`, `Lib/filecmp.py`, `Lib/fileinput.py`, `Lib/concurrent/futures/thread.py`, `Lib/email/`, kept faithful: mailbox and thread byte for byte, filecmp, fileinput and email carry one added provenance line | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test/support/refleak_helper.py`, `langs/lib_python/modules/test/support/refleak_helper.py` | `Lib/test/support/refleak_helper.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/email/` | `Lib/email/`: all 29 Python package sources, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/runtime_adapters/native_test_support.py` | `Lib/test/support/__init__.py`: unchanged `patch`, `reap_children`, stream-warning and environment-tracking helpers | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -230,6 +234,11 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `langs/lib_python/modules/codecs.py`, `stringprep.py`, `encodings/` | `Lib/codecs.py`, `Lib/stringprep.py`, and all 115 `Lib/encodings/` wrapper bodies, copied byte for byte; reused from the signed codec port | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/runtime_adapters/script_helper.py`: `spawn_python`, `interpreter_requires_environment` | `Lib/test/support/script_helper.py`: function bodies copied byte for byte; native subprocess facilities remain in their adapter | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/test/tokenizedata/{badsyntax_3131,badsyntax_pep3120}.py` | `Lib/test/tokenizedata/{badsyntax_3131,badsyntax_pep3120}.py`, copied byte for byte so the embedded package has its existing reference fixtures | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_memoryview.py` | `Lib/test/test_memoryview.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_py_compile.py` | `Lib/test/test_py_compile.py` (unchanged) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_modulefinder.py` | `Lib/test/test_modulefinder.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/modulefinder.py` | `Lib/modulefinder.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/importlib/metadata/__init__.py` | `Lib/importlib/metadata/__init__.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
 | `python-3.14.8/test_patma.py` | `Lib/test/test_patma.py` (unchanged; SHA-256 `ce4a802e1722fdd02ca6da58138a465a050edd360a150bbbba829586b3d15f55`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/{test_pickle,test_copyreg,test_pickletools}.py` and `python-3.14.8/test/{pickletester,picklecommon}.py` | `Lib/test`: pickle, copyreg, pickletools and pickle support classes, unchanged | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -498,6 +507,8 @@ pseudo-terminal helpers are also preserved byte for byte at that commit. `Lib/te
 | `tests/python-3.14.8/archivetestdata/testtar.tar.xz` | `Lib/test/archivetestdata/testtar.tar.xz`, copied byte for byte; SHA-256 `89e0326292b96a5700582a37ebf3d8ba60f1d136772b5cd15b2c2ae653fda188` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `tests/python-3.14.8/archivetestdata/recursion.tar` | `Lib/test/archivetestdata/recursion.tar`, copied byte for byte; SHA-256 `d80f55ac66a2570c8a19d2b1dad7c057cf4c944d9c2f8adaf5bf6c8539881e13` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `tests/python-3.14.8/archivetestdata/zipdir.zip` | `Lib/test/archivetestdata/zipdir.zip`, copied byte for byte; SHA-256 `19cb87050b0fb410da3b88df752c2e1bdaeec77ac052b04febef31a68823cfcb` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_pkgutil.py` | `Lib/test/test_pkgutil.py`, copied byte for byte; SHA-256 `eda1ff4820942ddbe0ca4581f16cb1b8b76ac4d3496fa2b13b27d7ff1a2cef7f` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/logging/handlers.py` | `Lib/logging/handlers.py`, copied byte for byte; SHA-256 `6caf7ccfb6e4e0259332055862050b6002df4bd094041a3d073208940e17d796` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 The `test_module` package is also embedded byte for byte in
 `langs/lib_python/modules/test/test_module/` so that `import test.test_module.<name>`
 resolves at run time, the same arrangement as `test_dataclasses`; its
@@ -683,6 +694,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `pwd.py` | native runtime adapter; no Lib counterpart | `2debbc5e3885729d8155bb782bbdc92c8188bedaccdb16db1865b3e2a1400a28` | `—` |
 | `re.py` | runtime adapter / implementation | `a803e6a068b211d46f3188662b366dc69984ac61bda074c502e82fbadf8824af` | `741a9de729ed8207bfa19db990f8826f1bf3661f33d0970a80c08cd1338ebc35` |
 | `reprlib.py` | unchanged release copy | `b04872e10d76252e44eae50cc785eb0fe478491afc4d7f0825a93f82b2eaba5f` | `b04872e10d76252e44eae50cc785eb0fe478491afc4d7f0825a93f82b2eaba5f` |
+| `runtime_adapters/_pydatetime.py` | runtime adapter / implementation | `cea1c849bf20624d7febc0f153ec28259b9878d1b58ba53306bcffef5e043429` | `53dc54351ddbce3bc03ec1668ca00663baa3f99a8c9b0e5ae7a03fe8573e78cc` |
 | `runtime_adapters/codecs.py` | runtime adapter / implementation | `602c576d2ba5cad87c8ba59c13eebde71e3e49b77bb3083a395c67c9a35e7009` | `718f39b3ea68fe934214d789c5bce3005fa828040b03a72d2f715fc5e2647b7e` |
 | `runtime_adapters/copy.py` | runtime adapter / implementation | `c0a733b4c73e2c77f4b8b769717b771a44758ee169d27a99c755ebf2d16eacc4` | `15154fde290d6e65b5007905689a47a9a5a724822c5e06eec35d9ffbb2a3aa69` |
 | `runtime_adapters/copyreg.py` | runtime adapter / implementation | `bc1e513213cb47877a24e1aa3f8b34c43e85332804558618fa8680739b511ce1` | `6376eb5722806396f5842997ac18add369ea9ac3ff4fcfe1460c41a088cac425` |
@@ -698,7 +710,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `string.py` | runtime adapter / implementation | `87cf93090f882c1dc39ad9b2a9cd0ef9770415936b0aec421617a2cc6c5e9540` | `8c9751e6ae9776b4e94c1c9850b53c0d24e8407196901aeaebffbb1a11a64e05` |
 | `struct.py` | runtime adapter / implementation | `400595da579c406bbe6f5a3dec52d7d728910d4927e878acad68678c0cc8f0d0` | `50c14e55f94957804c1e45e975fedbe8e86f7e1dbb745b150370ff681155370a` |
 | `subprocess.py` | runtime adapter / implementation | `b3947dd75e8d4b84a7e4e84e522c1a5a13f7880571b4f820d3da5f3a2e8e8b2e` | `7fa4af83422024a19e64a80937f6c8094244c3397372a495b348dfbe44a5dd72` |
-| `sys.py` | runtime module; no Lib counterpart | `90019bb1d77e139ef774cc82b3d01e5206435529c869732c137bd8777b5eb443` | `—` |
+| `sys.py` | runtime module; no Lib counterpart | `1d311bf7adf990eb67d10890d02bc318b03d7f981a40117d11b4a1a019ed265d` | `—` |
 | `tabnanny.py` | unchanged release copy | `26d014ee01ce9a469d262b3f1f6a8be341b47ac45eba57472fbd7f96e57a05a2` | `26d014ee01ce9a469d262b3f1f6a8be341b47ac45eba57472fbd7f96e57a05a2` |
 | `tempfile.py` | runtime adapter / implementation | `bc171d211898ecf33be9df1c08a48ce09e3b9e0852e13447b4f508e8d9e1fb63` | `3714372b63f6bc05a5273425d446f6ad3a2112a659c71c321bb4575fd082d634` |
 | `tempfile.py` | unchanged release copy | `3714372b63f6bc05a5273425d446f6ad3a2112a659c71c321bb4575fd082d634` | `3714372b63f6bc05a5273425d446f6ad3a2112a659c71c321bb4575fd082d634` |
@@ -1146,3 +1158,15 @@ written from the format description (`native/zlib/bz2.rs`, reached through
 |---|---|
 | `bz2.py` | `368b9ee55f0b6dbfc81b15e1a17c51cccddb009389eae8e9a7acf2402ca4109a` |
 | `test_bz2.py` | `f25711fabc69655cc4d4380f0e37aaf020538d6a01734b47b90a7e1add3aab0b` |
+
+## Annotationlib reference test
+
+| Directory | Source | Release / tag | Commit / release date | License |
+|---|---|---|---|---|
+| `python-3.14.8/test_annotationlib/` | `Lib/test/test_annotationlib.py`, copied byte for byte as the package's `__init__.py` (SHA-256 `ce99ad6407e4c70d289197b90590dc848696352e36b28555812225a80939b7d0`); its `__main__.py` is the suite's own package runner, not a CPython file | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/` | `Lib/test/test_inspect/{__init__,inspect_stock_annotations,inspect_stringized_annotations,inspect_stringized_annotations_2,inspect_stringized_annotations_pep695}.py`, copied byte for byte: the support modules `test_annotationlib` imports (`9b2cce72fa8c7a7e688a79d55e15ea4914078c81058b0289ceb80cd5b69821c9`, `0c9c665429a34dc1ec6832ff33d62ed05798ce0953dd681481b6330eb84a3c62`, `3100c0f9c80ee313ba939ba7870a6da629f55b3b6afc2ba2ba952706cb2bd934`, `e9ea40815a00612f56b6534c812c10766ed9ba2fc497219737d1577ecc1ccbbb`, `ebc8b2025fb8c53022db62cdb5bf37d6ad00cb641c5a1824aed3dc346b777258`); `fix/stdlib-inspect` owns the rest of the package | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+
+`Lib/test/test_annotationlib.py` is a flat module upstream and carries no
+`unittest.main()` of its own, so a plain file run executes nothing. The suite
+registers it as an executable test package, the arrangement `test_dataclasses`
+and `test_module` already use; the test body itself is unchanged.

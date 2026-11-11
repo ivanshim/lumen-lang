@@ -184,6 +184,26 @@ pub fn apply(args: &[Value]) -> Result<Value,String> {
                     b'e'|b'f'|b'd' => pack_float(floating(&value)?,field.code)?,
                     b'F'|b'D' => { let Value::Tuple(pair)=value else {return Err(complaint("required argument is not a complex"));}; let mut out=pack_float(floating(&pair[0])?,field.code)?; out.extend(pack_float(floating(&pair[1])?,field.code)?); out },
                     _ => {
+                        if let Value::Small(word) = value {
+                            if field.width <= 8 {
+                                let signed = b"bhilqn".contains(&field.code);
+                                let within = if signed {
+                                    let shift = (field.width * 8 - 1) as u32;
+                                    if shift >= 63 { true } else { word >= -(1i64 << shift) && word <= (1i64 << shift) - 1 }
+                                } else if field.code == b'P' {
+                                    field.width == 8 || (word >= -(1i64 << (field.width * 8 - 1)) && word < (1i64 << (field.width * 8)))
+                                } else {
+                                    word >= 0 && (field.width == 8 || (word as u64) < (1u64 << (field.width * 8)))
+                                };
+                                if within {
+                                    let mut bytes_le = word.to_le_bytes()[..field.width].to_vec();
+                                    if !format.little { bytes_le.reverse(); }
+                                    let start = field.at + j * field.width;
+                                    output[start..start + field.width].copy_from_slice(&bytes_le);
+                                    continue;
+                                }
+                            }
+                        }
                         let integer=match value {Value::Small(n)=>BigInt::from(n),Value::Huge(n)=>(*n).clone(),Value::Flag(b)=>BigInt::from(u8::from(b)),_=>return Err(complaint("required argument is not an integer"))};
                         let signed=b"bhilqn".contains(&field.code);
                         let bits=field.width*8; let limit=BigInt::from(1u8) << (bits-usize::from(signed)); let low=if signed {-&limit} else {BigInt::zero()}; let high=&limit-1;

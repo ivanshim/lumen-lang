@@ -194,6 +194,12 @@ class _Flags:
     context_aware_warnings = 0
 
 flags = _Flags()
+# Development mode implies the 'default' warning option, as CPython's -X dev does.
+# Read startup state without importing posix through the dynamic flag accessor.
+if ('default' not in warnoptions
+        and (_path_host[3].get('LUMEN_PYTHON_DEV_MODE') == '1'
+             or (not _ignore_environment and _path_host[3].get('PYTHONDEVMODE')))):
+    warnoptions.insert(0, 'default')
 
 # Stub: compatibility records advertise binary64 and 32-bit limbs;
 # they are not a probe of every arithmetic operation in the kernel.
@@ -262,6 +268,26 @@ def set_int_max_str_digits(maxdigits):
     if maxdigits != 0 and maxdigits < 640:
         raise ValueError('maxdigits must be 0 or larger than 640')
     _int_max_str_digits = maxdigits
+
+# PYTHONIOENCODING is encoding[:errors]. An empty encoding leaves the
+# stream's own. Stderr keeps backslashreplace so a traceback can still
+# be written; the other streams use strict when no handler is named.
+def _apply_io_encoding(stream):
+    if _ignore_environment:
+        return
+    value = _host_environment('environ')[1].get(b'PYTHONIOENCODING')
+    if not value:
+        return
+    raw = value.decode('utf-8', 'surrogateescape') if isinstance(value, bytes) else value
+    encoding, sep, errors = raw.partition(':')
+    if encoding:
+        stream.encoding = encoding
+    if stream._fd == 2:
+        return
+    if sep and errors:
+        stream.errors = errors
+    else:
+        stream.errors = 'strict'
 
 # Standard streams validate their descriptor before asking os.isatty.
 class _StandardStream:
@@ -333,6 +359,7 @@ class _Output(_StandardStream):
     _fd = 1
     def __init__(self):
         self.buffer = _BinaryOutput()
+        _apply_io_encoding(self)
     def write(self, *args, **keywords):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
@@ -350,6 +377,7 @@ class _Error(_StandardStream):
     _fd = 2
     def __init__(self):
         self.buffer = _BinaryOutput(True)
+        _apply_io_encoding(self)
     def write(self, *args, **keywords):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
@@ -381,6 +409,7 @@ class _Input(_BinaryInput):
 
     def __init__(self):
         self.buffer = _BinaryInput()
+        _apply_io_encoding(self)
         self._newline = None
         self._seen = 0
         self._held = ''
@@ -432,10 +461,22 @@ class _Input(_BinaryInput):
         return text
 
     def _pull(self, count=-1, line=False):
-        # A one-character line pull resolves CR without waiting for a later LF.
-        if line or count <= 0:
-            count = 1
-        raw = _host_stream_read(count, False)
+        # A line pull takes a whole chunk: reading a reply one character at a
+        # time made a long line cost its length in calls.  The stream stops
+        # the chunk at a newline, so a prompt still answers on Enter.
+        if line:
+            # A held CR only needs one more character to decide between CR
+            # and CRLF; a chunk pull would wait for another line ending.
+            if self._held:
+                raw = _host_stream_read(1, False)
+            else:
+                if count <= 0:
+                    count = self._CHUNK
+                raw = _host_stream_read(count, True)
+        else:
+            if count <= 0:
+                count = 1
+            raw = _host_stream_read(count, False)
         if raw == '':
             self._drained = True
             self._ready += self._decoded('', True)
@@ -494,9 +535,12 @@ class _Input(_BinaryInput):
         while not self._drained:
             if self._line_ready():
                 break
-            if size is not None and size >= 0 and len(self._ready) >= size:
-                break
-            self._pull(line=True)
+            if size is not None and size >= 0:
+                if len(self._ready) >= size:
+                    break
+                self._pull(size - len(self._ready), line=True)
+            else:
+                self._pull(line=True)
         if not self._ready:
             return ''
         stop = self._line_stop()
@@ -550,6 +594,12 @@ def exit(*args, **kwargs):
     if len(args) > 1:
         raise TypeError('exit() takes at most 1 argument (%d given)' % len(args))
     raise SystemExit(args[0] if args else None)
+
+# The reference keeps sys.exit a built-in function, not a routine the
+# library writes. A native call entry over the reader above makes the
+# kind questions answer a builtin while the same body still gives the
+# status its meaning.
+exit = __math('method', 'exit', exit)
 
 # The default answer to breakpoint(): a name in $PYTHONBREAKPOINT picks
 # what runs in its place, '0' turns it off, and an unset or empty name
@@ -693,7 +743,8 @@ def displayhook(value):
         return
     import builtins
     builtins._ = None
-    stdout.write(repr(value) + '\n')
+    stdout.write(repr(value))
+    stdout.write('\n')
     builtins._ = value
 
 
@@ -701,7 +752,8 @@ __displayhook__ = displayhook
 
 
 def _report_unraisable(exc_value, exc_traceback, about, kind):
-    if exc_traceback is None:
+    # A failed native signal write has no Python traceback.
+    if exc_traceback is None and kind != 'signal':
         try:
             raise exc_value
         except BaseException as raised:
@@ -714,6 +766,8 @@ def _report_unraisable(exc_value, exc_traceback, about, kind):
         message = 'Exception ignored while finalizing coroutine ' + repr(about)
     elif kind == 'generator':
         message = 'Exception ignored while closing generator ' + repr(about)
+    elif kind == 'signal':
+        message = 'Exception ignored while trying to write to the signal wakeup fd'
     else:
         message = None
     target = None if kind in ('generator', 'coroutine', 'file') else about
@@ -885,8 +939,9 @@ stdlib_module_names = frozenset(__load_module('', 'names'))
 # Source and native modules participate in the same finder protocol.
 
 
+# Count live Python holdings; the native tracing API retains lifetime markers.
 def getrefcount(object, /):
-    return __trace_native__(5, object)
+    return __program_namespace('refcount', object)
 
 
 def get_coroutine_origin_tracking_depth():

@@ -19,7 +19,7 @@ use std::hash::{BuildHasherDefault, Hasher};
 use std::rc::{Rc, Weak};
 
 use crate::code::Routine;
-use crate::value::{Class, CursorSource, Descriptor, Ending, Generator, Instance, Members, Phase, Value};
+use crate::value::{Class, CursorSource, Descriptor, Ending, Generator, Instance, Keep, Members, Phase, Value};
 
 thread_local! {
     static INTERNED_FAMILIES: RefCell<Vec<Weak<Class>>> = const { RefCell::new(Vec::new()) };
@@ -80,14 +80,14 @@ impl Hold {
         Some(match self {
             Hold::Native(operation, spelling) => Value::Native(*operation, spelling.clone()),
             Hold::Octets(changeable, word) => Value::ByteKind(*changeable, word.clone()),
-            Hold::Object(w) => Value::Object(w.upgrade()?),
+            Hold::Object(w) => Value::Object(crate::value::Keep::upgrade(&w)?),
             Hold::Container(w) => Value::Bond(w.upgrade()?),
             Hold::Class(w) => Value::Class(w.upgrade()?),
             Hold::Generator(w) => Value::Generator(w.upgrade()?),
             Hold::Set(w) => Value::Set(w.upgrade()?),
             Hold::Routine(w) => Value::Routine(w.upgrade()?),
             Hold::Code(w) => Value::Adapter(w.upgrade()?),
-            Hold::Method(o, r, stamp) => Value::Method(o.upgrade()?, r.upgrade()?, stamp.upgrade()?),
+            Hold::Method(o, r, stamp) => Value::Method(crate::value::Keep::upgrade(&o)?, r.upgrade()?, stamp.upgrade()?),
             Hold::Lasts(value) => value.clone(),
         })
     }
@@ -179,7 +179,7 @@ enum WeakTargetKey {
 fn weak_target_key(value: &Value) -> Option<WeakTargetKey> {
     if let Value::Native(_, word) = value { return Some(WeakTargetKey::Builtin(word.clone())); }
     if let Value::Class(kind) = value { return Some(WeakTargetKey::Type(Rc::as_ptr(kind) as usize)); }
-    if let Value::Object(instance) = value { return Some(WeakTargetKey::Object(Rc::as_ptr(instance) as usize)); }
+    if let Value::Object(instance) = value { return Some(WeakTargetKey::Object(crate::value::Keep::as_ptr(instance) as usize)); }
     None
 }
 
@@ -203,7 +203,7 @@ thread_local! {
     static OBSERVED: RefCell<HashSet<usize, BuildHasherDefault<PlaceHasher>>> = RefCell::new(HashSet::default());
     static DIED: Cell<bool> = const { Cell::new(false) };
     /// Objects rebuilt for their last words, with the routine to say them.
-    static LAST_WORDS: RefCell<Vec<(Rc<Instance>, Value)>> = const { RefCell::new(Vec::new()) };
+    static LAST_WORDS: RefCell<Vec<(Keep, Value)>> = const { RefCell::new(Vec::new()) };
     /// Suspended walks rebuilt so that their last parts may run.
     static UNFINISHED: RefCell<Vec<Rc<RefCell<Generator>>>> = const { RefCell::new(Vec::new()) };
     /// Objects whose last words were said already, by where they live.
@@ -211,7 +211,12 @@ thread_local! {
     /// Every live weakref object, without owning it. Collection clears
     /// only the references that existed before finalization began.
     /// A finalizable instance stays itself while its last words run.
-    static ANCHORED: RefCell<Vec<Rc<Instance>>> = const { RefCell::new(Vec::new()) };
+    static ANCHORED: RefCell<Vec<Keep>> = const { RefCell::new(Vec::new()) };
+    // Addresses already anchored, so a repeat anchor does not walk the vector.
+    static ANCHORED_ADDRS: RefCell<HashSet<usize, BuildHasherDefault<PlaceHasher>>> = RefCell::new(HashSet::default());
+    /// Anchored objects whose only remaining handle is that list.
+    static ANCHOR_SOLO: Cell<i32> = const { Cell::new(0) };
+    static ANCHOR_TICK: Cell<u32> = const { Cell::new(0) };
     /// Everything whose going somebody could notice: the weakly held
     /// values and the objects with last words. Only rounds that hold one
     /// of these are worth looking for.
@@ -244,7 +249,7 @@ pub fn clear_group(group: &[Value]) -> Vec<(Value, Value)> {
             // An unreachable weakref is cleared too, but its callback
             // is not kept alive or called on the group's behalf.
             if places.contains(&(reference.bearer.as_ptr() as usize)) { continue; }
-            if let (Some(bearer), Some(callback)) = (reference.bearer.upgrade(), &*reference.told.borrow()) {
+            if let (Some(bearer), Some(callback)) = (crate::value::Keep::upgrade(&reference.bearer), &*reference.told.borrow()) {
                 notices.push((callback.clone(), Value::Object(bearer)));
             }
         }
@@ -258,11 +263,38 @@ pub fn clear_group(group: &[Value]) -> Vec<(Value, Value)> {
     notices
 }
 
-pub fn anchor(object: &Rc<Instance>) {
-    let _ = ANCHORED.try_with(|all| {
-        let mut all = all.borrow_mut();
-        if !all.iter().any(|item| Rc::ptr_eq(item, object)) { all.push(object.clone()); }
+pub fn anchor(object: &Keep) {
+    let addr = crate::value::Keep::as_ptr(object) as usize;
+    let added = ANCHORED.try_with(|all| {
+        let known = ANCHORED_ADDRS.try_with(|book| book.borrow().contains(&addr)).unwrap_or(false);
+        if !known {
+            let mut all = all.borrow_mut();
+            // The list's own handle is taken before the flag is raised,
+            // so this clone is not mistaken for a share of an anchored object.
+            all.push(object.clone());
+        }
+        object.anchored.set(true);
         let _ = PENDING.try_with(|flags| flags.set(flags.get() | 2));
+        !known
+    }).unwrap_or(false);
+    if added {
+        let _ = ANCHORED_ADDRS.try_with(|book| { book.borrow_mut().insert(addr); });
+    }
+}
+
+pub fn note_anchor_alone() {
+    let _ = ANCHOR_SOLO.try_with(|slot| {
+        let now = slot.get();
+        slot.set(now + 1);
+    });
+}
+
+pub fn note_anchor_shared() {
+    let _ = ANCHOR_SOLO.try_with(|slot| {
+        let now = slot.get();
+        if now > 0 {
+            slot.set(now - 1);
+        }
     });
 }
 
@@ -270,26 +302,59 @@ pub fn anchored_values() -> Vec<Value> {
     ANCHORED.try_with(|all| all.borrow().iter().cloned().map(Value::Object).collect()).unwrap_or_default()
 }
 
-pub fn release_anchor(object: &Rc<Instance>) {
+pub fn release_anchor(object: &Keep) {
+    let addr = crate::value::Keep::as_ptr(object) as usize;
+    let _ = ANCHORED_ADDRS.try_with(|book| { book.borrow_mut().remove(&addr); });
     let _ = ANCHORED.try_with(|objects| {
         let mut objects = objects.borrow_mut();
-        objects.retain(|item| !Rc::ptr_eq(item, object));
+        let listed = objects.iter().any(|item| Keep::ptr_eq(item, object));
+        if listed {
+            let only_handle = Keep::strong_count(object) == 1;
+            object.anchored.set(false);
+            if only_handle {
+                note_anchor_shared();
+            }
+            objects.retain(|item| !Keep::ptr_eq(item, object));
+        }
         if objects.is_empty() { let _ = PENDING.try_with(|flags| flags.set(flags.get() & 1)); }
     });
 }
 
 pub fn release_all_anchors() {
-    let _ = ANCHORED.try_with(|all| all.borrow_mut().clear());
+    let _ = ANCHORED.try_with(|all| {
+        let mut all = all.borrow_mut();
+        for item in all.iter() {
+            item.anchored.set(false);
+        }
+        all.clear();
+    });
+    let _ = ANCHORED_ADDRS.try_with(|book| book.borrow_mut().clear());
+    let _ = ANCHOR_SOLO.try_with(|slot| slot.set(0));
     let _ = PENDING.try_with(|flags| flags.set(flags.get() & 1));
 }
 
 fn anchor_ready() -> bool {
-    ANCHORED.try_with(|all| all.borrow().iter().any(|item| Rc::strong_count(item) == 1)).unwrap_or(false)
+    let turn = ANCHOR_TICK.try_with(|tick| {
+        let next = tick.get().wrapping_add(1);
+        tick.set(next);
+        next
+    }).unwrap_or(0);
+    // A rare full count repairs a missed transition without putting the
+    // walk back on the ordinary step.
+    if turn & 2047 == 0 {
+        let found = ANCHORED.try_with(|all| {
+            all.borrow().iter().filter(|item| Keep::strong_count(item) == 1).count()
+        }).unwrap_or(0);
+        let _ = ANCHOR_SOLO.try_with(|slot| slot.set(found as i32));
+        return found > 0;
+    }
+    ANCHOR_SOLO.try_with(|slot| slot.get() > 0).unwrap_or(false)
 }
 
 /// Tell the module the name a class gives its last words. Until this
 /// is called, nothing that dies is looked at.
 pub fn name_last_word(word: Option<String>) {
+    crate::value::bump_members_revision();
     let _ = LAST_WORD.try_with(|w| *w.borrow_mut() = word);
 }
 
@@ -317,22 +382,32 @@ fn note_death() {
 
 /// The routine a class says its last words with, where it has one.
 pub fn last_word_of(class: &Rc<Class>) -> Option<Value> {
+    let now = crate::value::members_revision();
+    let stable = class.base_epoch.get() == 0;
+    if stable && class.shared.no_last_word.get() == now {
+        return None;
+    }
     LAST_WORD.try_with(|w| {
         let name = w.borrow();
-        let name = name.as_deref()?;
-        if let Some(program) = class.method(name) {
-            return Some(Value::Routine(program.clone()));
+        let Some(name) = name.as_deref() else {
+            if stable { class.shared.no_last_word.set(now); }
+            return None;
+        };
+        let found = class.method(name).map(|program| Value::Routine(program.clone())).or_else(|| {
+            let holder = class.holder(name)?;
+            let indexed = holder.python_names.borrow().is_some(); holder.shared.read(name, indexed)
+        });
+        if found.is_none() && stable {
+            class.shared.no_last_word.set(now);
         }
-        let holder = class.holder(name)?;
-        let answer=holder.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.clone());
-        answer
+        found
     }).ok().flatten()
 }
 
 /// Whether an object's last words are still to be said; saying so
 /// marks them said, so they are said once.
-pub fn first_words(object: &Rc<Instance>) -> bool {
-    let here = Rc::as_ptr(object) as usize;
+pub fn first_words(object: &Keep) -> bool {
+    let here = crate::value::Keep::as_ptr(object) as usize;
     SPOKEN.try_with(|s| s.borrow_mut().insert(here)).unwrap_or(false)
 }
 
@@ -342,12 +417,12 @@ pub fn departing(dying: &mut Instance) {
     let here = dying as *const Instance as usize;
     // Once the thread's own storage is gone, at the very end, nothing
     // is queued: there is no engine left to speak.
-    let spoken = SPOKEN.try_with(|s| s.borrow_mut().remove(&here)).unwrap_or(true);
+    let spoken = SPOKEN.try_with(|s| { let mut set = s.borrow_mut(); !set.is_empty() && set.remove(&here) }).unwrap_or(true);
     if !spoken {
         if let Some(words) = last_word_of(&dying.class) {
             let fields = std::mem::take(dying.fields.get_mut());
-            let again = Rc::new(Instance { replacement_class: RefCell::new(dying.replacement_class.borrow().clone()), class: dying.class.clone(), fields: RefCell::new(fields), mark: dying.mark });
-            let _ = SPOKEN.try_with(|s| s.borrow_mut().insert(Rc::as_ptr(&again) as usize));
+            let again = Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(dying.replacement_class.borrow().clone()), class: dying.class.clone(), fields: RefCell::new(fields), mark: dying.mark });
+            let _ = SPOKEN.try_with(|s| s.borrow_mut().insert(crate::value::Keep::as_ptr(&again) as usize));
             let _ = LAST_WORDS.try_with(|q| q.borrow_mut().push((again, words)));
             wake();
         }
@@ -384,12 +459,20 @@ pub fn plain_departing(address: usize) {
 /// the walks to close, and the watchers whose value has gone, each with
 /// the reference object to hand it. Clears the flag; more may gather
 /// while the engine works, so it asks again until nothing comes.
-pub fn settle() -> (Vec<(Rc<Instance>, Value)>, Vec<Rc<RefCell<Generator>>>, Vec<(Value, Value)>) {
+pub fn settle() -> (Vec<(Keep, Value)>, Vec<Rc<RefCell<Generator>>>, Vec<(Value, Value)>) {
     let _ = PENDING.try_with(|p| p.set(p.get() & 2));
     let mut words = LAST_WORDS.try_with(|q| std::mem::take(&mut *q.borrow_mut())).unwrap_or_default();
     let ready = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
-        let (ready, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|item| Rc::strong_count(item) == 1);
+        let (ready, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|item| Keep::strong_count(item) == 1);
+        for held in &ready {
+            held.anchored.set(false);
+        }
+        let _ = ANCHORED_ADDRS.try_with(|book| {
+            let mut book = book.borrow_mut();
+            for item in &ready { book.remove(&(crate::value::Keep::as_ptr(item) as usize)); }
+        });
+        let _ = ANCHOR_SOLO.try_with(|slot| slot.set(0));
         if kept.is_empty() { let _ = PENDING.try_with(|flags| flags.set(flags.get() & 1)); }
         *all = kept;
         ready
@@ -411,7 +494,7 @@ pub fn settle() -> (Vec<(Rc<Instance>, Value)>, Vec<Rc<RefCell<Generator>>>, Vec
                     kept.push(faint);
                     continue;
                 }
-                if let (Some(bearer), Some(told)) = (faint.bearer.upgrade(), faint.told.borrow_mut().take()) {
+                if let (Some(bearer), Some(told)) = (crate::value::Keep::upgrade(&faint.bearer), faint.told.borrow_mut().take()) {
                     gone.push((told, Value::Object(bearer)));
                 }
             }
@@ -436,7 +519,7 @@ pub fn settle() -> (Vec<(Rc<Instance>, Value)>, Vec<Rc<RefCell<Generator>>>, Vec
 pub fn hold_of(value: &Value) -> Option<Hold> {
     match value {
         Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => hold_of(&cell.borrow()),
-        Value::Object(o) => Some(Hold::Object(Rc::downgrade(o))),
+        Value::Object(o) => Some(Hold::Object(crate::value::Keep::downgrade(o))),
         Value::Native(op, word) if op.names_kind() => Some(Hold::Native(*op, word.clone())),
         Value::ByteKind(changeable, word) => Some(Hold::Octets(*changeable, word.clone())),
         Value::Class(c) => Some(Hold::Class(Rc::downgrade(c))),
@@ -444,7 +527,7 @@ pub fn hold_of(value: &Value) -> Option<Hold> {
         Value::Set(s) => Some(Hold::Set(Rc::downgrade(s))),
         Value::Routine(r) => Some(Hold::Routine(Rc::downgrade(r))),
         Value::Adapter(parts) if parts.0 == 7 => Some(Hold::Code(Rc::downgrade(parts))),
-        Value::Method(o, r, stamp) => Some(Hold::Method(Rc::downgrade(o), Rc::downgrade(r), Rc::downgrade(stamp))),
+        Value::Method(o, r, stamp) => Some(Hold::Method(crate::value::Keep::downgrade(o), Rc::downgrade(r), Rc::downgrade(stamp))),
         _ => None,
     }
 }
@@ -548,7 +631,7 @@ pub struct Graph {
 fn place_of(value: &Value) -> Option<usize> {
     Some(match value {
         Value::Faint(r) => Rc::as_ptr(r) as *const () as usize,
-        Value::Object(o) | Value::Fields(o) => Rc::as_ptr(o) as *const () as usize,
+        Value::Object(o) | Value::Fields(o) => crate::value::Keep::as_ptr(o) as *const () as usize,
         Value::Class(c) => Rc::as_ptr(c) as *const () as usize,
         Value::Generator(g) => Rc::as_ptr(g) as *const () as usize,
         Value::Set(s) | Value::SetWalk(s, _) => Rc::as_ptr(s) as *const () as usize,
@@ -579,7 +662,7 @@ fn unset_slot(value: &Value) -> bool {
 fn holds_on(value: &Value) -> usize {
     match value {
         Value::Faint(r) => Rc::strong_count(r) - usize::from(r.told.borrow().is_some()),
-        Value::Object(o) | Value::Fields(o) => Rc::strong_count(o),
+        Value::Object(o) | Value::Fields(o) => crate::value::Keep::strong_count(o),
         Value::Class(c) => Rc::strong_count(c),
         Value::Generator(g) => Rc::strong_count(g),
         Value::Set(s) | Value::SetWalk(s, _) => Rc::strong_count(s),
@@ -610,19 +693,24 @@ fn cycle_edge(value: &Value) -> bool {
 /// being written to just now yields nothing: what it holds then counts
 /// as held from outside, which errs on the side of keeping.
 fn reaches(value: &Value, out: &mut Vec<Value>) {
+    reaches_for(value, out, false);
+}
+
+// Include inline holdings for ownership queries while GC follows cycle edges only.
+fn reaches_for(value: &Value, out: &mut Vec<Value>, include_inline: bool) {
     match value {
         Value::Faint(r) => out.extend(r.told.borrow().iter().filter(|value| cycle_edge(value)).cloned()),
         Value::Object(o) | Value::Fields(o) => {
             out.push(Value::Class(o.class.clone()));
             if let Ok(fields) = o.fields.try_borrow() {
-                out.extend(fields.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
+                out.extend(fields.iter().filter(|(_, value)| include_inline || cycle_edge(value)).map(|(_, v)| v.clone()));
             }
         }
         Value::Class(c) => {
-            out.extend(c.fields.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
-            out.extend(c.constants.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
+            out.extend(c.fields.iter().filter(|(_, value)| include_inline || cycle_edge(value)).map(|(_, v)| v.clone()));
+            out.extend(c.constants.iter().filter(|(_, value)| include_inline || cycle_edge(value)).map(|(_, v)| v.clone()));
             if let Ok(shared) = c.shared.try_borrow() {
-                out.extend(shared.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
+                out.extend(shared.iter().filter(|(_, value)| include_inline || cycle_edge(value)).map(|(_, v)| v.clone()));
             }
             if let Ok(bases) = c.python_bases.try_borrow() { out.extend(bases.iter().cloned()); }
             out.extend(c.methods.iter().map(|(_, p)| Value::Routine(p.clone())));
@@ -635,14 +723,14 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                 out.push(g.async_finalizer.clone());
                 out.extend(g.trace_frame.iter().map(|f| Value::Object(f.clone())));
                 out.extend(g.program.iter().map(|p| Value::Routine(p.clone())));
-                out.extend(g.frame.iter().filter(|value| cycle_edge(value)).cloned());
-                out.extend(g.stack.iter().filter(|value| cycle_edge(value)).cloned());
-                out.extend(g.items.iter().filter(|value| cycle_edge(value)).cloned());
-                out.extend(g.handed.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(g.frame.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+                out.extend(g.stack.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+                out.extend(g.items.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+                out.extend(g.handed.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
                 out.push(g.returned.clone());
-                out.extend(g.delegate.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(g.delegate.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
                 out.push(g.sent.clone());
-                out.extend(g.current.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(g.current.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
                 out.extend(g.watched.iter().map(|(cell, _)| Value::Bond(cell.clone())));
                 out.extend(g.reversed_walk.iter().map(|(cell, _, _)| Value::Bond(cell.clone())));
                 for step in &g.resume {
@@ -656,8 +744,8 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                         _ => {}
                     }
                 }
-                out.extend(g.held.iter().filter(|value| cycle_edge(value)).cloned());
-                out.extend(g.hurled.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(g.held.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+                out.extend(g.hurled.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
             }
         }
         Value::Set(s) | Value::SetWalk(s, _) => {
@@ -668,26 +756,28 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         Value::Routine(r) => {
             out.extend(r.code_snapshot.get().map(|image| Value::Routine(image.clone())));
             out.extend(r.annotation.iter().map(|p| Value::Routine(p.clone())));
-            out.extend(r.code_constants.iter().filter(|value| cycle_edge(value)).cloned());
-            out.extend(r.globe.iter().filter(|value| cycle_edge(value)).cloned());
-            out.extend(r.born.iter().filter(|value| cycle_edge(value)).cloned());
-            out.extend(r.held.iter().filter(|value| cycle_edge(value)).cloned());
-            out.extend(r.enclosed.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
-            // co_consts is a second copy. The stream still owns the
-            // originals, and a nested routine's globals point at its
-            // module, so those copies have to count or the module stays.
-            for word in r.instrs.iter() {
-                let carried = match word {
-                    crate::code::Instr::Const(value) => Some(value),
-                    crate::code::Instr::Bump { by, .. } => Some(&**by),
-                    crate::code::Instr::Dyad { a, b, .. } | crate::code::Instr::SkipCmp { a, b, .. } => {
-                        if let crate::code::Operand::Const(value) = a { if cycle_edge(value) { out.push((**value).clone()); } }
-                        if let crate::code::Operand::Const(value) = b { if cycle_edge(value) { out.push((**value).clone()); } }
-                        None
-                    }
-                    _ => None,
-                };
-                if let Some(value) = carried { if cycle_edge(value) { out.push(value.clone()); } }
+            out.extend(r.code_constants.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+            out.extend(r.globe.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+            out.extend(r.born.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+            out.extend(r.held.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+            out.extend(r.enclosed.iter().filter(|(_, value)| include_inline || cycle_edge(value)).map(|(_, v)| v.clone()));
+            if !include_inline {
+                // co_consts is a second copy. The stream still owns the
+                // originals, and a nested routine's globals point at its
+                // module, so those copies have to count or the module stays.
+                for word in r.instrs.iter() {
+                    let carried = match word {
+                        crate::code::Instr::Const(value) => Some(value),
+                        crate::code::Instr::Bump { by, .. } => Some(&**by),
+                        crate::code::Instr::Dyad { a, b, .. } | crate::code::Instr::SkipCmp { a, b, .. } => {
+                            if let crate::code::Operand::Const(value) = a { if cycle_edge(value) { out.push((**value).clone()); } }
+                            if let crate::code::Operand::Const(value) = b { if cycle_edge(value) { out.push((**value).clone()); } }
+                            None
+                        }
+                        _ => None,
+                    };
+                    if let Some(value) = carried { if cycle_edge(value) { out.push(value.clone()); } }
+                }
             }
             if let Ok(revised) = r.revised.try_borrow() {
                 out.extend(revised.iter().map(|p| Value::Routine(p.clone())));
@@ -698,12 +788,12 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                 out.push(inner.clone());
             }
         }
-        Value::Array(a) | Value::Tuple(a) => out.extend(a.iter().filter(|value| cycle_edge(value)).cloned()),
-        Value::Slice(parts) => out.extend(parts.iter().filter(|value| cycle_edge(value)).cloned()),
+        Value::Array(a) | Value::Tuple(a) => out.extend(a.iter().filter(|value| include_inline || cycle_edge(value)).cloned()),
+        Value::Slice(parts) => out.extend(parts.iter().filter(|value| include_inline || cycle_edge(value)).cloned()),
         Value::Map(m) => {
             for (k, v) in m.iter() {
-                if cycle_edge(k) { out.push(k.clone()); }
-                if cycle_edge(v) { out.push(v.clone()); }
+                if include_inline || cycle_edge(k) { out.push(k.clone()); }
+                if include_inline || cycle_edge(v) { out.push(v.clone()); }
             }
         }
         Value::Hashed(p) | Value::Tie(p) => {
@@ -711,12 +801,12 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
             out.push(p.1.clone());
         }
         Value::ValueMethod(p) | Value::View(p) => out.push(p.0.clone()),
-        Value::Adapter(a) => out.extend(a.1.iter().filter(|value| cycle_edge(value)).cloned()),
+        Value::Adapter(a) => out.extend(a.1.iter().filter(|value| include_inline || cycle_edge(value)).cloned()),
         Value::Descriptor(d) => match &**d {
             Descriptor::Static(v) | Descriptor::Class(v) => out.push(v.clone()),
             Descriptor::Property(a, b) => {
                 out.push(a.clone());
-                out.extend(b.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(b.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
             }
             Descriptor::Bound(a, b) => {
                 out.push(a.clone());
@@ -726,18 +816,18 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         Value::Walking(w) => {
             if let Ok(w) = w.try_borrow() {
                 out.push(w.0.clone());
-                out.extend(w.1.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(w.1.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
             }
         }
         Value::Walk(w) => {
             if let Ok(w) = w.try_borrow() {
-                out.extend(w.0.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(w.0.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
             }
         }
         Value::Cursor(c) => {
             if let Ok(c) = c.try_borrow() {
-                out.extend(c.pending.iter().filter(|value| cycle_edge(value)).cloned());
-                out.extend(c.origin.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(c.pending.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+                out.extend(c.origin.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
                 match &c.source {
                     CursorSource::Items(items, _) => out.push(Value::Tuple(items.clone())),
                     CursorSource::Living(cell, _) => out.push(Value::Bond(cell.clone())),
@@ -749,8 +839,8 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                         if let CursorSource::Called(_, _, Some(v)) = &c.source { out.push(v.clone()); }
                     }
                     CursorSource::Combined(rows, work, _) => {
-                        out.extend(rows.iter().filter(|value| cycle_edge(value)).cloned());
-                        out.extend(work.iter().filter(|value| cycle_edge(value)).cloned());
+                        out.extend(rows.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+                        out.extend(work.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
                     }
                     CursorSource::Counted(..) => {}
                 }
@@ -762,6 +852,26 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         }
         _ => {}
     }
+}
+
+/// How many live holds the given roots reach onto a value, counting
+/// every occurrence in the whole reachable graph. An inline value has no
+/// allocation counter of its own, so this is the ownership a program may
+/// honestly ask after: the holds it actually has, nowhere invented.
+pub fn count_holds(roots: &[Value], target: &Value) -> usize {
+    let mut seen: HashSet<usize> = HashSet::new();
+    let mut open: Vec<Value> = roots.to_vec();
+    let mut count = 0usize;
+    while let Some(value) = open.pop() {
+        if value.same_place(target) { count += 1; }
+        if let Some(place) = place_of(&value) {
+            if !seen.insert(place) { continue; }
+        }
+        let mut children = Vec::new();
+        reaches_for(&value, &mut children, true);
+        open.extend(children);
+    }
+    count
 }
 
 /// Follow inline values held by the running engine until their shared
@@ -1052,7 +1162,7 @@ pub fn reusable(object: &Value, class: &Rc<Class>) -> Option<Value> {
                 let reference = handle.upgrade()?;
                 if reference.cleared.get() || reference.told.borrow().is_some() { return None; }
                 if !same_target(&reference.revive()?, &object) { return None; }
-                let instance = reference.bearer.upgrade()?;
+                let instance = crate::value::Keep::upgrade(&reference.bearer)?;
                 Rc::ptr_eq(&instance.class_now(), class).then_some(Value::Object(instance))
             })
         });
@@ -1064,12 +1174,12 @@ pub fn reusable(object: &Value, class: &Rc<Class>) -> Option<Value> {
             // Compare pointer-backed targets before upgrading unrelated bearers.
             let matches = match &reference.hold {
                 Hold::Class(saved) => match &object { Value::Class(live) => saved.as_ptr() == Rc::as_ptr(live), _ => false },
-                Hold::Object(saved) => match &object { Value::Object(live) => saved.as_ptr() == Rc::as_ptr(live), _ => false },
+                Hold::Object(saved) => match &object { Value::Object(live) => saved.as_ptr() == crate::value::Keep::as_ptr(live), _ => false },
                 Hold::Native(operation, spelling) => matches!(&object, Value::Native(op, word) if operation == op && spelling == word),
                 _ => same_target(&reference.revive()?, &object),
             };
             if !matches { return None; }
-            let bearer = reference.bearer.upgrade()?;
+            let bearer = crate::value::Keep::upgrade(&reference.bearer)?;
             if !Rc::ptr_eq(&bearer.class_now(), class) { return None; }
             Some(Value::Object(bearer))
         });
@@ -1088,7 +1198,7 @@ pub fn references(object: &Value) -> Vec<Value> {
             let Some(reference) = weak.upgrade() else { continue };
             let Some(target) = reference.revive() else { continue };
             if !same_target(&target, &object.contents()) { continue; }
-            if let Some(bearer) = reference.bearer.upgrade() { result.push(Value::Object(bearer)); }
+            if let Some(bearer) = crate::value::Keep::upgrade(&reference.bearer) { result.push(Value::Object(bearer)); }
         }
         result.sort_by_key(|value| match value {
             Value::Object(bearer) => match bearer.class_now().name.as_str() {

@@ -266,3 +266,145 @@ unregistering file descriptors, and then polling them for I/O events."""
 
 
 poll = _PollFactory()
+
+
+# Convert a descriptor for poll APIs, whose range is independent of FD_SETSIZE.
+def _poll_fd(item):
+    if isinstance(item, bool):
+        import warnings
+        warnings.warn('bool is used as a file descriptor', RuntimeWarning, stacklevel=2)
+    if isinstance(item, int):
+        fd = int.__index__(item)
+    else:
+        method = getattr(item, 'fileno', None)
+        if method is None:
+            raise TypeError('argument must be an int, or have a fileno() method.')
+        fd = method()
+        if not isinstance(fd, int):
+            raise TypeError('fileno() returned a non-integer')
+        fd = int.__index__(fd)
+    if fd < -2147483648 or fd > 2147483647:
+        raise OverflowError('Python int too large to convert to C int')
+    if fd < 0:
+        raise ValueError('file descriptor cannot be a negative integer (%d)' % fd)
+    return fd
+
+
+# Check the integer widths used by the host poll interfaces.
+def _poll_int(value):
+    value = _index(value)
+    if value < -2147483648 or value > 2147483647:
+        raise OverflowError('Python int too large to convert to C int')
+    return value
+
+
+# Round a timeout upwards to milliseconds without shortening a deadline.
+def _poll_timeout(value, seconds=False):
+    if value is None:
+        return -1
+    if isinstance(value, float):
+        if _math.isnan(value):
+            raise ValueError('Invalid value NaN (not a number)')
+        amount = value * (1000 if seconds else 1)
+    else:
+        amount = _index(value) * (1000 if seconds else 1)
+    if amount > 2147483647 or amount < -2147483648:
+        raise OverflowError('timeout is too large')
+    if amount < 0:
+        return -1
+    return _math.ceil(amount)
+
+EPOLLIN, EPOLLPRI, EPOLLOUT, EPOLLERR, EPOLLHUP = 1, 2, 4, 8, 16
+EPOLLRDNORM, EPOLLRDBAND, EPOLLWRNORM, EPOLLWRBAND = 64, 128, 256, 512
+EPOLLMSG, EPOLLRDHUP = 1024, 8192
+EPOLLEXCLUSIVE, EPOLLWAKEUP = 268435456, 536870912
+EPOLLONESHOT, EPOLLET, EPOLL_CLOEXEC = 1073741824, 2147483648, 524288
+
+class epoll:
+    # Own a real epoll descriptor with close-on-exec set atomically.
+    def __init__(self, sizehint=-1, flags=0):
+        sizehint = _poll_int(sizehint)
+        flags = _poll_int(flags)
+        if sizehint != -1 and sizehint <= 0:
+            raise ValueError('negative sizehint')
+        if flags not in (0, EPOLL_CLOEXEC):
+            raise OSError(22, 'Invalid argument')
+        self._epfd = _posix_call('epoll_create')
+
+    # Adopt the supplied descriptor without duplicating it.
+    @classmethod
+    def fromfd(cls, fd, /):
+        fd = _poll_int(fd)
+        obj = object.__new__(cls)
+        if fd == -1:
+            fd = _posix_call('epoll_create')
+        else:
+            _posix_call('set_inheritable', fd, False)
+        obj._epfd = fd
+        return obj
+
+    # Report whether this wrapper has relinquished its descriptor.
+    @property
+    def closed(self):
+        return self._epfd < 0
+
+    # Reject operations after this wrapper is closed.
+    def fileno(self):
+        if self.closed:
+            raise ValueError('I/O operation on closed epoll object')
+        return self._epfd
+
+    # Close once, marking the wrapper closed even if close reports an error.
+    def close(self):
+        if not self.closed:
+            fd = self._epfd
+            self._epfd = -1
+            _posix_call('close', fd)
+
+    # Release an unclosed descriptor when the object is finalized.
+    def __del__(self):
+        if getattr(self, '_epfd', -1) >= 0:
+            self.close()
+
+    # Enter a context only while the descriptor is open.
+    def __enter__(self):
+        self.fileno()
+        return self
+
+    # Release the descriptor at the end of a context.
+    def __exit__(self, *args):
+        self.close()
+
+    # Validate the unsigned event mask passed to epoll_ctl.
+    def _control(self, operation, fd, mask):
+        epfd = self.fileno()
+        descriptor = _poll_fd(fd)
+        mask = _index(mask)
+        if mask < 0:
+            raise ValueError('value must be positive')
+        if mask > 4294967295:
+            raise OverflowError('Python int too large to convert to C unsigned int')
+        _posix_call('epoll_ctl', epfd, operation, descriptor, mask)
+
+    # Add a descriptor and its readiness interests.
+    def register(self, fd, eventmask=EPOLLIN | EPOLLOUT | EPOLLPRI):
+        self._control(1, fd, eventmask)
+
+    # Change the interests of an existing registration.
+    def modify(self, fd, eventmask):
+        self._control(3, fd, eventmask)
+
+    # Remove a descriptor, preserving the operating system's errors.
+    def unregister(self, fd):
+        self._control(2, fd, 0)
+
+    # Wait for a bounded number of ready events.
+    def poll(self, timeout=-1, maxevents=-1):
+        fd = self.fileno()
+        milliseconds = _poll_timeout(timeout, True)
+        maximum = _poll_int(maxevents)
+        if maximum == -1:
+            maximum = FD_SETSIZE - 1
+        if maximum <= 0:
+            raise ValueError('maxevents must be greater than 0, got %d' % maximum)
+        return _posix_call('epoll_wait', fd, milliseconds, maximum)

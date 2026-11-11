@@ -25,7 +25,7 @@ impl<'a> Engine<'a> {
         let mut program = rebuilt.replacing_constants(&original.code_constants)?;
         program.location_bytes = original.location_bytes.clone();
         program.exception_image = original.exception_image.clone();
-        let names = registry.idents[offset..].to_vec();
+        let names = std::mem::take(&mut registry.idents);
         for name in &names { self.registry.slot(&format!("\0names:{offset}:{name}")); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
         let (near, outer) = near.map_or((outer.clone(), None), |near| (near, Some(outer)));

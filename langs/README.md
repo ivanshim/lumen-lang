@@ -4146,6 +4146,10 @@ only. The extension labels so far, all from PHP:
   of making a thing, and hand over what walking the class yields. Each
   is given the class first. These stand in for a metaclass's `__call__`
   and `__iter__`, which an enumeration needs.
+- `ext.builtin.readonly_member`: private adapter bridge that gives an existing
+  native slot a public read-only member descriptor. Reads retain the slot
+  owner check; assignment and deletion raise AttributeError without changing
+  the backing storage. The original constructor still initializes that slot.
 - `ext.builtin.partial_repr`: native partial representation bridge. It retains
   the callable, positional tuple and keyword dictionary before user code runs,
   renders positional and keyword values first, then the callable, and reads
@@ -4924,6 +4928,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.print.sep` | - | - | `sep` | - | - | - | - | - | - | - |
 | `ext.builtin.print.sep.amiss` | - | - | `TypeError: sep must be None or a string` | - | - | - | - | - | - | - |
 | `ext.builtin.print.separator` | - | - | `sep` | - | - | - | - | - | - | - |
+| `ext.builtin.print.stream.encoding` | - | - | `encoding` | - | - | - | - | - | - | - |
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
 | `ext.builtin.profile` | - | - | `__profile` | - | - | - | - | - | - | - |
 | `ext.builtin.program.namespace` | - | - | `__program_namespace` | - | - | - | - | - | - | - |
@@ -4938,6 +4943,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_start` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_step` | - | - | `ValueError: range step must not be zero` | - | - | - | - | - | - | - |
+| `ext.builtin.readonly_member` | - | - | `__readonly_member__` | - | - | - | - | - | - | - |
 | `ext.builtin.rebuild_native` | - | - | `__rebuild_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.reduce_native` | - | - | `__reduce_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.repr` | - | - | `repr` | - | - | - | - | - | - | - |
@@ -6099,6 +6105,14 @@ Python `ext.builtin.method.take_bytes` drains a selected prefix of a bytearray i
 
 `ext.builtin.namespace_type` provides the native namespace class used by `sys.implementation` and discovered by the pure Python `types` fallback.
 
+The Python program-namespace primitive accepts `refcount` and a value to read
+its actual shared-allocation owners, including interpreter temporaries. Inline
+values have no shared allocation counter; their live holdings are counted
+through the interpreter's reachable roots.
+`sys.getrefcount` exposes these live holdings. The native tracing ownership
+interface separately retains permanent-value lifetime markers. Numeric counts
+need not match CPython's object representation.
+
 The `ext.builtin.host.info` helper also accepts the `build` query, exposing
 the Rust compiler flags for support-library sanitizer detection.
 
@@ -6192,8 +6206,12 @@ matching rules when the scan reaches a non-ASCII character.
 
 `ext.builtin.tokenize.scan` fills one decoded physical line into the tokenizer
 buffer and can return several finished tokens from that buffer together.
+With a scanner state, quote, delimiter width and pending quote count, it
+advances a buffered ordinary string body and returns the new quote count
+and whether it passed an escaped quote. This form never reads another line.
 Forms the scanner does not recognise, and a buffer that still needs another
-line, stay with the Python tokenizer and its existing diagnostics.
+line, stay with the Python tokenizer and its existing diagnostics. Complete triple-quoted
+spellings on one physical line also use the buffered literal scan.
 
 `ext.builtin.re.shortcut` computes the existing regular-expression adapter's
 ASCII atom sets and capture endpoints/groups. Unsupported input shapes

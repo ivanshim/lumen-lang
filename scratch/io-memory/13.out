@@ -1,0 +1,10 @@
+True True True True True
+False True True True True
+True True True True True
+False True True True True
+None True True True True
+Ellipsis True True True True
+NotImplemented True True True True
+37 True True True True
+identity True True True True
+call shapes stable

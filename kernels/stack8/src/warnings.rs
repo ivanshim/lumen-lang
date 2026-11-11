@@ -36,7 +36,7 @@ impl Engine<'_> {
         }
         let class = self.kind_class("module");
         self.made += 1;
-        let module = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(entries), mark: self.made }));
+        let module = Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class, fields: RefCell::new(entries), mark: self.made }));
         self.warning_module = Some(module.clone());
         self.modules.insert(names[0].clone(), module.clone());
         self.module_addresses_ready.set(false);
@@ -426,14 +426,14 @@ impl Engine<'_> {
         }
         sites.reverse();
         if self.made % 64 == 0 { self.allocation_sites.retain(|_, (weak, _)| weak.strong_count() != 0); }
-        self.allocation_sites.insert(Rc::as_ptr(object) as usize, (Rc::downgrade(object), sites));
+        self.allocation_sites.insert(crate::value::Keep::as_ptr(object) as usize, (crate::value::Keep::downgrade(object), sites));
     }
     fn allocation_command(&mut self, args: &[Value]) -> Res<Value> {
         let Some(Value::Small(operation)) = args.first().map(Value::contents) else { return Err("TypeError: allocation operation must be an integer".into()); };
         match (operation, args) {
             (0, [_, value]) => {
                 let Value::Object(object) = value.contents() else { return Ok(Value::Null); };
-                let Some((weak, sites)) = self.allocation_sites.get(&(Rc::as_ptr(&object) as usize)) else { return Ok(Value::Null); };
+                let Some((weak, sites)) = self.allocation_sites.get(&(crate::value::Keep::as_ptr(&object) as usize)) else { return Ok(Value::Null); };
                 if weak.upgrade().is_none() { return Ok(Value::Null); }
                 Ok(Value::tuple(sites.iter().map(|(file, line)| Value::tuple(vec![Value::text(file), Value::Small(*line)])).collect()))
             }

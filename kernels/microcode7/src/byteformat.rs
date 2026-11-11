@@ -119,6 +119,24 @@ fn whole_number(chunk: &[u8], signed: bool) -> Value {
 }
 
 fn integer(v: &Value, symbol: u8, size: usize) -> Result<Vec<u8>, String> {
+    if let Value::Small(small) = v {
+        if size <= 8 {
+            let signed = b"bhilqn".contains(&symbol);
+            let fits = if signed {
+                let bits = (size * 8 - 1) as u32;
+                let low = if bits >= 63 { i64::MIN } else { -(1i64 << bits) };
+                let high = if bits >= 63 { i64::MAX } else { (1i64 << bits) - 1 };
+                *small >= low && *small <= high
+            } else if symbol == b'P' {
+                size == 8 || (*small >= -(1i64 << (size * 8 - 1)) && *small < (1i64 << (size * 8)))
+            } else {
+                *small >= 0 && (size == 8 || (*small as u64) < (1u64 << (size * 8)))
+            };
+            if fits {
+                return Ok(small.to_le_bytes()[..size].to_vec());
+            }
+        }
+    }
     let n=match v {Value::Huge(n)=>(**n).clone(),Value::Small(n)=>BigInt::from(*n),Value::Flag(b)=>BigInt::from(i32::from(*b)),_=>return Err(invalid("required argument is not an integer"))};
     let signed=b"bhilqn".contains(&symbol);
     let upper=BigInt::from(1u8)<<(8*size-usize::from(signed));
