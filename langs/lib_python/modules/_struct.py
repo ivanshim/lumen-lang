@@ -45,6 +45,26 @@ def _get(format):
         _cache[format] = Struct(format)
     return _cache[format]
 
+# The one exact type that needs no change on its way to the native packer,
+# for each code of a format that has such a type.
+_PLAIN_TYPES = {}
+for _code in 'bBhHiIlLqQnNP':
+    _PLAIN_TYPES[_code] = int
+for _code in 'efd':
+    _PLAIN_TYPES[_code] = float
+for _code in 'cps':
+    _PLAIN_TYPES[_code] = bytes
+_PLAIN_TYPES['?'] = bool
+
+def _plain_types(codes):
+    kinds = []
+    for code in codes:
+        kind = _PLAIN_TYPES.get(code)
+        if kind is None:
+            return None
+        kinds.append(kind)
+    return kinds
+
 def _argument_codes(fields):
     for code, repeat in fields:
         if code != 'x':
@@ -61,6 +81,7 @@ class Struct:
         self._count = 0
         self._whole = False
         self._plain = True
+        self._exact = None
         return self
 
     def _ready(self):
@@ -83,6 +104,7 @@ class Struct:
         # complex codes needs no conversion of what unpacking returns.
         self._whole = self._count == 1 and self._codes is not None and self._codes[0] in 'bBhHiIlLqQnNP'
         self._plain = 'F' not in format and 'D' not in format
+        self._exact = _plain_types(self._codes) if self._codes is not None else None
 
     @property
     def format(self):
@@ -136,7 +158,11 @@ class Struct:
         format = self._format
         if format is None:
             raise RuntimeError('Struct object is uninitialized')
-        if self._whole and len(values) == 1 and type(values[0]) is int:
+        # Values already of the exact types the packer takes go to it as given.
+        # A single exact integer is the case _whole names; floats and the
+        # other plain codes take the same road, which action 10 declines.
+        exact = self._exact
+        if exact is not None and list(map(type, values)) == exact:
             try:
                 return _native(1, format, values)
             except ValueError as exc:

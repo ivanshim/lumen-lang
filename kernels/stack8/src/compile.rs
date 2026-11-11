@@ -40,6 +40,8 @@ thread_local! {
     /// The most figures a decimal whole number may spell in text being
     /// read for a language that limits them; nothing when it does not.
     static FIGURE_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// How many prefixes stand open while one piece is read.
+    static PREFIX_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Say how many figures the text about to be read may spell in a
@@ -88,6 +90,9 @@ fn ast_line(row: u32, column: usize) -> u32 {
 /// The global names, each with a slot.
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Registry {
+    /// Slots owned by another registry need addresses, not placeholder strings.
+    #[serde(default)]
+    outside: usize,
     index: HashMap<String, usize, crate::value::FxBuildHasher>,
     module_index: HashMap<String, HashMap<String, usize, crate::value::FxBuildHasher>, crate::value::FxBuildHasher>,
     wildcard_index: HashMap<usize, (usize, HashMap<String, usize, crate::value::FxBuildHasher>), crate::value::FxBuildHasher>,
@@ -180,39 +185,28 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// Reserve outer addresses without indexing placeholder names that source cannot read.
+    /// Start new names after the slots owned by the surrounding registry.
     pub fn with_outside_slots(count: usize) -> Self {
-        let mut registry = Self {
-            idents: Vec::with_capacity(count),
-            ..Self::default()
-        };
-        registry.leave_outside(count);
-        registry
+        Self { outside: count, ..Self::default() }
     }
 
+    /// Assign a stable global address to a spelling.
     pub fn slot(&mut self, name: &str) -> usize {
         if let Some(&slot) = self.index.get(name) {
             return slot;
         }
-        self.index.insert(name.to_string(), self.idents.len());
+        self.index.insert(name.to_string(), self.outside + self.idents.len());
         if let Some((_, tail)) = name.strip_prefix("\0module:").and_then(|word| word.split_once(':')) {
             if let Some((path, member)) = tail.split_once(':') {
                 // The path is spelled into a key only for the first member it has.
                 match self.module_index.get_mut(path) {
-                    Some(members) => { members.insert(member.to_string(), self.idents.len()); }
-                    None => { self.module_index.entry(path.to_string()).or_default().insert(member.to_string(), self.idents.len()); }
+                    Some(members) => { members.insert(member.to_string(), self.outside + self.idents.len()); }
+                    None => { self.module_index.entry(path.to_string()).or_default().insert(member.to_string(), self.outside + self.idents.len()); }
                 }
             }
         }
         self.idents.push(name.to_string());
-        self.idents.len() - 1
-    }
-
-    /// Leave the first `count` slots to the names an earlier registry
-    /// holds: they are never looked up by name here, so each takes an
-    /// empty word rather than a spelled and hashed one.
-    pub fn leave_outside(&mut self, count: usize) {
-        self.idents.resize(count, String::new());
+        self.outside + self.idents.len() - 1
     }
 
     /// The most recently registered slot for a module member. Dynamic
@@ -228,13 +222,13 @@ impl Registry {
         let prefix = format!("\0module:{base}:");
         if name.contains(':') {
             let suffix = format!(":{name}");
-            return self.idents.iter().position(|word| word.starts_with(&prefix) && word.ends_with(&suffix));
+            return self.idents.iter().position(|word| word.starts_with(&prefix) && word.ends_with(&suffix)).map(|at| self.outside + at);
         }
         let (scanned, members) = self.wildcard_index.entry(base).or_default();
         for (at, word) in self.idents.iter().enumerate().skip(*scanned) {
             if word.starts_with(&prefix) {
                 if let Some((_, member)) = word.rsplit_once(':') {
-                    members.entry(member.to_owned()).or_insert(at);
+                    members.entry(member.to_owned()).or_insert(self.outside + at);
                 }
             }
         }
@@ -353,13 +347,21 @@ pub(crate) fn prepared_entries(definition: &str) -> Option<(PreparedEntries, Pre
 fn token_fingerprint(tokens: &[Token]) -> Vec<u8> {
     fn number(bytes: &mut Vec<u8>, n: usize) { bytes.extend_from_slice(&(n as u64).to_le_bytes()); }
     fn word(bytes: &mut Vec<u8>, text: &str) { number(bytes, text.len()); bytes.extend_from_slice(text.as_bytes()); }
-    let mut bytes = Vec::new();
+    // Each token has 66 fixed bytes before its lexeme and optional raw spelling.
+    let mut bytes = Vec::with_capacity(8 + tokens.len() * 66);
     number(&mut bytes, tokens.len());
     for token in tokens {
         bytes.push(token.shape as u8);
         word(&mut bytes, &token.lexeme);
         match &token.raw { Some(raw) => { bytes.push(1); word(&mut bytes, raw); }, None => bytes.push(0) }
-        for n in [token.width, token.row, token.column, token.end_column, token.end_row, token.byte_column, token.byte_end_column] { number(&mut bytes, n); }
+        // Append the fixed-width position record with one capacity check.
+        let positions = [
+            (token.width as u64).to_le_bytes(), (token.row as u64).to_le_bytes(),
+            (token.column as u64).to_le_bytes(), (token.end_column as u64).to_le_bytes(),
+            (token.end_row as u64).to_le_bytes(), (token.byte_column as u64).to_le_bytes(),
+            (token.byte_end_column as u64).to_le_bytes(),
+        ];
+        bytes.extend_from_slice(positions.as_flattened());
     }
     bytes
 }
@@ -776,6 +778,20 @@ pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before:
     compile_within(tokens, lang, table, before, written_in, None, None, true)
 }
 
+// Prove that a single expression has no lexical bindings to discover.
+// Interpolated strings and every scope or assignment form keep both passes.
+fn binding_free_expression(tokens: &[Token], lang: &Lang) -> bool {
+    if !lang.bind_names || lang.expression_assign.is_empty() { return false; }
+    tokens.iter().all(|token| match token.shape {
+        Shape::Instr => [&lang.lambda_words, &lang.comprehension_for, &lang.function_words, &lang.class_words]
+            .iter().all(|words| !Lang::spells(words, token.spelling())),
+        Shape::Sign => !Lang::spells(&lang.expression_assign, token.spelling())
+            && !Lang::spells(&lang.assign_words, token.spelling()),
+        Shape::Numeral | Shape::Quote | Shape::Bytes | Shape::Codepoints | Shape::LineEnd | Shape::Finish => true,
+        _ => false,
+    })
+}
+
 /// The same, save that the text may be read as standing inside a
 /// routine already running: the names it already has are given here, and
 /// a name the text reads or writes means that one. Names of its own are
@@ -821,7 +837,7 @@ fn compile_hinted(
     let mut plans = HashMap::default();
     let wants_value = std::mem::take(&mut table.value_only);
     let interactive = std::mem::take(&mut table.interactive);
-    if lang.closes_over {
+    if lang.closes_over && !(wants_value && before == 0 && binding_free_expression(tokens, lang)) {
         let reusable = before == 0 && inside.is_none() && within.is_none() && !wants_value && !interactive && future_bits == 0 && table.optimize == 0;
         if let Some(stored) = reusable.then(|| prepared_scope(tokens, lang, hint)).flatten() {
             plans = stored.plans;
@@ -1037,7 +1053,8 @@ fn compile_pass(
     let spelled = tokens;
     let renamed = private_tokens(tokens, lang);
     let tokens = renamed.as_ref();
-    for name in &lang.exceptions { table.slot(name); }
+    // Only emitted code needs the complete native exception slot roster.
+    if !discovering { for name in &lang.exceptions { table.slot(name); } }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
     let mut top = Piece {
@@ -1078,7 +1095,7 @@ fn compile_pass(
         gives_back.extend(table.gives_back.iter().cloned());
     }
     let future_bits = table.future_bits;
-    let mut a = Compiler { omitted_docs: HashSet::new(), call_temporaries: 0, image_modes: i64::from(wants_value) | (i64::from(interactive) << 1) | (i64::from(table.allow_top_level_await) << 2) | (table.optimize.clamp(0, 2) << 8), source_content: Rc::new(std::cell::OnceCell::new()), source_tokens: if discovering { Rc::from([]) } else { Rc::from(tokens) }, reading_annotation: false, class_annotation_read: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: table.allow_flufl || future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, finally_loop_bases: Vec::new(), except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, ast_expression_starts: AST_POSITIONS.with(|entries| (!entries.borrow().is_empty()).then(Vec::new)), spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, decorated_at: None, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { omitted_docs: HashSet::new(), call_temporaries: 0, image_modes: i64::from(wants_value) | (i64::from(interactive) << 1) | (i64::from(table.allow_top_level_await) << 2) | (table.optimize.clamp(0, 2) << 8), source_content: Rc::new(std::cell::OnceCell::new()), source_tokens: if discovering { Rc::from([]) } else { Rc::from(tokens) }, reading_annotation: false, class_annotation_read: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: table.allow_flufl || future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, finally_loop_bases: Vec::new(), except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: std::mem::take(plans), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, ast_expression_starts: AST_POSITIONS.with(|entries| (!entries.borrow().is_empty()).then(Vec::new)), spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, decorated_at: None, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1244,7 +1261,8 @@ fn compile_pass(
         }
         a.prepend(head);
     }
-    plans.extend(a.plans.clone());
+    // Transfer the discovered plans between passes without cloning their names.
+    *plans = std::mem::take(&mut a.plans);
     let mut unit = a.pieces.pop().expect("the top unit");
     if !lang.compile_modes.is_empty() { fold_boolean_branches(&mut unit.instrs); }
     a.registry.top_level_coroutine = unit.generator;
@@ -2517,9 +2535,8 @@ impl<'a> Compiler<'a> {
             literal.push_str(&leading.next().unwrap().lexeme);
             doc_end += 1;
         }
-        let documentation_at = self.tokens.len() - self.tokens[self.pos..].iter().skip_while(|t| matches!(t.shape, Shape::LineEnd | Shape::Open) || self.lang.block_intros.contains(&t.lexeme)).count();
         let is_doc = !expression && quoted && leading.peek().is_some_and(|t| matches!(t.shape, Shape::LineEnd | Shape::Close | Shape::Finish) || self.lang.ends_stmt(&t.lexeme));
-        if is_doc && self.registry.optimize == 2 { self.omitted_docs.insert(documentation_at); }
+        if is_doc && self.registry.optimize == 2 { self.omitted_docs.insert(doc_begin); }
         let doc = (is_doc && self.registry.optimize < 2).then_some(literal);
         let doc_literal = is_doc;
         let doc = if self.lang.class_builder.is_empty() { doc } else { doc.map(|text| clean_python_documentation(&text)) };
@@ -5368,6 +5385,7 @@ impl<'a> Compiler<'a> {
     /// the value bound from it at the head of each pass.
     fn walk(&mut self, bag: &str, key: Option<&str>, value: &str, shared: bool, place: Option<usize>) -> Res<()> {
         let lang = self.lang;
+        let header_location = self.piece().instrs.iter().rev().find(|op| matches!(op, Instr::Location(..))).cloned();
         // A walk that hands out the items' own cells goes over the array
         // as it stands: what the body does to the array it does to the
         // walk. One that walks a copy takes the copy here, and what the
@@ -5481,6 +5499,7 @@ impl<'a> Compiler<'a> {
         }
         self.body()?;
         let again = self.mark();
+        if let Some(location) = header_location { self.put(location); }
         match &held {
             // The place the walk goes on from is the one past where the
             // item it handed out now lies, which is not where it lay
@@ -9045,6 +9064,12 @@ impl<'a> Compiler<'a> {
                 let code = a.member_value()?;
                 a.replay(code, 0);
             } else {
+                let body_start = a.pos;
+                let location_slot = (!a.lang.trace_fields.is_empty()).then(|| {
+                    let slot = a.mark();
+                    a.put(Instr::Line(a.declared_at));
+                    slot
+                });
                 a.bare_named_blocked = true;
                 let outcome = a.expr_at(0, false);
                 a.bare_named_blocked = false;
@@ -9061,6 +9086,12 @@ impl<'a> Compiler<'a> {
                     a.stop_after(last);
                     a.pos = lambda_at;
                     return Err("SyntaxError: cannot assign to lambda".into());
+                }
+                if let Some(slot) = location_slot {
+                    let span = a.expression_location(body_start);
+                    a.piece().instrs[slot] = span.clone();
+                    a.piece().instrs[..=slot].rotate_right(1);
+                    a.put(span);
                 }
             }
             a.give_result();
@@ -10731,7 +10762,126 @@ impl<'a> Compiler<'a> {
     /// target followed by a sign that writes is read as an assignment
     /// whose value is what was written — but not where the assignment
     /// is the whole statement, which is read as a statement.
+    /// Where a floor-zero expression ends when it cannot bind a name.
+    /// Lambdas, comprehensions, named expressions and interpolated strings
+    /// stay with the ordinary reader so their bindings are still recorded.
+    fn survey_value_end(&self) -> Option<usize> {
+        let lang = self.lang;
+        let mut index = self.pos;
+        let mut depth = 0i32;
+        let mut holding = false;
+        let last = self.tokens.len();
+        while index < last {
+            let token = &self.tokens[index];
+            let word = token.spelling();
+            if matches!(token.shape, Shape::StringBegin | Shape::StringEnd | Shape::StringField | Shape::StringExpression | Shape::StringFault | Shape::Quoted) {
+                return None;
+            }
+            if token.shape == Shape::Instr && (Lang::spells(&lang.lambda_words, word) || Lang::spells(&lang.yield_words, word) || Lang::spells(&lang.yield_from_words, word) || Lang::spells(&lang.await_words, word)) {
+                return None;
+            }
+            if Lang::spells(&lang.expression_assign, word) { return None; }
+            if depth > 0 && token.shape == Shape::Instr && (Lang::spells(&lang.comprehension_for, word) || Lang::spells(&lang.async_words, word)) {
+                return None;
+            }
+            if depth > 0 {
+                if token.shape == Shape::Sign {
+                    match token.lexeme.as_str() {
+                        "(" | "[" | "{" => depth += 1,
+                        ")" | "]" | "}" => depth -= 1,
+                        _ => {}
+                    }
+                }
+                index += 1;
+                if depth == 0 { holding = true; }
+                continue;
+            }
+            if !holding {
+                if token.shape == Shape::Sign && matches!(token.lexeme.as_str(), "(" | "[" | "{") {
+                    depth = 1;
+                    index += 1;
+                    continue;
+                }
+                if matches!(token.shape, Shape::Numeral | Shape::Quote | Shape::Bytes | Shape::Codepoints) {
+                    let literal = token.shape;
+                    index += 1;
+                    if lang.adjacent_strings && matches!(literal, Shape::Quote | Shape::Bytes | Shape::Codepoints) {
+                        while index < last {
+                            match self.tokens[index].shape {
+                                Shape::StringBegin | Shape::StringEnd | Shape::StringField | Shape::StringExpression | Shape::StringFault => return None,
+                                Shape::Quote | Shape::Bytes | Shape::Codepoints => index += 1,
+                                _ => break,
+                            }
+                        }
+                    }
+                    holding = true;
+                    continue;
+                }
+                if Lang::spells(&lang.ellipsis_words, word) {
+                    index += 1;
+                    holding = true;
+                    continue;
+                }
+                if lang.monadic.contains_key(word) {
+                    index += 1;
+                    continue;
+                }
+                if token.shape == Shape::Instr {
+                    let reserved = lang.keywords.contains(word)
+                        && !Lang::spells(&lang.true_words, word)
+                        && !Lang::spells(&lang.false_words, word)
+                        && !Lang::spells(&lang.null_words, word);
+                    if reserved { return None; }
+                    index += 1;
+                    holding = true;
+                    continue;
+                }
+                return None;
+            }
+            if token.shape == Shape::Instr && Lang::spells(&lang.membership_not, word)
+                && self.tokens.get(index + 1).is_some_and(|next| Lang::spells(&lang.membership_words, next.spelling())) {
+                index += 2;
+                holding = false;
+                continue;
+            }
+            let bracket = token.shape == Shape::Sign && matches!(token.lexeme.as_str(), "(" | "[" | "{");
+            let joins = match token.shape {
+                Shape::Instr => lang.dyadic.contains_key(word) || Lang::spells(&lang.if_else_words, word),
+                Shape::Sign => bracket || Lang::spells(&lang.pipe_words, word) || lang.dyadic.contains_key(word),
+                _ => false,
+            };
+            if !joins { return Some(index); }
+            if bracket {
+                depth = 1;
+                index += 1;
+                continue;
+            }
+            index += 1;
+            holding = false;
+        }
+        if holding && depth == 0 { Some(index) } else { None }
+    }
+
     fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<()> {
+        // The binding survey still compiles every assignment and nested
+        // scope. A plain value contributes no name, so its instructions
+        // are not built on that pass.
+        if floor == 0 && self.discovering && !self.writing_place && self.annotation_target.is_none() {
+            if let Some(end) = self.survey_value_end() {
+                let compound_target = match self.tokens.get(end) {
+                    Some(token) => token.shape == Shape::Sign && self.lang.compound.contains_key(&token.lexeme),
+                    None => false,
+                };
+                if !compound_target {
+                    self.pos = end;
+                    // A deletion or a subscript still classifies the value
+                    // by the instruction it leaves. One placeholder keeps
+                    // that shape; this pass discards the instructions.
+                    self.constant(Value::Small(0));
+                    return Ok(());
+                }
+            }
+        }
         if let Some(starts) = &mut self.ast_expression_starts { starts.push(self.pos); }
         let result = self.expr_read(floor, may_write);
         if let Some(starts) = &mut self.ast_expression_starts { starts.pop(); }
@@ -10905,7 +11055,7 @@ impl<'a> Compiler<'a> {
             if lang.chained_comparisons {
                 if let Some((op, tier, width)) = self.comparison()? {
                     if tier < floor { break; }
-                    self.comparisons(op, tier, width)?;
+                    self.comparisons(begins, op, tier, width)?;
                     continue;
                 }
             }
@@ -11145,13 +11295,14 @@ impl<'a> Compiler<'a> {
 
     /// Each link keeps its far side for the link after it. A false link
     /// goes straight to the end, leaving the rest untouched.
-    fn comparisons(&mut self, mut op: Action, tier: u32, mut width: usize) -> Res<()> {
+    fn comparisons(&mut self, begins: usize, mut op: Action, tier: u32, mut width: usize) -> Res<()> {
         let near = self.gensym("near");
         let far = self.gensym("far");
         let answer = self.gensym("comparison");
         let saved_left = self.mark();
         self.write(&near);
         let mut exits = Vec::new();
+        let mut locations = Vec::new();
         loop {
             for _ in 0..width { self.pass_token(); }
             let rhs = self.mark();
@@ -11166,20 +11317,26 @@ impl<'a> Compiler<'a> {
             let saved_right = self.mark();
             self.write(&far);
             let following = self.comparison()?.filter(|(_, level, _)| *level == tier);
-            if exits.is_empty() && following.is_none() {
+            let single = exits.is_empty() && following.is_none();
+            if single {
                 // A single comparison needs no cells to preserve a middle operand.
                 self.piece().instrs[saved_left] = Instr::Nothing;
                 self.piece().instrs[saved_right] = Instr::Nothing;
-                self.act(op, 2);
-                return Ok(());
+            } else {
+                // Each side is moved out of its temporary at its last use, so
+                // that the temporaries hold nothing once the link is judged:
+                // a value's last holder may be one of them, and it must go
+                // when the program lets it go.
+                self.read(&near);
+                self.read(&far);
             }
-            // Each side is moved out of its temporary at its last use, so
-            // that the temporaries hold nothing once the link is judged:
-            // a value's last holder may be one of them, and it must go
-            // when the program lets it go.
-            self.read(&near);
-            self.read(&far);
-            self.act(op, 2);
+            self.ast_operation_location();
+            if !self.lang.trace_fields.is_empty() {
+                let location = self.expression_location(begins);
+                locations.push(self.put(location));
+            }
+            self.put(Instr::Act(op, 2));
+            if single { return Ok(()); }
             self.write(&answer);
             let Some((next, level, words)) = following else { break; };
             let _ = level;
@@ -11189,6 +11346,11 @@ impl<'a> Compiler<'a> {
             self.write(&near);
             op = next;
             width = words;
+        }
+        // Earlier links are emitted before the last operand reveals the chain's end.
+        if !locations.is_empty() {
+            let location = self.expression_location(begins);
+            for at in locations { self.piece().instrs[at] = location.clone(); }
         }
         for exit in exits { self.land(exit); }
         self.let_go(&near);
@@ -11291,6 +11453,23 @@ impl<'a> Compiler<'a> {
     /// A piece of an expression, with a step written before or after it
     /// where the language spells one.
     fn prefix(&mut self) -> Res<()> {
+        // Only a language that names the incomplete-source fault beside
+        // the reference keeps a bound on how deep its reader may go.
+        if self.lang.compile_incomplete.is_empty() { return self.prefix_under(); }
+        let deep = PREFIX_DEPTH.with(|cell| { let next = cell.get() + 1; cell.set(next); next });
+        if deep > 6000 {
+            PREFIX_DEPTH.with(|cell| cell.set(cell.get() - 1));
+            return Err("RecursionError: maximum recursion depth exceeded".into());
+        }
+        let answer = self.prefix_under();
+        PREFIX_DEPTH.with(|cell| cell.set(cell.get() - 1));
+        answer
+    }
+
+    /// A run of prefixes longer than the reference would read is named
+    /// with the reference's own fault rather than pressing the stack
+    /// flat.
+    fn prefix_under(&mut self) -> Res<()> {
         if let Some(starts) = &mut self.ast_expression_starts { starts.push(self.pos); }
         let result = self.prefix_read();
         if let Some(starts) = &mut self.ast_expression_starts { starts.pop(); }
@@ -13410,6 +13589,8 @@ impl<'a> Compiler<'a> {
         let prior = self.generator_source.replace((source_at, source_end, seed.clone()));
         let mut asynchronous = false;
         let enclosing_await_rule = std::mem::replace(&mut self.forbids_await, false);
+        let open_at = self.tokens[..head].iter().rposition(|t| t.lexeme == pair.open).unwrap_or(head);
+        let outer_declared = std::mem::replace(&mut self.declared_at, ast_line((self.tokens[open_at].row as u32).saturating_sub(self.before), self.tokens[open_at].column));
         let program = self.routine(&name, vec![seed.clone()], 1, true, |r| {
             r.piece().comprehension_kind = Some("generator expression");
             r.pos = clause;
@@ -13422,7 +13603,9 @@ impl<'a> Compiler<'a> {
             asynchronous = r.piece().asynchronous_walk;
             r.piece().generator = true;
             Ok(())
-        })?;
+        });
+        self.declared_at = outer_declared;
+        let program = program?;
         self.forbids_await = enclosing_await_rule;
         self.generator_source = prior;
         self.constant(Value::Routine(program));
@@ -13617,7 +13800,8 @@ impl<'a> Compiler<'a> {
             self.pos = target_end + 1;
             let expression_start = self.pos;
             let instruction_start = self.mark();
-            if let Some((_, end, seed)) = self.generator_source.clone().filter(|(at, _, _)| *at == self.pos) {
+            let seeded = self.generator_source.clone().filter(|(at, _, _)| *at == self.pos);
+            if let Some((_, end, seed)) = seeded.clone() {
                 self.read(&seed);
                 if !asynchronous && !self.lang.yield_input.is_empty() { self.act(Action::IteratorSeed, 1); }
                 self.pos = end;
@@ -13626,7 +13810,7 @@ impl<'a> Compiler<'a> {
                 self.act(if asynchronous { Action::AsyncWalk } else if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
             }
             let position = self.expression_location(expression_start);
-            if !self.lang.trace_fields.is_empty() {
+            if !self.lang.trace_fields.is_empty() && (!result.is_empty() || seeded.is_none()) {
                 let code: Vec<Instr> = self.piece().instrs.drain(instruction_start..).collect();
                 self.put(position.clone());
                 for op in relocated(code, 1) { self.put(op); }
@@ -13637,7 +13821,7 @@ impl<'a> Compiler<'a> {
             self.constant(Value::Small(0));
             self.write(&at);
             let test = self.mark();
-            if !self.lang.trace_fields.is_empty() { self.put(position); }
+            if !self.lang.trace_fields.is_empty() { self.put(position.clone()); }
             if self.lang.yield_suspends {
                 self.read(&bag);
                 self.read(&at);
@@ -13655,6 +13839,11 @@ impl<'a> Compiler<'a> {
             let item = self.gensym("comprehension_item");
             self.write(&item);
             let resume = self.pos;
+            if !self.lang.trace_fields.is_empty() {
+                self.pos = target_end;
+                let target_position = self.expression_location(target_start);
+                self.put(target_position);
+            }
             if let Err(error) = self.give_places(target_start, target_end, &item) {
                 let message = self.loop_target_error(target_start, target_end, error);
                 if message.starts_with("SyntaxError: cannot assign to") { self.pos = target_start; }
@@ -13662,6 +13851,7 @@ impl<'a> Compiler<'a> {
             }
             self.pos = resume;
             self.comprehension_clause(head, result, map)?;
+            if !self.lang.trace_fields.is_empty() { self.put(position); }
             self.read(&at);
             self.constant(Value::Small(1));
             self.act(Action::Add, 2);
@@ -13686,10 +13876,20 @@ impl<'a> Compiler<'a> {
             if !result.is_empty() { self.read_taking(result); }
             let spread = self.on_any(if map { &self.lang.map_spread } else { &self.lang.array_spread });
             if spread { self.pass_token(); }
+            let element_start = self.pos;
+            let element_slot = (!self.lang.trace_fields.is_empty()).then(|| {
+                let slot = self.mark();
+                self.put(Instr::Line(self.declared_at));
+                slot
+            });
             let before_yield = self.yield_operand;
             if result.is_empty() { self.yield_operand = true; }
             self.expr(0)?;
             self.yield_operand = before_yield;
+            let element_span = self.expression_location(element_start);
+            if let Some(slot) = element_slot {
+                self.piece().instrs[slot] = element_span.clone();
+            }
             if map && !spread {
                 let mark = self.lang.pair_mark.clone().expect("map pair mark");
                 self.want_sign(&mark, "between a comprehension key and value")?;
@@ -13697,6 +13897,7 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Tie, 2);
             }
             if !self.on_any(&self.lang.comprehension_for) && !self.on_any(&self.lang.comprehension_async) { return Err("Expected a comprehension clause after its expression".to_string()); }
+            if !self.lang.trace_fields.is_empty() { self.put(element_span); }
             if result.is_empty() {
                 self.act(if spread { Action::Delegate } else { Action::Suspend }, 1);
                 self.discard();
@@ -14530,7 +14731,13 @@ fn peephole(mut instrs: Vec<Instr>) -> Vec<Instr> {
         };
         let mut group = None;
         let mut width = 4;
-        if clear(4) {
+        // Every fusion starts with a load. Other instructions cannot match,
+        // so do not scan their jump/guard windows or clone unused operands.
+        let load = matches!(&instrs[i], Instr::Read(_) | Instr::Const(_));
+        if matches!(&instrs[i], Instr::Read(_))
+            && matches!(instrs.get(i + 2), Some(Instr::Act(_, 2)))
+            && matches!(instrs.get(i + 3), Some(Instr::Skip(_) | Instr::Write(_)))
+            && clear(4) {
             group = match (&instrs[i], &instrs[i + 1], &instrs[i + 2], &instrs[i + 3]) {
                 (Instr::Read(a), b, Instr::Act(op, 2), Instr::Skip(to)) if !a.moving && comparison(op) => {
                     operand_of(b).map(|b| Instr::SkipCmp { op: op.clone(), a: Operand::Cell(Box::new(a.clone())), b, to: *to })
@@ -14541,19 +14748,23 @@ fn peephole(mut instrs: Vec<Instr>) -> Vec<Instr> {
                 _ => None,
             };
         }
-        if group.is_none() && clear(3) {
-            if let (Some(a), Some(b), Instr::Act(op, 2)) = (operand_of(&instrs[i]), operand_of(&instrs[i + 1]), &instrs[i + 2]) {
-                if arithmetic(op) {
-                    group = Some(Instr::Dyad { op: op.clone(), a, b });
-                    width = 3;
+        if group.is_none() && load {
+            if let Some(Instr::Act(op, 2)) = instrs.get(i + 2) {
+                if arithmetic(op) && clear(3) {
+                    if let (Some(a), Some(b)) = (operand_of(&instrs[i]), operand_of(&instrs[i + 1])) {
+                        group = Some(Instr::Dyad { op: op.clone(), a, b });
+                        width = 3;
+                    }
                 }
             }
         }
-        if group.is_none() && clear(2) {
-            if let (Some(b), Instr::Act(op, 2)) = (operand_of(&instrs[i]), &instrs[i + 1]) {
-                if arithmetic(op) {
-                    group = Some(Instr::Dyad { op: op.clone(), a: Operand::Top, b });
-                    width = 2;
+        if group.is_none() && load {
+            if let Some(Instr::Act(op, 2)) = instrs.get(i + 1) {
+                if arithmetic(op) && clear(2) {
+                    if let Some(b) = operand_of(&instrs[i]) {
+                        group = Some(Instr::Dyad { op: op.clone(), a: Operand::Top, b });
+                        width = 2;
+                    }
                 }
             }
         }
@@ -14917,6 +15128,37 @@ fn digits_in(digits: &str, base: u32) -> Res<BigInt> {
         }
         Ok(acc * base + d)
     })
+}
+
+/// The import statements a compiled body carries and the names it
+/// writes at its own level, in the order they were written: what the
+/// reference records as IMPORT_NAME and STORE_NAME operations. A
+/// relative import's dots count into the level and stand outside the
+/// module name; the fromlist is nothing for a plain import, the star
+/// or the taken names otherwise.
+pub(crate) fn code_imports_stores(words: &[Instr], locals: &[String]) -> (Vec<(String, usize, Option<Vec<String>>)>, Vec<String>) {
+    let mut imports = Vec::new();
+    let mut stores = Vec::new();
+    for (at, word) in words.iter().enumerate() {
+        if at == 0 && matches!(word, Instr::Const(Value::Null)) && matches!(words.get(1), Some(Instr::Write(cell)) if cell.ident.as_ref() == RESULT_CELL) { continue; }
+        match word {
+            Instr::Act(Action::Import(module, style), _) => {
+                let level = module.chars().take_while(|mark| *mark == '.').count();
+                let fromlist = match style {
+                    ImportStyle::Plain => None,
+                    ImportStyle::Star => Some(vec!["*".to_string()]),
+                    ImportStyle::Names(taken) => Some(taken.clone()),
+                };
+                imports.push((module[level..].to_string(), level, fromlist));
+            }
+            Instr::Write(cell) if cell.near.is_empty() && !cell.free => {
+                let name = cell.ident.to_string();
+                if !name.starts_with('#') && !locals.contains(&name) && !stores.contains(&name) { stores.push(name); }
+            }
+            _ => {}
+        }
+    }
+    (imports, stores)
 }
 
 // CPython 3.14 removes indentation while retaining docstring line numbers.

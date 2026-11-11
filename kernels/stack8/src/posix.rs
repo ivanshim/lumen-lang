@@ -252,6 +252,10 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
         "open" => { let p = pathname(0)?; status(libc::openat(number(3)? as i32, p.as_ptr(), number(1)? as i32 | libc::O_CLOEXEC, number(2)? as libc::mode_t) as i64) },
         "close" => status(libc::close(number(0)? as i32) as i64),
         "dup" => status(libc::fcntl(number(0)? as i32, libc::F_DUPFD_CLOEXEC, 0) as i64),
+        "dup2" => {
+            let (src, dst) = (number(0)? as i32, number(1)? as i32);
+            status((if a[2].is_true() { libc::dup2(src, dst) } else { libc::dup3(src, dst, libc::O_CLOEXEC) }) as i64)
+        },
         // Wait for readability, writability or an exceptional condition on
         // each set of descriptors, as CPython's select module does; the
         // module checks ranges and converts objects before calling.
@@ -313,15 +317,89 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
                 }
             }
         },
+        // Create and control Linux readiness queues using their native descriptors.
+        "epoll_create" => status(libc::epoll_create1(libc::EPOLL_CLOEXEC) as i64),
+        "epoll_ctl" => {
+            let mut event = libc::epoll_event { events: number(3)? as u32, u64: number(2)? as u64 };
+            status(libc::epoll_ctl(number(0)? as i32, number(1)? as i32, number(2)? as i32, &mut event) as i64)
+        },
+        // Rebuild timeout values after interruption against one monotonic deadline.
+        "poll_wait" | "epoll_wait" => {
+            let is_epoll = op.as_ref() == "epoll_wait";
+            let timeout = number(1)?;
+            let deadline = if timeout < 0 {None} else {std::time::Instant::now().checked_add(std::time::Duration::from_millis(timeout as u64))};
+            let mut milliseconds = timeout as i32;
+            let mut descriptors = Vec::new();
+            if !is_epoll {
+                let Value::Array(rows) = a[0].contents() else {return Err("TypeError: poll registrations must be a list".into())};
+                for row in rows.iter() {
+                    let Value::Tuple(pair) = row.contents() else {return Err("TypeError: poll registration must be a pair".into())};
+                    descriptors.push(libc::pollfd {fd: integer(&pair[0])? as i32, events: integer(&pair[1])? as i16, revents: 0});
+                }
+            }
+            let mut events: Vec<std::mem::MaybeUninit<libc::epoll_event>> = Vec::new();
+            if is_epoll {
+                let capacity = number(2)? as usize;
+                events.try_reserve_exact(capacity).map_err(|_| "MemoryError: ".to_string())?;
+                // The syscall initializes precisely the entries it returns.
+                events.set_len(capacity);
+            }
+            loop {
+                let ready = if is_epoll {libc::epoll_wait(number(0)? as i32, events.as_mut_ptr().cast(), events.len() as i32, milliseconds)}
+                    else {libc::poll(descriptors.as_mut_ptr(), descriptors.len() as libc::nfds_t, milliseconds)};
+                if ready >= 0 {
+                    let rows = if is_epoll {events.iter().take(ready as usize).map(|slot| {let ev = slot.assume_init_read(); Value::tuple(vec![Value::Small(ev.u64 as i64), Value::Small(ev.events as i64)])}).collect()}
+                        else {descriptors.iter().filter(|entry| entry.revents != 0).map(|entry| Value::tuple(vec![Value::Small(entry.fd as i64), Value::Small(entry.revents as u16 as i64)])).collect()};
+                    break Ok(Value::array(rows));
+                }
+                let fault = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+                if fault != libc::EINTR {break Err(fault);}
+                check_signals()?;
+                if let Some(end) = deadline {
+                    let left = end.saturating_duration_since(std::time::Instant::now());
+                    if left.is_zero() {break Ok(Value::array(Vec::new()));}
+                    milliseconds = (left.as_nanos().div_ceil(1_000_000)).min(i32::MAX as u128) as i32;
+                }
+            }
+        },
+        // Use the process interval timers; signal routing wakes the interpreter thread.
+        "setitimer" | "getitimer" => {
+            unsafe extern "C" {
+                fn setitimer(which: libc::c_int, new: *const libc::itimerval, old: *mut libc::itimerval) -> libc::c_int;
+                fn getitimer(which: libc::c_int, value: *mut libc::itimerval) -> libc::c_int;
+            }
+            let mut old: libc::itimerval = std::mem::zeroed();
+            let rc = if op.as_ref() == "getitimer" {getitimer(number(0)? as i32, &mut old)} else {
+                let interval = number(2)?;
+                let delay = number(1)?;
+                let next = libc::itimerval {
+                    it_interval: libc::timeval {tv_sec: interval / 1_000_000, tv_usec: interval % 1_000_000},
+                    it_value: libc::timeval {tv_sec: delay / 1_000_000, tv_usec: delay % 1_000_000},
+                };
+                setitimer(number(0)? as i32, &next, &mut old)
+            };
+            status(rc as i64).map(|_| Value::tuple(vec![Value::Small(old.it_value.tv_sec * 1_000_000 + old.it_value.tv_usec), Value::Small(old.it_interval.tv_sec * 1_000_000 + old.it_interval.tv_usec)]))
+        },
         "read" => {
             let count = number(1)?;
             if count < 0 { Err(libc::EINVAL) } else {
                 let mut buffer = vec![0u8; count as usize];
-                let n = libc::read(number(0)? as i32, buffer.as_mut_ptr().cast(), buffer.len());
-                status(n as i64).map(|_| { buffer.truncate(n as usize); bytes(buffer) })
+                loop {
+                    let n = libc::read(number(0)? as i32, buffer.as_mut_ptr().cast(), buffer.len());
+                    let result = status(n as i64);
+                    if matches!(result, Err(libc::EINTR)) {check_signals()?; continue;}
+                    break result.map(|_| {buffer.truncate(n as usize); bytes(buffer)});
+                }
             }
         },
-        "write" => { let data = raw(&a[1])?; status(libc::write(number(0)? as i32, data.as_ptr().cast(), data.len()) as i64) },
+        "write" => {
+            let data = raw(&a[1])?;
+            loop {
+                let result = status(libc::write(number(0)? as i32, data.as_ptr().cast(), data.len()) as i64);
+                if matches!(result, Err(libc::EINTR)) {check_signals()?; continue;}
+                break result;
+            }
+        },
         "lseek" => status(libc::lseek(number(0)? as i32, number(1)?, number(2)? as i32)),
         "ftruncate" => status(libc::ftruncate(number(0)? as i32, number(1)?) as i64),
         "sendfile" => {
@@ -470,6 +548,12 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
                 storage.truncate(span - 1);
                 Ok(Value::text(&String::from_utf8_lossy(&storage)))
             }
+        },
+        "pathconf" | "fpathconf" => {
+            // -1 with errno left clear means the file has no such limit.
+            let limit = if op.as_ref() == "fpathconf" { *libc::__errno_location() = 0; libc::fpathconf(number(0)? as i32, number(1)? as i32) }
+                else { let p = pathname(0)?; *libc::__errno_location() = 0; libc::pathconf(p.as_ptr(), number(1)? as i32) };
+            if limit >= 0 { Ok(Value::Small(limit as i64)) } else if errno() == 0 { Ok(Value::Null) } else { Err(errno()) }
         },
         "putenv" => { let key = pathname(0)?; let val = pathname(1)?; status(libc::setenv(key.as_ptr(), val.as_ptr(), 1) as i64) },
         "unsetenv" => { let key = pathname(0)?; status(libc::unsetenv(key.as_ptr()) as i64) },
@@ -821,6 +905,18 @@ fn resolver_words(code: i32) -> Value {
 // Resolve a host name forward, with the same shape of answer as the reverse lookup.
 fn host_by_name(input: &Value) -> Result<Value, String> {
     let name = CString::new(raw(input)?).map_err(|_| "ValueError: embedded null byte")?;
+    // Check IPv4 address resolution via getaddrinfo before calling gethostbyname_r
+    // so unresolvable hostnames raise socket.gaierror like CPython's setipaddr path.
+    if !matches!(name.as_bytes(), b"" | b"<broadcast>") {
+        let mut hints: libc::addrinfo = unsafe { std::mem::zeroed() };
+        hints.ai_family = libc::AF_INET;
+        let mut found = std::ptr::null_mut();
+        unsafe {
+            let code = libc::getaddrinfo(name.as_ptr(), std::ptr::null(), &hints, &mut found);
+            if code != 0 { return Ok(host_failure(1, code, libc::gai_strerror(code))); }
+            libc::freeaddrinfo(found);
+        }
+    }
     unsafe {
         let mut storage = vec![0u8; 8192];
         let mut entry: libc::hostent = std::mem::zeroed();

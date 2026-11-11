@@ -61,30 +61,82 @@ def _text_of(data, encoding, errors):
 
 
 class _Readable:
+    # Buffer a borrowed child descriptor with the ordinary file implementation.
     def __init__(self, handle, which, text=False, encoding='utf-8', errors=None):
+        import io
         self._handle = handle
         self._which = which
         self._text = text
-        self._encoding = encoding
-        self._errors = errors
         self.encoding = encoding if text else None
         self.errors = errors if text else None
+        fd = _subprocess(8, handle, which)
+        self._stream = io.open(fd, 'r' if text else 'rb', closefd=False,
+                               encoding=encoding if text else None,
+                               errors=errors if text else None)
         self.closed = False
+        self._collected = False
+        self._pending = None
 
-    # Decode captured bytes and apply universal newline translation.
+    # Pull the kernel capture started by communicate() into the local buffer.
+    def _fill(self):
+        if self._pending is None:
+            result = _subprocess(3, self._handle, self._which)
+            if result is None or result is False:
+                result = b''
+            if self._text:
+                buffer = self._stream.buffer
+                buffered = buffer._read_buf[buffer._read_pos:]
+                buffer._reset_read_buf()
+                data = buffered + result
+                decoder = self._stream._decoder
+                if decoder is not None:
+                    self._pending = self._stream._get_decoded_chars() + decoder.decode(data, final=True)
+                    self._stream._set_decoded_chars('')
+                    self._stream._snapshot = None
+                else:
+                    self._pending = self._stream._get_decoded_chars() + _text_of(data, self.encoding, self.errors)
+            else:
+                buffered = self._stream._read_buf[self._stream._read_pos:]
+                self._stream._reset_read_buf()
+                self._pending = buffered + result
+
+    # Honor the requested size instead of waiting for end-of-file.
     def read(self, size=-1):
         if self.closed:
             raise ValueError('I/O operation on closed file')
-        result = _subprocess(3, self._handle, self._which)
-        if result is None or result is False:
-            result = b''
-        if self._text:
-            return _text_of(result, self._encoding, self._errors)
+        if self._collected:
+            self._fill()
+        if self._pending is None:
+            return self._stream.read(size)
+        if size is None or size < 0:
+            result, self._pending = self._pending, self._pending[:0]
+            return result
+        result, self._pending = self._pending[:size], self._pending[size:]
         return result
 
-    # Close the host pipe as well as the Python wrapper.
+    # Read one line, from the capture when communicate() owns the pipe.
+    def readline(self, size=-1):
+        if self.closed:
+            raise ValueError('I/O operation on closed file')
+        if self._collected:
+            self._fill()
+        if self._pending is None:
+            return self._stream.readline(size)
+        limit = len(self._pending) if size is None or size < 0 else min(size, len(self._pending))
+        newline = '\n' if self._text else b'\n'
+        at = self._pending.find(newline, 0, limit)
+        end = at + 1 if at >= 0 else limit
+        result, self._pending = self._pending[:end], self._pending[end:]
+        return result
+
+    # Expose the real descriptor to readiness APIs.
+    def fileno(self):
+        return self._stream.fileno()
+
+    # Close the buffer before releasing the kernel-owned descriptor.
     def close(self):
         if not self.closed:
+            self._stream.close()
             _subprocess(7, self._handle, self._which)
             self.closed = True
 
@@ -111,12 +163,23 @@ class _Writable:
             # bytes they were written as; the caller advances by that.
             written = len(data)
             data = data.encode(self._encoding, self._errors or 'strict')
-        result = _subprocess(1, self._handle, data)
-        if isinstance(result, tuple):
-            error, message = result
-            kind = BrokenPipeError if error == 32 else OSError
-            raise kind(error, message)
-        return result if written is None else written
+        import os
+        at = 0
+        fd = self.fileno()
+        while at < len(data):
+            at += os.write(fd, memoryview(data)[at:])
+        return at if written is None else written
+
+    # Expose the child's input descriptor while this wrapper is open.
+    def fileno(self):
+        if self.closed:
+            raise ValueError('I/O operation on closed file')
+        return _subprocess(8, self._handle, 2)
+
+    # Writes are unbuffered, so there are no pending bytes to flush.
+    def flush(self):
+        if self.closed:
+            raise ValueError('I/O operation on closed file')
 
     def close(self):
         if not self.closed:
@@ -167,6 +230,7 @@ class Popen:
         if handle is False:
             raise OSError(2, 'No such file or directory', cwd if cwd is not None and not os.path.isdir(cwd) else argv[0])
         self._handle = handle
+        self.pid = handle
         self._stderr_to_stdout = stderr == STDOUT
         self.args = args
         self.returncode = None
@@ -204,13 +268,12 @@ class Popen:
                 raise TimeoutExpired(self.args, timeout)
             _wait(10000)
 
+    # Drain merged stderr from the capture communicate started.
     def _read_stream(self, which):
         result = _subprocess(3, self._handle, which)
         if result is None or result is False:
             result = b''
-        if self._text:
-            return _text_of(result, self._encoding, self._errors)
-        return result
+        return _text_of(result, self._encoding, self._errors) if self._text else result
 
     # Drain open captures and tolerate streams already closed by the caller.
     def communicate(self, input=None, timeout=None):
@@ -218,6 +281,9 @@ class Popen:
             raise ValueError('stdin is not a pipe')
         # Read both output pipes while writing stdin and waiting for termination.
         _subprocess(8, self._handle)
+        for stream in (self.stdout, self.stderr):
+            if stream is not None and not stream.closed:
+                stream._collected = True
         if input is not None:
             if self.stdin.closed:
                 raise ValueError("I/O operation on closed file")
@@ -261,11 +327,16 @@ class Popen:
         _subprocess(6, self._handle)
         self.returncode = -9
 
+    # Deliver termination using its documented signal rather than SIGKILL.
     def terminate(self):
-        self.kill()
+        import signal
+        self.send_signal(signal.SIGTERM)
 
+    # Forward exactly the requested signal without waiting for process exit.
     def send_signal(self, sig):
-        self.kill()
+        import os
+        if self.poll() is None:
+            os.kill(self.pid, sig)
 
     def __enter__(self):
         return self
@@ -347,3 +418,72 @@ def check_call(*popenargs, **kwargs):
             cmd = popenargs[0]
         raise CalledProcessError(retcode, cmd)
     return 0
+
+
+def _optim_args_from_interpreter_flags():
+    """Return a list of command-line arguments reproducing the current
+    optimization settings in sys.flags."""
+    import sys
+    args = []
+    value = sys.flags.optimize
+    if value > 0:
+        args.append('-' + 'O' * value)
+    return args
+
+
+def _args_from_interpreter_flags():
+    """Return a list of command-line arguments reproducing the current
+    settings in sys.flags, sys.warnoptions and sys._xoptions."""
+    import sys
+    flag_opt_map = {
+        'debug': 'd',
+        'dont_write_bytecode': 'B',
+        'no_site': 'S',
+        'verbose': 'v',
+        'bytes_warning': 'b',
+        'quiet': 'q',
+    }
+    args = _optim_args_from_interpreter_flags()
+    for flag, opt in flag_opt_map.items():
+        v = getattr(sys.flags, flag)
+        if v > 0:
+            args.append('-' + opt * v)
+
+    if sys.flags.isolated:
+        args.append('-I')
+    else:
+        if sys.flags.ignore_environment:
+            args.append('-E')
+        if sys.flags.no_user_site:
+            args.append('-s')
+        if sys.flags.safe_path:
+            args.append('-P')
+
+    warnopts = list(getattr(sys, 'warnoptions', ()))
+    xoptions = getattr(sys, '_xoptions', {})
+    bytes_warning = sys.flags.bytes_warning
+    dev_mode = sys.flags.dev_mode
+
+    # Startup may not have recorded the options it implies, so remove only those present.
+    if bytes_warning > 1 and "error::BytesWarning" in warnopts:
+        warnopts.remove("error::BytesWarning")
+    elif bytes_warning and "default::BytesWarning" in warnopts:
+        warnopts.remove("default::BytesWarning")
+    if dev_mode and 'default' in warnopts:
+        warnopts.remove('default')
+    for opt in warnopts:
+        args.append('-W' + opt)
+
+    if dev_mode:
+        args.extend(('-X', 'dev'))
+    for opt in sorted(xoptions):
+        if opt == 'dev':
+            continue
+        value = xoptions[opt]
+        if value is True:
+            arg = opt
+        else:
+            arg = '%s=%s' % (opt, value)
+        args.extend(('-X', arg))
+
+    return args

@@ -7,7 +7,10 @@ class Interpolation:
     __module__ = 'string.templatelib'
     __native_type_name__ = 'string.templatelib.Interpolation'
     __match_args__ = ('value', 'expression', 'conversion', 'format_spec')
-    def __init__(self, value, expression, conversion=None, format_spec=''):
+    def __class_getitem__(cls, item):
+        import types
+        return types.GenericAlias(cls, item)
+    def __init__(self, value, expression='', conversion=None, format_spec=''):
         if not isinstance(expression, str) or not isinstance(format_spec, str):
             raise TypeError('expression and format_spec must be strings')
         if conversion not in (None, 'a', 'r', 's'):
@@ -42,6 +45,9 @@ class Template:
     __slots__ = ()
     __module__ = 'string.templatelib'
     __native_type_name__ = 'string.templatelib.Template'
+    def __class_getitem__(cls, item):
+        import types
+        return types.GenericAlias(cls, item)
     def __init__(self, *args):
         strings = ['']
         interpolations = []

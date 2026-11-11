@@ -265,5 +265,10 @@ pub fn pack_text(raw: &[u8]) -> Result<Vec<u8>, String> {
 pub fn unpack_json(bytes: &[u8]) -> Result<serde_json::Value, String> {
     let raw = bytes.strip_prefix(b"LCC6").ok_or("ValueError: invalid compiled cache header")?;
     let decoded = lumen_zlib::decompress(raw).map_err(|error| format!("ValueError: {error}"))?;
-    serde_json::from_slice(&decoded).map_err(|error| format!("ValueError: {error}"))
+    // serde_json refuses nesting past 128. A module this compiler just wrote can be deeper.
+    let mut decoder = serde_json::Deserializer::from_slice(&decoded);
+    decoder.disable_recursion_limit();
+    let value = Json::deserialize(&mut decoder).map_err(|error| format!("ValueError: {error}"))?;
+    decoder.end().map_err(|error| format!("ValueError: {error}"))?;
+    Ok(value)
 }

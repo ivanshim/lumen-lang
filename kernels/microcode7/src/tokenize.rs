@@ -26,14 +26,63 @@ fn sequence(record: &Thing, key: &str) -> Option<Rc<RefCell<Value>>> {
     if let Value::Mutable(cell, _) | Value::Shared(cell) = held { Some(cell) } else { None }
 }
 
-// Locate a single-line literal's closing delimiter, stepping over escaped
-// characters. Anything needing another input line stays with the adapter.
+// Scan buffered literal contents without crossing an input callback. The port
+// still owns errors and any escape that needs a character from the next line.
+fn string_body(values: &[Value]) -> Option<Value> {
+    let Value::Thing(scanner) = values.first()?.settled() else { return None; };
+    let delimiter = match &values[1] { Value::Text(word) => match word.as_ref() {
+        "'" => 39, "\"" => 34, _ => return None,
+    }, _ => return None };
+    let (Value::Small(size), Value::Small(carried)) = (&values[2], &values[3]) else { return None; };
+    if (*size != 1 && *size != 3) || *carried < 0 || *carried >= *size { return None; }
+    let position = counter(&scanner, "cur")?;
+    let line_start = counter(&scanner, "line_start")?;
+    let extent = counter(&scanner, "inp")?;
+    if line_start < 0 || position < line_start || extent < position { return None; }
+    let Value::Text(source) = slot(&scanner, "buf") else { return None; };
+    let first = crate::text::string_boundary(&source, (position - line_start).try_into().ok()?)?;
+    let boundary = crate::text::string_boundary(&source, (extent - line_start).try_into().ok()?)?;
+    let input = source.as_bytes();
+    let (mut cursor, mut matched, mut escaped) = (first, *carried, false);
+    loop {
+        if cursor == boundary { break; }
+        match input[cursor] {
+            10 if *size == 1 => break,
+            92 => {
+                let following = cursor + 1;
+                if following >= boundary { break; }
+                let letter = source[following..boundary].chars().next()?;
+                let mut end = following + letter.len_utf8();
+                if letter == '\r' {
+                    if end >= boundary { break; }
+                    end += source[end..boundary].chars().next()?.len_utf8();
+                }
+                if letter as u32 == u32::from(delimiter) { escaped = true; }
+                cursor = end;
+                matched = 0;
+            }
+            byte => {
+                cursor += 1;
+                if byte == delimiter { matched += 1; } else { matched = 0; }
+                if matched == *size { break; }
+            }
+        }
+    }
+    store(&scanner, "cur", Value::Small(position + source[first..cursor].chars().count() as i64));
+    Some(Value::tuple(vec![Value::Small(matched), Value::Flag(escaped)]))
+}
+
+// Locate a complete quoted spelling in the current physical input line.
+// A multiline body or missing closing mark still needs the Python scanner.
 fn closing_quote(input: &[u8], first: usize) -> Option<usize> {
     let mark = input[first];
-    if input.get(first + 1) == Some(&mark) && input.get(first + 2) == Some(&mark) { return None; }
-    let mut at = first + 1;
+    let triple = input.get(first + 1) == Some(&mark) && input.get(first + 2) == Some(&mark);
+    let span = if triple { 3 } else { 1 };
+    let mut at = first + span;
     while let Some(&byte) = input.get(at) {
-        if byte == mark { return Some(at + 1); }
+        if byte == mark && (!triple || input.get(at..at + 3) == Some(&[mark; 3][..])) {
+            return Some(at + span);
+        }
         if byte == 10 || byte == 13 { break; }
         if byte == 92 {
             at += 1;
@@ -603,6 +652,7 @@ fn buffered_next(values: &[Value]) -> Result<Value, String> {
 }
 
 pub fn atom(values: &[Value]) -> Result<Value, String> {
+    if values.len() == 4 { return Ok(string_body(values).unwrap_or(Value::Nil)); }
     if values.is_empty() {
         return Ok(Value::Wrapped(120, crate::tuples::Sequence::plain(vec![Value::Small(11)])));
     }

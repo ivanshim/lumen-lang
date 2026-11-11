@@ -84,9 +84,13 @@ def _raise(reply, context):
         raise error(msg)
 
 def crc32(data, value=0, /):
+    if type(data) is bytes and type(value) is int:
+        return _codec(7, 0, data, value & 0xffffffff, 0, 0, 0, 0)[5]
     return _invoke(7, data=_buffer(data), a=_indexed(value) & 0xffffffff)[5]
 
 def adler32(data, value=1, /):
+    if type(data) is bytes and type(value) is int:
+        return _codec(8, 0, data, value & 0xffffffff, 0, 0, 0, 0)[5]
     return _invoke(8, data=_buffer(data), a=_indexed(value) & 0xffffffff)[5]
 
 class Compress:
@@ -111,9 +115,11 @@ class Compress:
         self._finished = False
 
     def compress(self, data, /):
-        data = _buffer(data)
-        reply = _invoke(3, self._handle, data)
-        _raise(reply, 'while compressing data')
+        if type(data) is not bytes:
+            data = _buffer(data)
+        reply = _codec(3, self._handle, data, 0, 0, 0, 0, 0)
+        if reply[0]:
+            _raise(reply, 'while compressing data')
         return reply[1]
 
     def flush(self, mode=Z_FINISH, /):

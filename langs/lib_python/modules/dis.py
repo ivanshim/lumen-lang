@@ -4,6 +4,7 @@
 # The opcode tables below describe CPython's instruction set, which tools
 # still query by number; the instructions get_instructions() yields are the
 # kernel's own, named by the strings in the native hasjump set.
+from collections import namedtuple
 import opcode as _opcode_tables
 from opcode import (cmp_op, opmap, opname, hasarg, hasconst, hasname, hasjrel,
                     hasjabs, hasfree, haslocal, hasexc, hascompare,
@@ -28,10 +29,24 @@ COMPILER_FLAG_NAMES = {
     1 << 27: 'METHOD',
 }
 
-_REFUSAL = 'NotImplementedError: there is no CPython bytecode here to disassemble'
-
 def _refuse():
-    raise _REFUSAL
+    raise NotImplementedError('there is no CPython bytecode here to disassemble')
+
+# The operations the reference's own bytecode scanner would find, read
+# off the code value the active kernel built rather than off any byte
+# stream: each import as (module, level, fromlist) with the relative
+# dots counted into the level and out of the name, and each name the
+# code writes at its own level. A kernel that keeps neither answers
+# with nothing here.
+
+def _find_imports(co):
+    for record in co.co_imports:
+        name, level, fromlist = record
+        yield name, level, fromlist
+
+def _find_store_names(co):
+    for name in co.co_stores:
+        yield name
 
 def code_info(x):
     _refuse()
@@ -62,9 +77,8 @@ hasjump = list(_opcode_tables.hasjump) + _native_jumps
 hasarg = list(hasarg) + _native_jumps
 hasjrel = list(hasjrel) + _native_jumps
 
-class Positions:
-    def __init__(self, values):
-        self.lineno, self.col_offset, self.end_lineno, self.end_col_offset = values
+Positions = namedtuple('Positions', 'lineno end_lineno col_offset end_col_offset',
+                       defaults=(None,) * 4)
 
 class Instruction:
     def __init__(self, offset, opcode, argval, is_jump, positions):
@@ -72,7 +86,7 @@ class Instruction:
         self.opcode = self.opname = opcode
         self.arg = self.oparg = self.argval = argval
         self.argrepr = '' if argval is None else str(argval)
-        self.positions = Positions(positions)
+        self.positions = Positions(*positions)
         self.starts_line = self.positions.lineno
         self.is_jump_target = False
         self.is_jump = is_jump
@@ -90,9 +104,9 @@ def get_instructions(x, *, first_line=None, show_caches=False, adaptive=False):
         adjustment = first_line - code.co_firstlineno
     targets = {row[2] for row in rows if row[3] and row[2] is not None}
     for offset, opcode, arg, jump, positions in rows:
-        if adjustment:
-            positions = (positions[0] + adjustment, positions[1] + adjustment if positions[1] is not None else None, positions[2], positions[3])
         instruction = Instruction(offset, opcode, arg, jump, positions)
+        if instruction.starts_line is not None:
+            instruction.starts_line += adjustment
         instruction.is_jump_target = offset in targets
         yield instruction
 

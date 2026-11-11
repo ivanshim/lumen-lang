@@ -12,6 +12,7 @@
     "importlib.util": "util"
   },
   "adapters": {
+    "_pydatetime": "runtime_adapters/_pydatetime.py",
     "copy": "runtime_adapters/copy.py",
     "functools": "runtime_adapters/functools.py",
     "heapq": "runtime_adapters/heapq.py",
@@ -45,7 +46,9 @@
     "zipimport": "runtime_adapters/zipimport.py",
     "test": "runtime_adapters/test_package.py",
     "test.support.warnings_helper": "runtime_adapters/warnings_helper.py",
-    "re._compiler": "runtime_adapters/re_compiler.py"
+    "re._compiler": "runtime_adapters/re_compiler.py",
+    "tarfile": "runtime_adapters/tarfile.py",
+    "random": "runtime_adapters/random_randrange.py"
   },
   "data": {
     "_codec_sjis": {

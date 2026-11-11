@@ -1403,7 +1403,8 @@ class FileIO(_RawIOBase):
                     if fd < 0:
                         raise ValueError('opener returned ' + str(fd))
                 owned = True
-                os.set_inheritable(fd, False)
+                if opener is not None:
+                    os.set_inheritable(fd, False)
             # The C code asks the system directly, so a replaced os.fstat is not seen here.
             import posix
             try:
@@ -1668,8 +1669,10 @@ class FileIO(_RawIOBase):
         os.ftruncate(self._fd, size)
         return size
 
+# Retain original methods so class replacements use validated buffered reads.
 _FILEIO_READINTO = FileIO.readinto
 _FILEIO_FLUSH = FileIO.flush
+_BYTESIO_READINTO = BytesIO.readinto
 
 class _CheckedRaw:
     # Buffered streams refill through readinto() so that every raw object's
@@ -1722,7 +1725,8 @@ class _CheckedRaw:
             raise OSError('raw readinto() returned invalid length %d (should have been between 0 and %d)' % (count, len(buffer)))
         return count
     def read(self, size=-1):
-        if self._plain and 'readinto' not in self.raw.__dict__:
+        if (self._plain and 'readinto' not in self.raw.__dict__
+                and type(self.raw).readinto is (_FILEIO_READINTO if type(self.raw) is FileIO else _BYTESIO_READINTO)):
             # Our own streams answer a read with bytes or None already,
             # unless a program put a readinto of its own on this one.
             return self.raw.read(-1 if size is None else size)
