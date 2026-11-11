@@ -7917,7 +7917,8 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if Self::class_sealed(c) || c.constants.iter().any(|(key, _)| key == "\0native-name") || (c.python_names.borrow().is_none() && ["name", "qualified", "doc"].iter().any(|key| !self.class_word(key).is_empty() && name == self.class_word(key))) {
-                    return Err(format!("TypeError: cannot set '{name}' attribute of immutable type '{}'", if Self::own_kind(c).as_deref() == Some("_ConstEvaluator") { "_typing._ConstEvaluator" } else { &c.name }).into());
+                    let action = if value.is_some() { "set" } else { "delete" };
+                    return Err(format!("TypeError: cannot {action} '{name}' attribute of immutable type '{}'", if Self::own_kind(c).as_deref() == Some("_ConstEvaluator") { "_typing._ConstEvaluator" } else { &c.name }).into());
                 }
                 // The kinds of the two named singletons are fixed the
                 // way the reference fixes them: nothing is written onto

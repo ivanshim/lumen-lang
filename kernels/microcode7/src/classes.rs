@@ -8217,7 +8217,8 @@ impl<'a> Machine<'a> {
                 // A class the seal marked unchangeable takes no write to
                 // a member of it, setting one and taking one off alike.
                 if Self::sealed(b) || b.constants.iter().any(|(label, _)| label == "\0native-name") || (b.type_names.borrow().is_none() && ["name", "qualified", "doc"].iter().any(|part| !self.detail(part).is_empty() && key == self.detail(part))) {
-                    return Err(format!("TypeError: cannot set '{key}' attribute of immutable type '{}'", if Self::native_word(b).as_deref() == Some("_ConstEvaluator") { "_typing._ConstEvaluator" } else { &b.name }).into());
+                    let action = if replacement.is_some() { "set" } else { "delete" };
+                    return Err(format!("TypeError: cannot {action} '{key}' attribute of immutable type '{}'", if Self::native_word(b).as_deref() == Some("_ConstEvaluator") { "_typing._ConstEvaluator" } else { &b.name }).into());
                 }
                 // The kinds of the two named singletons take no entry
                 // of their own and give none up, as the reference fixes them.

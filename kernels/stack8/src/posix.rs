@@ -565,6 +565,49 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
             let mut size = std::mem::zeroed::<libc::winsize>();
             status(libc::ioctl(number(0)? as i32, libc::TIOCGWINSZ, &mut size) as i64).map(|_| Value::tuple(vec![Value::Small(size.ws_col as i64),Value::Small(size.ws_row as i64)]))
         },
+        "fcntl" => {
+            let descriptor = number(0)? as i32;
+            let command = number(1)? as libc::c_int;
+            let argument = number(2)? as libc::c_long;
+            loop {
+                let result = status(libc::fcntl(descriptor, command, argument) as i64);
+                if matches!(result, Err(libc::EINTR)) { check_signals()?; continue; }
+                break result;
+            }
+        },
+        "fcntl_buf" => {
+            let descriptor = number(0)? as i32;
+            let command = number(1)? as libc::c_int;
+            let mut block = raw(&a[2])?;
+            loop {
+                let result = status(libc::fcntl(descriptor, command, block.as_mut_ptr()) as i64);
+                if matches!(result, Err(libc::EINTR)) { check_signals()?; continue; }
+                break result.map(|_| bytes(block));
+            }
+        },
+        "lockf" => {
+            let descriptor = number(0)? as i32;
+            let waiting = number(1)? != 0;
+            let kind = match number(2)? {
+                0 => libc::F_RDLCK,
+                1 => libc::F_WRLCK,
+                2 => libc::F_UNLCK,
+                _ => return Err("ValueError: unrecognized lockf argument".into()),
+            };
+            let mut region = libc::flock {
+                l_type: kind as libc::c_short,
+                l_whence: number(3)? as libc::c_short,
+                l_start: number(4)?,
+                l_len: number(5)?,
+                l_pid: 0,
+            };
+            let request = if waiting { libc::F_SETLKW } else { libc::F_SETLK };
+            loop {
+                let result = status(libc::fcntl(descriptor, request, &mut region) as i64);
+                if matches!(result, Err(libc::EINTR)) { check_signals()?; continue; }
+                break result;
+            }
+        },
         "get_inheritable" | "set_inheritable" => {
             let fd = number(0)? as i32;
             let flags = libc::fcntl(fd, libc::F_GETFD);

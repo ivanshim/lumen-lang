@@ -549,6 +549,49 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                     (found, _) => Ok(Value::Small(found as i64)),
                 }
             }
+            "fcntl" => {
+                let held = int(0)? as libc::c_int;
+                let request = int(1)? as libc::c_int;
+                let argument = int(2)? as libc::c_long;
+                loop {
+                    let outcome = checked(libc::fcntl(held, request, argument) as i64);
+                    if matches!(outcome, Err(libc::EINTR)) { interrupted()?; continue; }
+                    break outcome;
+                }
+            }
+            "fcntl_buf" => {
+                let held = int(0)? as libc::c_int;
+                let request = int(1)? as libc::c_int;
+                let mut block = data_of(&params[2])?;
+                loop {
+                    let outcome = checked(libc::fcntl(held, request, block.as_mut_ptr()) as i64);
+                    if matches!(outcome, Err(libc::EINTR)) { interrupted()?; continue; }
+                    break outcome.map(|_| octets(block));
+                }
+            }
+            "lockf" => {
+                let held = int(0)? as libc::c_int;
+                let waiting = int(1)? != 0;
+                let kind = match int(2)? {
+                    0 => libc::F_RDLCK,
+                    1 => libc::F_WRLCK,
+                    2 => libc::F_UNLCK,
+                    _ => return Err(String::from("ValueError: unrecognized lockf argument")),
+                };
+                let mut region = libc::flock {
+                    l_type: kind as libc::c_short,
+                    l_whence: int(3)? as libc::c_short,
+                    l_start: int(4)?,
+                    l_len: int(5)?,
+                    l_pid: 0,
+                };
+                let request = if waiting { libc::F_SETLKW } else { libc::F_SETLK };
+                loop {
+                    let outcome = checked(libc::fcntl(held, request, &mut region) as i64);
+                    if matches!(outcome, Err(libc::EINTR)) { interrupted()?; continue; }
+                    break outcome;
+                }
+            }
             "get_inheritable" | "set_inheritable" | "get_blocking" | "set_blocking" => {
             let (get, set, bit) = match operation.as_ref() {
                 "get_inheritable" | "set_inheritable" => (libc::F_GETFD, libc::F_SETFD, libc::FD_CLOEXEC),
