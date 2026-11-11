@@ -100,8 +100,8 @@ commit_frame.__qualname__ = '_Framer.commit_frame'
 _Framer.commit_frame = commit_frame
 del commit_frame
 
-# Decode consecutive scalar pushes in exact memory streams as one read-only
-# transfer. Other opcodes keep the canonical dispatch and framing machinery.
+# Decode bounded runs of scalar fields and plain memo/tuple operations.
+# Other opcodes keep the canonical dispatch and framing machinery.
 _scalar_formats = {
     NONE[0]: 0, NEWTRUE[0]: 24, NEWFALSE[0]: 25,
     INT[0]: 18, BININT[0]: 3, BININT1[0]: 1, BININT2[0]: 2,
@@ -110,6 +110,13 @@ _scalar_formats = {
     UNICODE[0]: 21, BINUNICODE[0]: 12,
     SHORT_BINUNICODE[0]: 11, BINUNICODE8[0]: 13,
 }
+_scalar_codes = frozenset(_scalar_formats)
+_memory_memoize, _memory_binput, _memory_long_binput = MEMOIZE[0], BINPUT[0], LONG_BINPUT[0]
+_memory_tuple1, _memory_tuple2, _memory_tuple3 = TUPLE1[0], TUPLE2[0], TUPLE3[0]
+_scalar_formats.update({
+    _memory_memoize: 0, _memory_binput: 1, _memory_long_binput: 4,
+    _memory_tuple1: 0, _memory_tuple2: 0, _memory_tuple3: 0,
+})
 _scalar_layouts = tuple(_scalar_formats.get(code, -1) for code in range(256))
 _scalar_handlers = {code: (_Unpickler.dispatch[code], _Unpickler.dispatch[code].__code__)
                     for code in _scalar_formats}
@@ -129,6 +136,7 @@ _memory_string = str
 _memory_long = decode_long
 _memory_long_body = decode_long.__code__
 _memory_maxsize = maxsize
+_memory_all, _memory_type, _memory_length = all, type, len
 _memory_loader_type = _Unpickler
 _stream_load = _Unpickler.load
 _stream_load_body = _stream_load.__code__
@@ -172,19 +180,21 @@ def _load_memory(self):
     self.append = self.stack.append
     self.proto = 0
     dispatch = self.dispatch
-    checked = [False] * 256
+    bulk = True
+    transferred = False
+    memo = None
     try:
         while True:
-            append = self.append
-            if (_pickle_code_watch[0] and type(dispatch) is dict and self.read is read and self.readline is readline
-                    and type(self.stack) is list and type(append) is _memory_append_type
-                    and append.__self__ is self.stack and append.__name__ == 'append'
-                    and io.BytesIO.read is _memory_stream_read
-                    and io.BytesIO.readline is _memory_stream_line
-                    and unpack is _memory_unpack and maxsize == _memory_maxsize
-                    and int is _memory_integer and str is _memory_string
-                    and decode_long is _memory_long
-                    and sys.gettrace() is None):
+            key = read(1)
+            if not key:
+                raise EOFError
+            assert isinstance(key, bytes_types)
+            if not bulk:
+                dispatch[key[0]](self)
+                continue
+            records = ()
+            if (_scalar_layouts[key[0]] >= 0 and _pickle_code_watch[0]
+                    and self.read is read and self.readline is readline):
                 stream = unframer.current_frame
                 if stream is None:
                     stream = source_read.__self__
@@ -194,26 +204,60 @@ def _load_memory(self):
                     if (type(stream_read) is _memory_method_type
                             and stream_read.__func__ is _memory_stream_read
                             and type(stream_line) is _memory_method_type
-                            and stream_line.__func__ is _memory_stream_line):
-                        records = _memory_transfer(stream._data, stream._pos, _scalar_layouts,
+                            and stream_line.__func__ is _memory_stream_line
+                            and not stream._closed):
+                        records = _memory_transfer(stream._data, stream._pos - 1, _scalar_layouts,
                                                    stream._closed, 3)
-                        if records:
-                            for code, argument, start, end in records:
-                                if not checked[code]:
-                                    handler, body = _scalar_handlers[code]
-                                    if dispatch.get(code) is not handler:
-                                        break
-                                    checked[code] = True
-                                append(argument)
-                            else:
-                                stream._pos = end
-                                continue
-                            stream._pos = start
-            checked = [False] * 256
-            key = read(1)
-            if not key:
-                raise EOFError
-            assert isinstance(key, bytes_types)
+                        if len(records) < 4 and key[0] in _scalar_codes:
+                            bulk = False
+            # Short runs do not repay the invariant checks and transfer loop.
+            if len(records) >= 4:
+                append = self.append
+                if (type(dispatch) is dict and type(self.stack) is list
+                        and type(append) is _memory_append_type
+                        and append.__self__ is self.stack and append.__name__ == 'append'
+                        and io.BytesIO.read is _memory_stream_read
+                        and io.BytesIO.readline is _memory_stream_line
+                        and unpack is _memory_unpack and maxsize == _memory_maxsize
+                        and int is _memory_integer and str is _memory_string
+                        and decode_long is _memory_long and sys.gettrace() is None
+                        and type(self.memo) is dict and len is _memory_length
+                        and (not transferred or self.memo is memo)
+                        and (transferred or _memory_all(_memory_type(index) is _memory_integer
+                                                        for index in self.memo))):
+                    memo = self.memo
+                    stack = self.stack
+                    transferred = True
+                    checked = [False] * 256
+                    for code, argument, start, end in records:
+                        if not checked[code]:
+                            handler, body = _scalar_handlers[code]
+                            if dispatch.get(code) is not handler:
+                                break
+                            checked[code] = True
+                        stream._pos = end
+                        if code == _memory_memoize or code == _memory_binput or code == _memory_long_binput:
+                            index = len(memo) if code == _memory_memoize else argument
+                            if code == _memory_long_binput and index > maxsize:
+                                raise ValueError("negative LONG_BINPUT argument")
+                            # Replacements can finalize user objects.
+                            if index in memo:
+                                break
+                            memo[index] = stack[-1]
+                        elif code == _memory_tuple1:
+                            stack[-1] = (stack[-1],)
+                        elif code == _memory_tuple2:
+                            stack[-2:] = [(stack[-2], stack[-1])]
+                        elif code == _memory_tuple3:
+                            stack[-3:] = [(stack[-3], stack[-2], stack[-1])]
+                        else:
+                            append(argument)
+                    else:
+                        continue
+                    stream._pos = start
+                    key = read(1)
+            if transferred or len(records) >= 4:
+                bulk = False
             dispatch[key[0]](self)
     except _Stop as stopinst:
         return stopinst.value
@@ -425,7 +469,13 @@ def _plain_load(self):
             plain = _recall_plain(self, stream)
             if plain is not None:
                 return plain
-            if _long_int_run(stream._data, stream._pos):
+            data = stream._data
+            pos = stream._pos
+            # Memo and short-tuple runs share the scalar loader. Native recall
+            # already returned; small and line-oriented pickles stay canonical.
+            if (_long_int_run(data, pos)
+                    or (pos >= 0 and len(data) - pos >= 256
+                        and data[pos] in (PROTO[0], EMPTY_LIST[0], EMPTY_DICT[0], EMPTY_TUPLE[0]))):
                 return _load_memory(self)
     return _stock_load(self)
 

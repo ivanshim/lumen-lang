@@ -339,6 +339,12 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
             "close" => checked(libc::close(int(0)? as _) as i64),
             "lseek" => checked(libc::lseek(int(0)? as _, int(1)?, int(2)? as _)),
             "dup" => checked(libc::fcntl(int(0)? as _, libc::F_DUPFD_CLOEXEC, 0) as i64),
+            "dup2" => {
+                let first = int(0)? as libc::c_int;
+                let second = int(1)? as libc::c_int;
+                let copied = if params[2].is_true() { libc::dup2(first, second) } else { libc::dup3(first, second, libc::O_CLOEXEC) };
+                checked(i64::from(copied))
+            }
             "ftruncate" => checked(libc::ftruncate(int(0)? as _, int(1)?) as i64),
             "sendfile" => {
                 let mut start = int(3)?;

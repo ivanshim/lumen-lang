@@ -4928,6 +4928,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.print.sep` | - | - | `sep` | - | - | - | - | - | - | - |
 | `ext.builtin.print.sep.amiss` | - | - | `TypeError: sep must be None or a string` | - | - | - | - | - | - | - |
 | `ext.builtin.print.separator` | - | - | `sep` | - | - | - | - | - | - | - |
+| `ext.builtin.print.stream.encoding` | - | - | `encoding` | - | - | - | - | - | - | - |
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
 | `ext.builtin.profile` | - | - | `__profile` | - | - | - | - | - | - | - |
 | `ext.builtin.program.namespace` | - | - | `__program_namespace` | - | - | - | - | - | - | - |
@@ -6205,8 +6206,12 @@ matching rules when the scan reaches a non-ASCII character.
 
 `ext.builtin.tokenize.scan` fills one decoded physical line into the tokenizer
 buffer and can return several finished tokens from that buffer together.
+With a scanner state, quote, delimiter width and pending quote count, it
+advances a buffered ordinary string body and returns the new quote count
+and whether it passed an escaped quote. This form never reads another line.
 Forms the scanner does not recognise, and a buffer that still needs another
-line, stay with the Python tokenizer and its existing diagnostics.
+line, stay with the Python tokenizer and its existing diagnostics. Complete triple-quoted
+spellings on one physical line also use the buffered literal scan.
 
 `ext.builtin.re.shortcut` computes the existing regular-expression adapter's
 ASCII atom sets and capture endpoints/groups. Unsupported input shapes
