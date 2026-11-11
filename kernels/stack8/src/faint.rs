@@ -1077,7 +1077,7 @@ impl Graph {
         for node in &self.nodes {
             if !node.marked { continue; }
             match &node.held {
-                Value::Object(object) | Value::Fields(object) => identities.push(Rc::as_ptr(object) as usize),
+                Value::Object(object) | Value::Fields(object) => identities.push(crate::value::Keep::as_ptr(object) as *const () as usize),
                 Value::Class(class) => identities.push(Rc::as_ptr(class) as usize),
                 Value::Routine(program) => identities.push(Rc::as_ptr(program) as usize),
                 _ => {}

@@ -1165,7 +1165,7 @@ impl Web {
                 continue;
             }
             let site = match &strand.knot {
-                Knot::Held(Value::Thing(thing) | Value::Attributes(thing)) => Rc::as_ptr(thing) as usize,
+                Knot::Held(Value::Thing(thing) | Value::Attributes(thing)) => Hold::as_ptr(thing) as usize,
                 Knot::Held(Value::Blueprint(kind)) => Rc::as_ptr(kind) as usize,
                 Knot::Held(Value::Routine(code)) => Rc::as_ptr(code) as *const () as usize,
                 Knot::Frame(room) => Rc::as_ptr(room) as *const () as usize,
