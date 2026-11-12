@@ -617,26 +617,63 @@ class StringIO(_TextIOBase):
 _methods = {}
 
 _pyio_module = None
+_pyio_source_cache = None
+_buffered_module = None
+
+def _pyio_source():
+    global _pyio_source_cache
+    if _pyio_source_cache is None:
+        path = __load_module('_pyio', True)
+        with FileIO(path, 'r') as source:
+            data = source.readall()
+        if not isinstance(data, str):
+            data = data.decode('utf-8')
+        _pyio_source_cache = (path, data)
+    return _pyio_source_cache
+
+def _exec_backend(source, path, name):
+    # Native implementation frames must stay distinct from public _pyio callbacks.
+    code = compile(source, '<native _io>', 'exec')
+    module = type(sys)(name)
+    module.__file__ = path
+    module.__package__ = ''
+    sys.modules[name] = module
+    try:
+        exec(code, module.__dict__)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return module
 
 def _text_runtime():
     global _pyio_module
     if _pyio_module is None:
-        # Native implementation frames must stay distinct from public _pyio callbacks.
-        path = __load_module('_pyio', True)
-        with FileIO(path, 'r') as source:
-            code = compile(source.readall(), '<native _io>', 'exec')
-        module = type(sys)('_io_backend')
-        module.__file__ = path
-        module.__package__ = ''
-        _pyio_module = module
-        sys.modules['_io_backend'] = module
+        path, source = _pyio_source()
         try:
-            exec(code, module.__dict__)
+            _pyio_module = _exec_backend(source, path, '_io_backend')
         except BaseException:
             _pyio_module = None
-            sys.modules.pop('_io_backend', None)
             raise
     return _pyio_module
+
+def _buffered_runtime():
+    # Byte streams do not use the text classes. Compiling those, and the codec
+    # registry they import, costs about a second the first time a process
+    # buffers a file.
+    global _buffered_module
+    if _pyio_module is not None:
+        return _pyio_module
+    if _buffered_module is None:
+        path, source = _pyio_source()
+        cut = source.find('\nclass TextIOBase')
+        head = source if cut < 0 else source[:cut]
+        head = head.replace('\nimport codecs\n', '\n', 1)
+        try:
+            _buffered_module = _exec_backend(head, path, '_io_buffered')
+        except BaseException:
+            _buffered_module = None
+            raise
+    return _buffered_module
 
 def _method(instance, kind, name):
     member = _methods.get((kind, name))
@@ -1810,7 +1847,7 @@ def _buffered_impl(kind):
     # at every step.
     impl = _IMPLS.get(kind)
     if impl is None:
-        _pyio = _text_runtime()
+        _pyio = _buffered_runtime()
         base = getattr(_pyio, kind)
         class _Impl(base):
             raw = None
@@ -2078,7 +2115,7 @@ class BufferedRandom(BufferedReader):
 
 class BufferedRWPair(BufferedReader):
     def __init__(self, reader, writer, buffer_size=DEFAULT_BUFFER_SIZE):
-        _pyio = _text_runtime()
+        _pyio = _buffered_runtime()
         self._implementation = _pyio.BufferedRWPair(reader, writer, buffer_size)
         self._live = self._implementation
     # A pair has no single checked raw stream: its implementation answers.
