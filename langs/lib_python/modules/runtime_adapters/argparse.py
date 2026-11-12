@@ -17,6 +17,11 @@ def _lumen_getenv(key):
 def _lumen_can_colorize(file=None):
     if file is None:
         file = _lumen_sys.stdout
+    # Honor a replaced can_colorize once _colorize is imported. That import
+    # is the startup cost the plain path skips.
+    loaded = _lumen_sys.modules.get("_colorize")
+    if loaded is not None:
+        return loaded.can_colorize(file=file)
     if not _lumen_sys.flags.ignore_environment:
         colors = _lumen_getenv("PYTHON_COLORS")
         if colors == "0":
@@ -24,9 +29,6 @@ def _lumen_can_colorize(file=None):
         if colors == "1":
             return True
     if _lumen_getenv("NO_COLOR"):
-        return False
-    loaded = _lumen_sys.modules.get("_colorize")
-    if loaded is not None and not getattr(loaded, "COLORIZE", True):
         return False
     if _lumen_getenv("FORCE_COLOR"):
         return True
