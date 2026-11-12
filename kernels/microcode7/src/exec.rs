@@ -3446,8 +3446,16 @@ impl<'a> Machine<'a> {
         // A large source is a safe moment to reap, but not a reason: with
         // little taken since the last reaping there is little to find,
         // and every reaping weaves the whole web.
-        let laden = lumen_room::used().saturating_sub(self.reaped_at_bytes) >= 32 * 1024 * 1024;
-        if large_source { if !laden && !self.modules_retired() { return; } } else if growth < 128_000 { return; }
+        let since_reap = lumen_room::used().saturating_sub(self.reaped_at_bytes);
+        let laden = since_reap >= 32 * 1024 * 1024;
+        // Traceback frames keep caught exceptions alive. Name-table growth
+        // never sees that pile, so a long run that does not import leaks it.
+        let heavy = since_reap >= 128 * 1024 * 1024;
+        if large_source {
+            if !laden && !self.modules_retired() { return; }
+        } else if !heavy && growth < 128_000 {
+            return;
+        }
         let limit = self.imported.get("gc").and_then(|module| {
             let Value::Thing(space) = module.settled() else { return None };
             let rows = space.holds.try_borrow().ok()?;
@@ -3459,7 +3467,13 @@ impl<'a> Machine<'a> {
                 _ => None,
             }
         });
-        if limit.is_some_and(|limit| large_source || growth >= limit) {
+        let Some(limit) = limit else {
+            // gc is absent or off. Remember the size so a hot call does not
+            // look the module up again until the heap grows another step.
+            if heavy && !large_source { self.reaped_at_bytes = lumen_room::used(); }
+            return;
+        };
+        if large_source || heavy || growth >= limit {
             let deferred = self.got_away.take();
             self.reap_rounds();
             self.got_away = deferred;
@@ -17037,6 +17051,11 @@ impl<'a> Machine<'a> {
         // before the caller is handed what the body came to.
         if crate::ghost::stirred(&self.ghost_tap) {
             self.attend_to_gone();
+        }
+        // Imports are not the only safe point: a call has dropped its borrows
+        // here, and the heap may have filled with cyclic tracebacks since.
+        if !self.reaping && lumen_room::used().saturating_sub(self.reaped_at_bytes) >= 128 * 1024 * 1024 {
+            self.collect_namespace_garbage(false);
         }
         let result = outcome?;
         if let Some(k) = key {
