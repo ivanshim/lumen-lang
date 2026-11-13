@@ -663,10 +663,24 @@ fn made_absolute(path: &str) -> String {
 }
 
 type DirectoryVersion = Result<(u64, u64, i64, i64, i64, i64, u32), std::io::ErrorKind>;
+type LinkStamp = (u64, u64, i64, i64, i64, i64);
 
 fn directory_version(path: &std::path::Path) -> DirectoryVersion {
     use std::os::unix::fs::MetadataExt;
     std::fs::metadata(path).map(|m| (m.dev(), m.ino(), m.mtime(), m.mtime_nsec(), m.ctime(), m.ctime_nsec(), m.mode())).map_err(|error| error.kind())
+}
+
+fn link_stamp(info: &std::fs::Metadata) -> LinkStamp {
+    use std::os::unix::fs::MetadataExt;
+    (info.dev(), info.ino(), info.mtime(), info.mtime_nsec(), info.ctime(), info.ctime_nsec())
+}
+
+// A replaced symlink gets a new inode or new timestamps, and canonicalize
+// would walk every ancestor of every link on each import.
+fn symlink_stamp(path: &std::path::Path) -> Option<LinkStamp> {
+    let info = std::fs::symlink_metadata(path).ok()?;
+    if !info.file_type().is_symlink() { return None; }
+    Some(link_stamp(&info))
 }
 
 struct SourceLocations {
@@ -674,13 +688,13 @@ struct SourceLocations {
     locations: HashMap<std::path::PathBuf, String>,
     directories: std::collections::HashSet<std::path::PathBuf>,
     watches: Vec<(std::path::PathBuf, DirectoryVersion)>,
-    links: Vec<(std::path::PathBuf, Option<std::path::PathBuf>)>,
+    links: Vec<(std::path::PathBuf, LinkStamp)>,
 }
 
 impl SourceLocations {
     fn current(&self, root: &std::path::Path) -> bool {
         self.root == root && self.watches.iter().all(|(path, version)| directory_version(path) == *version)
-            && self.links.iter().all(|(path, target)| module_location(path, None) == *target)
+            && self.links.iter().all(|(path, stamp)| symlink_stamp(path).as_ref() == Some(stamp))
     }
 }
 
@@ -35010,7 +35024,7 @@ impl Engine<'_> {
                 let location = match std::fs::symlink_metadata(&file) {
                     Ok(info) if info.file_type().is_symlink() => {
                         let target = module_location(&file, None);
-                        links.push((file, target.clone()));
+                        links.push((file, link_stamp(&info)));
                         target
                     },
                     Ok(_) => Some(file),

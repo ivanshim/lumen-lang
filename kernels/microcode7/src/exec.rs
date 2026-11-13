@@ -999,19 +999,34 @@ fn directory_mark(folder: &std::path::Path) -> Result<DirectoryMark, std::io::Er
     }
 }
 
+type LinkStamp = (u64, u64, i64, i64, i64, i64);
+
+fn link_stamp(info: &std::fs::Metadata) -> LinkStamp {
+    use std::os::unix::fs::MetadataExt as _;
+    (info.dev(), info.ino(), info.mtime(), info.mtime_nsec(), info.ctime(), info.ctime_nsec())
+}
+
+// A replaced symlink gets a new inode or new timestamps, and canonicalize
+// would walk every ancestor of every link on each import.
+fn symlink_stamp(path: &std::path::Path) -> Option<LinkStamp> {
+    let info = std::fs::symlink_metadata(path).ok()?;
+    if !info.file_type().is_symlink() { return None; }
+    Some(link_stamp(&info))
+}
+
 struct LibraryIndex {
     origin: std::path::PathBuf,
     sources: HashMap<std::path::PathBuf, String>,
     virtual_dirs: std::collections::HashSet<std::path::PathBuf>,
     folder_marks: std::collections::BTreeMap<std::path::PathBuf, Result<DirectoryMark, std::io::ErrorKind>>,
-    file_links: Vec<(std::path::PathBuf, Option<std::path::PathBuf>)>,
+    file_links: Vec<(std::path::PathBuf, LinkStamp)>,
 }
 
 impl LibraryIndex {
     fn matches_disk(&self, root: &std::path::Path) -> bool {
         if self.origin != root { return false; }
         for (folder, saved) in &self.folder_marks { if directory_mark(folder) != *saved { return false; } }
-        for (link, expected) in &self.file_links { if library_location(link, None) != *expected { return false; } }
+        for (link, stamp) in &self.file_links { if symlink_stamp(link).as_ref() != Some(stamp) { return false; } }
         true
     }
 }
@@ -36158,7 +36173,7 @@ impl Machine<'_> {
                 let resolved = match std::fs::symlink_metadata(&candidate) {
                     Ok(stat) => if stat.file_type().is_symlink() {
                         let destination = library_location(&candidate, None);
-                        file_links.push((candidate, destination.clone()));
+                        file_links.push((candidate, link_stamp(&stat)));
                         destination
                     } else { Some(candidate) },
                     Err(error) => if error.kind() == std::io::ErrorKind::NotFound { Some(candidate) } else { None },
