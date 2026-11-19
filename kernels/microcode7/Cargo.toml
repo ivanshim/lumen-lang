@@ -12,6 +12,7 @@ lumen-lzma = { path = "../../native/lzma" }
 lumen-unicode = { path = "../../native/unicode" }
 lumen-zlib = { path = "../../native/zlib" }
 lumen-sre = { path = "../../native/sre" }
+lumen-posix = { path = "../../native/posix" }
 num-bigint = { version = "0.4", features = ["serde"] }
 num-traits = "0.2"
 num-integer = "0.1"
