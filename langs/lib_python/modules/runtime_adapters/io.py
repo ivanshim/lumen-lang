@@ -1,33 +1,29 @@
 # Text streams opened from a finalizer need the pure-Python backend while
 # imports still work: shutdown clears them before finalizers run. Compiling
-# that backend at import costs more than a second, and a process whose own
-# finalizers only close binary streams never constructs one. A finalizer
-# defined outside the I/O implementation is counted when its class is created
-# or, for a class already in the program, when this module is imported; the
-# backend and the encodings it looks up are prepared at exit only then.
+# that backend at import costs more than a second, and a process with no
+# foreign finalizer instances never constructs one at shutdown.
 import atexit
-import builtins
 import sys
 import _io as _native_io
 
-_finalizer_instances = 0
-_build_class = builtins.__build_class__
 # Modules whose finalizers only release native handles or close binary streams.
 _IO_MODULES = {
     "_io", "io", "_io_backend", "_io_buffered",
     "zlib", "_bz2", "_lzma", "posix", "gzip", "tarfile",
 }
-_watched = set()
 
 
 def _foreign_deleter(cls):
+    if cls is type or cls is object or not isinstance(cls, type):
+        return False
     seen = set()
     pending = [cls]
     while pending:
         current = pending.pop()
-        if current in seen or current is object:
+        cid = id(current)
+        if cid in seen or current is object or not isinstance(current, type):
             continue
-        seen.add(current)
+        seen.add(cid)
         try:
             namespace = current.__dict__
         except AttributeError:
@@ -41,46 +37,63 @@ def _foreign_deleter(cls):
     return False
 
 
-def _watch(cls):
-    if id(cls) in _watched or not _foreign_deleter(cls):
-        return
-    _watched.add(id(cls))
-    orig = cls.__init__
-
-    def init(self, *args, **kwargs):
-        global _finalizer_instances
-        result = orig(self, *args, **kwargs)
-        _finalizer_instances += 1
-        return result
-
-    try:
-        cls.__init__ = init
-    except (AttributeError, TypeError):
-        # A native class we cannot wrap may still run a finalizer.
-        global _finalizer_instances
-        _finalizer_instances += 1
+_PLAIN_TYPE_IDS = {
+    id(t) for t in (
+        type, object, str, int, float, bool, bytes, bytearray, complex,
+        type(None), list, tuple, dict, set, frozenset, slice, range,
+        type(_foreign_deleter), type(len), type(sys), property,
+        classmethod, staticmethod,
+    )
+}
 
 
-def _note_existing():
-    main = sys.modules.get("__main__")
-    if main is None:
-        return
-    global _finalizer_instances
-    for value in list(vars(main).values()):
-        if isinstance(value, type):
-            _watch(value)
-        elif _foreign_deleter(type(value)):
-            _finalizer_instances += 1
+def _has_foreign_finalizer():
+    checked = {}
+    plain = _PLAIN_TYPE_IDS
 
+    def want(obj):
+        cls = type(obj)
+        cid = id(cls)
+        if cid in plain:
+            return False
+        hit = checked.get(cid)
+        if hit is None:
+            hit = _foreign_deleter(cls)
+            checked[cid] = hit
+        return hit
 
-def _build_class_watching(func, name, *bases, **kwargs):
-    cls = _build_class(func, name, *bases, **kwargs)
-    _watch(cls)
-    return cls
+    for name, mod in list(sys.modules.items()):
+        if mod is None or name in _IO_MODULES:
+            continue
+        try:
+            ns = vars(mod)
+        except TypeError:
+            continue
+        is_main = name == "__main__"
+        for value in list(ns.values()):
+            cls = type(value)
+            cid = id(cls)
+            if cid not in plain:
+                hit = checked.get(cid)
+                if hit is None:
+                    hit = _foreign_deleter(cls)
+                    checked[cid] = hit
+                if hit:
+                    return True
+            elif is_main:
+                if (cls is list or cls is tuple or cls is set) and len(value) <= 64:
+                    for item in value:
+                        if want(item):
+                            return True
+                elif cls is dict and value is not ns and len(value) <= 64:
+                    for item in value.values():
+                        if want(item):
+                            return True
+    return False
 
 
 def _prime_text_runtime():
-    if not _finalizer_instances:
+    if not _has_foreign_finalizer():
         return
     # Constructing the stream loads the backend and caches the codec lookup
     # TextIOWrapper repeats after imports have been cleared.
@@ -88,6 +101,4 @@ def _prime_text_runtime():
     _native_io.TextIOWrapper(_native_io.BytesIO(), encoding="utf-8", errors="strict")
 
 
-builtins.__build_class__ = _build_class_watching
-_note_existing()
 atexit.register(_prime_text_runtime)
