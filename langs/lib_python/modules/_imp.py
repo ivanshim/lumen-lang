@@ -168,7 +168,7 @@ def _override_multi_interp_extensions_check(override):
 def is_builtin(name):
     if name in ('sys', 'builtins'):
         return -1
-    return 1 if name in ('_imp', '_thread', '_weakref', '_io', 'posix', 'marshal', '_warnings') else 0
+    return 1 if name in ('_imp', '_thread', '_weakref', '_io', 'posix', 'marshal', '_warnings', '_typing') else 0
 
 
 def create_builtin(spec):
