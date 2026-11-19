@@ -3443,7 +3443,7 @@ impl<'a> Machine<'a> {
         });
         if limit.is_some_and(|limit| large_source || growth >= limit) {
             let deferred = self.got_away.take();
-            self.reap_rounds();
+            self.reap_rounds(false);
             self.got_away = deferred;
         }
     }
@@ -3577,7 +3577,7 @@ impl<'a> Machine<'a> {
     /// held from outside the web, which counts everything under it as reached, as weaving
     /// it in would have. Only the listing of heap values (`whole`) takes the machine's
     /// own holdings in, and that same switch asks the web to trace every edge.
-    fn round_web(&self, retained: &[crate::ghost::Knot], whole: bool) -> crate::ghost::Web {
+    fn round_web(&self, retained: &[crate::ghost::Knot], whole: bool, fenced: bool) -> crate::ghost::Web {
         use crate::ghost::{Knot, Web};
         let books = self.readings.iter().flat_map(|book| {
             std::iter::once(Knot::Held(Value::Shared(book.near.clone())))
@@ -3597,8 +3597,8 @@ impl<'a> Machine<'a> {
             .chain(self.natives_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
             .collect() };
         {
-            let mut web = Web::from_notable(bookkeeping, live, whole);
-            for (function, holder) in &self.routine_members { if let Some(function) = function.revive() { web.link_attributes(&function, &Value::Thing(holder.clone())); } }
+            let mut web = Web::from_notable(bookkeeping, live, whole, fenced);
+            for (function, holder) in &self.routine_members { if let Some(function) = function.revive() { web.link_attributes(&function, &Value::Thing(holder.clone()), fenced); } }
             web
         }
     }
@@ -3607,8 +3607,11 @@ impl<'a> Machine<'a> {
     /// Keep the group intact while those run, then weave ownership again
     /// and cut only its still-lost knots. Reentrant requests do no work;
     /// knots first made during these calls wait for the next collection.
-    fn reap_rounds(&mut self) -> usize {
+    fn reap_rounds(&mut self, generation_zero: bool) -> usize {
         use crate::ghost::{Knot, Web};
+        // With nothing settled yet, a generation-0 request still reaps
+        // the whole heap and records what remains.
+        let generation_zero = generation_zero && crate::ghost::any_settled();
         if self.reaping { return 0; }
         self.reaping = true;
         self.cycle_checkpoint_slots = self.idents.len();
@@ -3619,7 +3622,7 @@ impl<'a> Machine<'a> {
         self.routine_members.retain(|(function, _)| function.revive().is_some());
         if self.routine_members.len() != members_before { self.reindex_routine_members(); }
         self.attend_to_gone();
-        let mut web = self.round_web(&pinned, false);
+        let mut web = self.round_web(&pinned, false, generation_zero);
         // The frame still holds these cells. Drop the counting clones before
         // deciding, or that second hold keeps a dropped module alive.
         drop(pinned);
@@ -3628,6 +3631,7 @@ impl<'a> Machine<'a> {
         // the web just woven still describes the machine: reuse it.
         if original.is_empty() {
             let kept_before = self.routine_members.len();
+            crate::ghost::store_lasting(web.kept_sites(), !generation_zero);
             self.routine_members.retain(|(function, _)| function.revive().is_some_and(|function| !web.unowned(&function)));
             if self.routine_members.len() != kept_before { self.reindex_routine_members(); }
             drop(web);
@@ -3695,7 +3699,7 @@ impl<'a> Machine<'a> {
             for value in &quiet_again {
                 books.push(Knot::Held(value.clone()));
             }
-            let mut checked = self.round_web(&books, false);
+            let mut checked = self.round_web(&books, false, generation_zero);
             drop(books);
             drop(quiet_again);
             let _marked = checked.unreachable();
@@ -3707,6 +3711,7 @@ impl<'a> Machine<'a> {
         } else {
             (web, original)
         };
+        crate::ghost::store_lasting(checked.kept_sites(), !generation_zero);
         let found = lost.len();
         self.routine_members.retain(|(function, _)| function.revive().is_some_and(|function| !checked.unowned(&function)));
         self.reindex_routine_members();
@@ -8235,7 +8240,7 @@ impl<'a> Machine<'a> {
         if let Some(answer) = self.text_called(&stands, args, frame) { return answer; }
         if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
             let mut values=self.value_list(args,frame)?;
-            if matches!(&stands,Value::Wrapped(..)) {
+            if matches!(&stands,Value::Wrapped(..)) && values.iter().any(|value| matches!(value, Value::Couple(_))) {
                 let raw = self.spreads_carry_foreign_keys(&values) && self.wrapper_takes_raw_keys(&stands);
                 if !raw { values=self.opened_arguments(values)?; }
             }
@@ -12362,7 +12367,7 @@ impl<'a> Machine<'a> {
                 if let Some(answer) = self.text_called(&stands, args, frame) { return Ok(Next::Value(answer?)); }
                 if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
                     let mut given=self.value_list(args,frame)?;
-                    if matches!(&stands,Value::Wrapped(..)) {
+                    if matches!(&stands,Value::Wrapped(..)) && given.iter().any(|value| matches!(value, Value::Couple(_))) {
                         let raw = self.spreads_carry_foreign_keys(&given) && self.wrapper_takes_raw_keys(&stands);
                         if !raw { given=self.opened_arguments(given)?; }
                     }
@@ -26277,8 +26282,9 @@ impl<'a> Machine<'a> {
             Prim::WeakGet => return self.reference_reading(name, v),
             Prim::HeapObjects => { return self.dispatch_arm_44(op, name, v); }
             Prim::Collect => {
-                n(0)?;
-                Value::Small(self.reap_rounds() as i64)
+                if v.len() > 1 { n(0)?; }
+                let only_newest = v.first().map(|item| matches!(item.settled(), Value::Small(0))).unwrap_or(false);
+                Value::Small(self.reap_rounds(only_newest) as i64)
             }
             Prim::FaultWhole => {
                 n(0)?;
@@ -28205,6 +28211,11 @@ impl<'a> Machine<'a> {
             Prim::WriteMember
             => {
                 n(3)?;
+                if let Value::Blueprint(kind) = &v[0] {
+                    if kind.constants.iter().any(|(label, _)| label == "\0native-name") {
+                        return Err(format!("TypeError: cannot set '{}' attribute of immutable type '{}'", v[1].bare(), kind.name));
+                    }
+                }
                 let sealed = match &v[0] {
                     Value::Thing(instance) => instance.holds.borrow().iter().any(|entry| entry.0 == "\0immutable"),
                     Value::Blueprint(kind) => kind.sealed.get(),
@@ -29051,7 +29062,7 @@ impl<'a> Machine<'a> {
             Prim::HeapObjects
             => {
                 n(0)?;
-                let snapshot=self.round_web(&[], true);
+                let snapshot=self.round_web(&[], true, false);
                 let mut identities=std::collections::HashSet::new();
                 let mut values=snapshot.heap_values();
                 let mut published=Vec::with_capacity(values.len());
@@ -29162,6 +29173,14 @@ impl<'a> Machine<'a> {
             => {
                 n(1)?;
                 let name = match v[0].settled() { Value::Text(word) => word.to_string(), _ => return Err(String::from("TypeError: module name must be a string")) };
+                if name == "__main__" && self.entry_file.contains(".zip/") && std::fs::read(self.entry_file.as_ref()).is_err() {
+                    // The program names an archive entry. The host cannot read that path.
+                    let adapter = self.load_namespace("_tokenize")?;
+                    let Some(archived) = self.attribute(&adapter, "_archived_source") else {
+                        return Err(String::from("ImportError: source decoder is unavailable"));
+                    };
+                    return self.core_run(&archived, vec![Value::text(self.entry_file.as_ref())]);
+                }
                 let content = match name.as_str() {
                     "__main__" => std::fs::read(self.entry_file.as_ref()).ok(),
                     _ => self.sys_path_source(&name).map(|pair| pair.1)
@@ -32061,6 +32080,38 @@ impl<'a> Machine<'a> {
             Prim::DrawIn
             => {
                 use std::io::Read;
+                // The extra flag asks for a single pull. A counted read still gathers until it is full.
+                if v.len() == 4 && self.stands_true(&v[3]) {
+                    if !self.stands_true(&v[2]) {
+                        return Err(self.argument_fault("ext.builtin.stream.amiss", None));
+                    }
+                    let Value::Small(limit) = v[0].settled() else {
+                        return Err(self.argument_fault("ext.builtin.stream.amiss", None));
+                    };
+                    if limit == 0 {
+                        return Ok(self.octets(Vec::<u8>::new(), false));
+                    }
+                    let span = if limit < 0 { 8192usize } else { (limit as usize).min(8192) };
+                    let mut page = vec![0u8; span];
+                    let mut source = std::io::stdin().lock();
+                    let mut taken = 0usize;
+                    loop {
+                        match source.read(&mut page[taken..]) {
+                            Ok(0) => break,
+                            Ok(count) => {
+                                taken = count;
+                                break;
+                            }
+                            Err(problem) if problem.kind() == std::io::ErrorKind::Interrupted => {
+                                self.observe_host_interrupts()?;
+                                continue;
+                            }
+                            Err(_) => return Err(self.argument_fault("ext.builtin.stream.failed", None)),
+                        }
+                    }
+                    page.truncate(taken);
+                    return Ok(self.octets(page, false));
+                }
                 if v.len() == 3 && self.stands_true(&v[2]) {
                     let Value::Small(limit) = v[0].settled() else { return Err(self.argument_fault("ext.builtin.stream.amiss", None)); };
                     let by_line = self.stands_true(&v[1]);
@@ -35649,7 +35700,7 @@ impl Machine<'_> {
         answer
     }
 
-    fn initialize_source_file_spec(&mut self, path: &str, module: &Value, file: Option<&str>) -> Result<bool, String> {
+    pub(super) fn initialize_source_file_spec(&mut self, path: &str, module: &Value, file: Option<&str>) -> Result<bool, String> {
         if !self.table.has_any("ext.system.module.path") { return Ok(false); }
         let factory = self.imported.get("sys").cloned().and_then(|system| self.attribute(&system, "_make_spec"));
         let (Some(factory), Some(file), Value::Thing(namespace)) = (factory, file, module) else { return Ok(false); };
@@ -35668,7 +35719,13 @@ impl Machine<'_> {
             && self.table.single("ext.builtin.posix").is_some()
             && !self.imported.contains_key("os") && !self.importing.contains("os");
         if path_group_needs_os { self.load_namespace("os")?; }
-        if path == "_typing" && self.table.has_any("ext.stmt.type_params.open") { return Ok(self.type_support_namespace()); }
+        if path == "_typing" && self.table.has_any("ext.stmt.type_params.open") {
+            let space = self.type_support_namespace();
+            if self.attribute(&space, "__spec__").is_none_or(|entry| matches!(entry.settled(), Value::Nil)) {
+                let _ = self.initialize_source_file_spec(path, &space, Some(""));
+            }
+            return Ok(space);
+        }
 
         // A name a program's own code took out of `sys.modules` is read
         // in again rather than handed the standing instance: that is
@@ -36815,7 +36872,11 @@ impl<'a> Machine<'a> {
         if self.importing.contains("sys") {
             return Ok(Value::Mutable(self.natives_kept(), true));
         }
-        let namespace = self.load_namespace(&path)?;
+        // Function creation still uses the retained builtins after imports shut down.
+        let namespace = match self.imported.get(&path).cloned() {
+            Some(namespace) => namespace,
+            None => self.load_namespace(&path)?,
+        };
         self.builtin_dictionary(namespace)
     }
 
@@ -39136,7 +39197,12 @@ impl<'a> Machine<'a> {
                 }
             }
             if let Some(Value::Thing(local)) = v.get(2).map(Value::settled) {
-                let maps = self.inherited_entry(&local.blueprint(), "__getitem__").is_some() || Self::underlying(&Value::Thing(local.clone())).map_or(false, |inner| matches!(inner.settled(), Value::Dict(_)));
+                // The frame-locals proxy answers subscripts on the primitive
+                // road. Its blueprint lists no __getitem__, and it keeps no
+                // separate dictionary, so the two checks below miss it.
+                let maps = self.locals_proxy(&Value::Thing(local.clone())).is_some()
+                    || self.inherited_entry(&local.blueprint(), "__getitem__").is_some()
+                    || Self::underlying(&Value::Thing(local.clone())).map_or(false, |inner| matches!(inner.settled(), Value::Dict(_)));
                 if !maps {
                     return Err(if weighing { "TypeError: locals must be a mapping".to_owned() } else { format!("TypeError: locals must be a mapping or None, not {}", local.blueprint().name) });
                 }
@@ -39158,6 +39224,18 @@ impl<'a> Machine<'a> {
         }
         let (outer, near) = match (books.remove(0), books.remove(0)) {
             (None, None) if mode != 2 && within.is_some() && self.frames_named.last().is_some_and(|code| code.globe.is_some()) => {
+                // Module text already runs in the dictionary it was handed.
+                // exec() with no dictionaries of its own writes into that
+                // same dictionary. A copy of the frame slots would drop the
+                // name once the inner text returned.
+                let module_globals = self.frames_named.last().and_then(|code| {
+                    (code.ident == "<program>" && code.class_namespace.is_none())
+                        .then(|| Self::explicit_globals(code))
+                        .flatten()
+                });
+                if let Some(book) = module_globals {
+                    return self.perform_booked(&source, file, mode, book, None, None, top_await, literals, settling, &sites);
+                }
                 let (names, frame) = within.as_ref().expect("the active frame");
                 let local_names = if self.frames_named.last().is_some_and(|code| code.class_namespace.is_some()) {
                     self.names_here(frame, Prim::HereBook)?
@@ -39463,7 +39541,25 @@ impl<'a> Machine<'a> {
         }
         self.wake_cursor();
         self.frames_named.push(built.program.clone());
-        let ran = if built.program.generator { self.invoke(built.program.clone(), top.clone(), Vec::new()) } else { self.value_of(&built.program.body, &top) };
+        // exec/eval runs the body in place, but a tracer still sees the
+        // call and the return the way a called frame does. Without the
+        // call, the frame's f_trace stays empty and its lines are silent.
+        let ran = if built.program.generator {
+            self.invoke(built.program.clone(), top.clone(), Vec::new())
+        } else if matches!(self.tracing_function, Value::Nil) {
+            self.value_of(&built.program.body, &top)
+        } else {
+            match self.emit_trace("call", Value::Nil) {
+                Err(error) => Err(error),
+                Ok(()) => match self.value_of(&built.program.body, &top) {
+                    Ok(value) => self.emit_trace("return", value.clone()).map(|()| value),
+                    Err(error) => match self.emit_trace("return", Value::Nil) {
+                        Ok(()) => Err(error),
+                        Err(callback) => { self.exclude_trace_origin(&callback); Err(callback) }
+                    },
+                },
+            }
+        };
         let ran = self.traced_result(ran);
         self.frames_named.pop();
         self.park_cursor();
@@ -41777,9 +41873,16 @@ impl Machine<'_> {
         for (key, worth) in namespace.holds.borrow_mut().iter_mut() {
             if key != &names[1] { continue; }
             let mut pairs: Vec<_> = match worth.settled() {
-                Value::Dict(items) if imported_name != names[0] => items.to_vec(),
+                Value::Dict(items) => items.to_vec(),
                 _ => self.imported.iter().map(|(word, value)| (Value::text(word), value.clone())).collect(),
             };
+            if imported_name == names[0] {
+                // Keep registrations made by modules loaded before startup finishes.
+                let missing: Vec<_> = self.imported.iter()
+                    .filter(|(word, _)| !pairs.iter().any(|(key, _)| spells_key(key, word)))
+                    .map(|(word, value)| (Value::text(word), value.clone())).collect();
+                pairs.extend(missing);
+            }
             pairs.retain(|(word, _)| !spells_key(word, imported_name));
             if let Some(value) = self.imported.get(imported_name) { pairs.push((Value::text(imported_name), value.clone())); }
             let dictionary = Value::Dict(Rc::new(pairs.into()));

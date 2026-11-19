@@ -3748,6 +3748,7 @@ impl<'a> Machine<'a> {
             holds: RefCell::new(entries), turn: self.made }));
         self.imported.insert(String::from("_typing"), space.clone()); self.namespace_places.borrow_mut().take(); self.revised_members.borrow_mut().clear();
         self.refresh_import_table("_typing");
+        let _ = self.initialize_source_file_spec("_typing", &space, Some(""));
         space
     }
     fn absent_type_default(&mut self) -> Value {
@@ -6009,7 +6010,7 @@ impl<'a> Machine<'a> {
             if self.rules.specials.get(79).is_some_and(|word| word == key) { return Ok(Self::wrap(135, vec![kept[0].clone()])); }
         }
         match &value {
-            Value::Wrapped(133|134,parts) if matches!(key,"__doc__"|"__qualname__"|"__name__")=>{
+            Value::Wrapped(133|134,parts) if matches!(key,"__doc__"|"__qualname__"|"__name__"|"__wrapped__"|"__text_signature__")=>{
                 let original=parts[1].clone();
                 return self.read_class_member(original,key,direct);
             }
@@ -6249,7 +6250,7 @@ impl<'a> Machine<'a> {
             }
         }
         if key == self.detail("allocate") && matches!(&value, Value::Intrinsic(op, _) if !Self::names_a_kind(op)) { return Ok(self.common_allocation()); }
-        if key == "__reduce_ex__" && matches!(&value, Value::Intrinsic(working, _) if !Self::names_a_kind(working)) || key == "__reduce_ex__" && matches!(&value, Value::Member(..) | Value::TextCall { .. } | Value::Method(..) | Value::Wrapped(3, _)) {
+        if key == "__reduce_ex__" && matches!(&value, Value::Intrinsic(working, _) if !Self::names_a_kind(working)) || key == "__reduce_ex__" && matches!(&value, Value::Member(..) | Value::TextCall { .. } | Value::Method(..) | Value::Wrapped(3 | 134, _)) {
             return Ok(Value::Member(Rc::new(value), "callable_reduce_ex".into()));
         }
         let raw_descriptor = matches!(&value, Value::Wrapped(4 | 5, _)) || matches!(&value, Value::Wrapped(60, parts) if parts.len() == 3);
@@ -8217,7 +8218,8 @@ impl<'a> Machine<'a> {
                 // A class the seal marked unchangeable takes no write to
                 // a member of it, setting one and taking one off alike.
                 if Self::sealed(b) || b.constants.iter().any(|(label, _)| label == "\0native-name") || (b.type_names.borrow().is_none() && ["name", "qualified", "doc"].iter().any(|part| !self.detail(part).is_empty() && key == self.detail(part))) {
-                    return Err(format!("TypeError: cannot set '{key}' attribute of immutable type '{}'", if Self::native_word(b).as_deref() == Some("_ConstEvaluator") { "_typing._ConstEvaluator" } else { &b.name }).into());
+                    let action = if replacement.is_some() { "set" } else { "delete" };
+                    return Err(format!("TypeError: cannot {action} '{key}' attribute of immutable type '{}'", if Self::native_word(b).as_deref() == Some("_ConstEvaluator") { "_typing._ConstEvaluator" } else { &b.name }).into());
                 }
                 // The kinds of the two named singletons take no entry
                 // of their own and give none up, as the reference fixes them.

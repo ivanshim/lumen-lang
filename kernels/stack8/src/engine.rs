@@ -181,7 +181,7 @@ pub struct Engine<'a> {
     coroutines: HashMap<usize, (Weak<RefCell<Generator>>, Rc<Routine>, Option<Weak<Instance>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>), crate::value::FxBuildHasher>,
     delegated_tokens: std::collections::HashSet<usize, crate::value::FxBuildHasher>,
-    code_watches: Vec<(Weak<RefCell<Value>>, bool)>,
+    code_watches: Vec<(Weak<RefCell<Value>>, bool, Vec<crate::faint::Hold>)>,
     frame_codes: HashMap<usize, Weak<(u8, Vec<Value>)>>,
     class_root: Option<Rc<Class>>,
     /// The class every metaclass stands on, made once when one is asked for.
@@ -2610,7 +2610,7 @@ impl<'a> Engine<'a> {
         });
         if limit.is_some_and(|limit| swollen || large_source || growth >= limit) {
             let pending = self.carried.take();
-            self.collect_cycles();
+            self.collect_cycles(false);
             self.carried = pending;
         }
     }
@@ -2700,7 +2700,7 @@ impl<'a> Engine<'a> {
     /// what the engine itself holds is held from outside the graph, which keeps all that
     /// is under it, exactly as walking it would have. `whole` also walks the engine's
     /// own values and traces every edge, for listing the objects.
-    fn cycle_graph(&self, retained: &[Value], whole: bool, quiet_slots: &[usize]) -> crate::faint::Graph {
+    fn cycle_graph(&self, retained: &[Value], whole: bool, quiet_slots: &[usize], young: bool) -> crate::faint::Graph {
         let books = self.text_books.iter().flat_map(|book| {
             std::iter::once(Value::Bond(book.near.clone()))
                 .chain(book.outer.iter().cloned().map(Value::Bond))
@@ -2732,8 +2732,8 @@ impl<'a> Engine<'a> {
         {
             // Weak metadata keys are candidates, never proven outside owners.
             let weak_keys = self.function_members.iter().filter_map(|(function, _)| function.revive()).collect();
-            let mut graph = crate::faint::Graph::from_candidates(bookkeeping, live, weak_keys, whole);
-            for (function, holder) in &self.function_members { if let Some(function) = function.revive() { graph.link_attributes(&function, &Value::Object(holder.clone())); } }
+            let mut graph = crate::faint::Graph::from_candidates(bookkeeping, live, weak_keys, whole, young);
+            for (function, holder) in &self.function_members { if let Some(function) = function.revive() { graph.link_attributes(&function, &Value::Object(holder.clone()), young); } }
             graph
         }
     }
@@ -2742,7 +2742,10 @@ impl<'a> Engine<'a> {
     /// its finalizers. Recheck the same retained group for resurrection
     /// before severing it; cycles created by those calls belong to a later
     /// collection. A nested collect never enters these phases again.
-    fn collect_cycles(&mut self) -> usize {
+    fn collect_cycles(&mut self, youngest: bool) -> usize {
+        // Until something has endured a walk, generation 0 is a full walk,
+        // so the first collection still sees the whole heap.
+        let youngest = youngest && crate::faint::any_endured();
         if self.collecting_cycles { return 0; }
         self.collecting_cycles = true;
         self.cycle_checkpoint_slots = self.world.len();
@@ -2752,12 +2755,13 @@ impl<'a> Engine<'a> {
         self.function_members.retain(|(function, _)| function.revive().is_some());
         if self.function_members.len() != members_before { self.reindex_function_rows(); }
         self.settle_departed();
-        let mut graph = self.cycle_graph(&[], false, &quiet_slots);
+        let mut graph = self.cycle_graph(&[], false, &quiet_slots, youngest);
         let mut group = graph.unreached();
         // Nothing unreachable means nothing is said or cleared, so the
         // heap is the same afterwards and the first walk still stands.
         if group.is_empty() {
             let kept_before = self.function_members.len();
+            crate::faint::keep_endured(graph.endured_identities(), !youngest);
             self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !graph.unowned(&function)));
             if self.function_members.len() != kept_before { self.reindex_function_rows(); }
             drop(graph);
@@ -2797,11 +2801,12 @@ impl<'a> Engine<'a> {
         // stands and that walk answers for it.
         let (unreached, after) = if spoke {
             drop(graph);
-            let mut after = self.cycle_graph(&group, false, &quiet_slots);
+            let mut after = self.cycle_graph(&group, false, &quiet_slots, youngest);
             (after.still_unreached(group), after)
         } else {
             (group, graph)
         };
+        crate::faint::keep_endured(after.endured_identities(), !youngest);
         let count = unreached.len();
         self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !after.unowned(&function)));
         self.reindex_function_rows();
@@ -24652,10 +24657,12 @@ impl<'a> Engine<'a> {
         Ok(actual.same_place(saved))
     }
 
-    pub(super) fn invalidate_code_watches(&mut self, code_changed: bool) {
-        self.code_watches.retain(|(weak, defaults_too)| {
+    pub(super) fn invalidate_code_watches(&mut self, subject: &Value, code_changed: bool) {
+        self.code_watches.retain(|(weak, defaults_too, functions)| {
             let Some(cell) = weak.upgrade() else { return false };
-            if code_changed || *defaults_too { *cell.borrow_mut() = Value::array(vec![Value::Flag(false)]); }
+            let belongs = functions.is_empty() || functions.iter().any(|function|
+                function.revive().is_some_and(|value| value.equals(subject)));
+            if belongs && (code_changed || *defaults_too) { *cell.borrow_mut() = Value::array(vec![Value::Flag(false)]); }
             true
         });
     }
@@ -24668,7 +24675,10 @@ impl<'a> Engine<'a> {
             if !self.byte_fingerprint_matches(function, field, body)? { approved = false; }
         }
         let cell = Rc::new(RefCell::new(Value::array(vec![Value::Flag(approved)])));
-        self.code_watches.push((Rc::downgrade(&cell), *defaults_too));
+        let watched = if functions.iter().all(|function| matches!(function, Value::Routine(_))) {
+            functions.iter().map(crate::faint::hold_of).collect::<Option<Vec<_>>>().unwrap_or_default()
+        } else { Vec::new() };
+        self.code_watches.push((Rc::downgrade(&cell), *defaults_too, watched));
         Ok(Value::Collection(cell, false))
     }
 
@@ -26839,8 +26849,9 @@ impl<'a> Engine<'a> {
             Builtin::WeakMake => return self.faint_allocate(name, args),
             Builtin::WeakGet => return self.faint_reading(args),
             Builtin::Collect => {
-                arity(0)?;
-                Value::Small(self.collect_cycles() as i64)
+                if args.len() > 1 { arity(0)?; }
+                let youngest = args.first().is_some_and(|given| matches!(given.contents(), Value::Small(0)));
+                Value::Small(self.collect_cycles(youngest) as i64)
             }
             Builtin::FaultInHand => { return self.builtin_arm_15(builtin, name, args); }
             // One for a file, two for a directory, nought for neither.
@@ -27512,6 +27523,30 @@ impl<'a> Engine<'a> {
             Builtin::StreamTake
             => {
                 use std::io::Read;
+                // One read, not a fill: a text chunk must return while the writer is still open.
+                if args.len() == 4 && self.truth(&args[2]) && self.truth(&args[3]) {
+                    let Value::Small(asked) = args[0].contents() else {
+                        return Err(self.lang.stream_amiss[0].clone());
+                    };
+                    let room = match asked {
+                        0 => return Ok(self.byte_make(Vec::<u8>::new(), false)),
+                        n if n < 0 => 8192usize,
+                        n => (n as usize).min(8192),
+                    };
+                    let mut pocket = [0u8; 8192];
+                    let mut held = std::io::stdin().lock();
+                    let gained = loop {
+                        match held.read(&mut pocket[..room]) {
+                            Ok(count) => break count,
+                            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                                self.signal_checkpoint()?;
+                                continue;
+                            }
+                            Err(_) => return Err(self.lang.stream_failed[0].clone()),
+                        }
+                    };
+                    return Ok(self.byte_make(pocket[..gained].to_vec(), false));
+                }
                 if args.len() == 3 && self.truth(&args[2]) {
                     let Value::Small(wanted) = args[0].contents() else { return Err(self.lang.stream_amiss[0].clone()); };
                     let by_line = self.truth(&args[1]);
@@ -27818,7 +27853,7 @@ impl<'a> Engine<'a> {
             Builtin::TrackedObjects
             => {
                 if args.len()!=0 {return Err(format!("TypeError: {}() takes no arguments",self.lang.gc_objects.first().map_or("gc.get_objects",String::as_str)));}
-                let graph=self.cycle_graph(&[], true, &[]);
+                let graph=self.cycle_graph(&[], true, &[], false);
                 let mut seen=std::collections::HashSet::new();
                 let mut objects=Vec::new();
                 for object in graph.tracked_objects() {
@@ -27932,6 +27967,12 @@ impl<'a> Engine<'a> {
             => {
                 arity(1)?;
                 let Value::Text(name) = args[0].contents() else { return Err("TypeError: module name must be a string".into()); };
+                if name.as_ref() == "__main__" && self.root_source.contains(".zip/") && std::fs::read(self.root_source.as_ref()).is_err() {
+                    // The program names an archive entry. The host cannot read that path.
+                    let module = self.route_module("_tokenize")?;
+                    let archived = self.member_of(module, "_archived_source")?.ok_or_else(|| "ImportError: source decoder is unavailable".to_string())?;
+                    return self.call_held(archived, vec![Value::text(self.root_source.as_ref())]);
+                }
                 let raw = if name.as_ref() == "__main__" {
                     std::fs::read(self.root_source.as_ref()).ok()
                 } else {
@@ -29362,6 +29403,12 @@ impl<'a> Engine<'a> {
             Builtin::MemberSet
             => {
                 arity(3)?;
+                if let Value::Class(class) = &args[0] {
+                    if class.constants.iter().any(|(key, _)| key == "\0native-name") {
+                        let member = args[1].display(&sp);
+                        return Err(format!("TypeError: cannot set '{member}' attribute of immutable type '{}'", class.name).into());
+                    }
+                }
                 if matches!(&args[0], Value::Object(object) if object.fields.borrow().iter().any(|(key, _)| key == "\0immutable"))
                     || matches!(&args[0], Value::Class(class) if class.sealed.get()) {
                     return Err("AttributeError: sealed storage is immutable".into());
@@ -34510,7 +34557,7 @@ impl Engine<'_> {
         result
     }
 
-    fn initialize_source_file_spec(&mut self, path: &str, module: &Value, file: Option<&str>) -> Flow<bool> {
+    pub(super) fn initialize_source_file_spec(&mut self, path: &str, module: &Value, file: Option<&str>) -> Flow<bool> {
         if self.lang.module_path.is_none() { return Ok(false); }
         let maker = self.modules.get("sys").cloned()
             .and_then(|system| self.member_of(system, "_make_spec").ok().flatten());
@@ -34531,7 +34578,13 @@ impl Engine<'_> {
             && !self.modules.contains_key("os") && !self.importing.contains("os") {
             self.import_module("os")?;
         }
-        if path == "_typing" && self.lang.type_parameters { return Ok(self.typing_module()); }
+        if path == "_typing" && self.lang.type_parameters {
+            let module = self.typing_module();
+            if matches!(self.member_of(module.clone(), "__spec__")?, None | Some(Value::Null)) {
+                let _ = self.initialize_source_file_spec(path, &module, Some(""));
+            }
+            return Ok(module);
+        }
 
         if path.starts_with('.') { let resolved = self.import_path(path)?; return self.import_module(&resolved); }
         if let Some(cached) = self.module_cache_value(path) {
@@ -38456,11 +38509,18 @@ impl Engine<'_> {
         let Some(Value::Object(module)) = self.modules.get(owner) else { return };
         let mut fields = module.fields.borrow_mut();
         let Some((_, place)) = fields.iter_mut().find(|(name, _)| name == member) else { return };
-        let mut entries = if path == owner {
-            self.modules.iter().map(|(key, value)| (Value::text(key), value.clone())).collect::<Vec<_>>()
-        } else {
-            match place.contents() { Value::Map(row) => row.to_vec(), _ => Vec::new() }
+        let mut entries = match place.contents() {
+            Value::Map(row) => row.to_vec(),
+            _ => Vec::new(),
         };
+        if path == owner {
+            // Imports during startup can register aliases absent from the native map.
+            for (key, value) in &self.modules {
+                if !entries.iter().any(|(name, _)| key_spells(name, key)) {
+                    entries.push((Value::text(key), value.clone()));
+                }
+            }
+        }
         entries.retain(|(key, _)| !key_spells(key, path));
         if let Some(value) = self.modules.get(path) { entries.push((Value::text(path), value.clone())); }
         let map = Value::Map(Rc::new(entries.into()));
