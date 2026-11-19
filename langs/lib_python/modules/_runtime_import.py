@@ -188,6 +188,13 @@ def make_spec(name, filename):
     import sys as _system
     bootstrap = _system.modules.get('importlib._bootstrap')
     factory = getattr(bootstrap, 'ModuleSpec', ModuleSpec) if bootstrap is not None else ModuleSpec
+    if not filename:
+        builtin_importer = getattr(bootstrap, 'BuiltinImporter', None) if bootstrap is not None else None
+        if builtin_importer is not None:
+            return builtin_importer.find_spec(name)
+        spec = factory(name, None, origin='built-in')
+        spec.has_location = False
+        return spec
     # Native namespace markers carry all search portions, never a source file.
     if filename.startswith('\0'):
         from importlib.machinery import NamespaceLoader, PathFinder

@@ -65,7 +65,7 @@ class _Index(_BuiltinOperator):
         raise TypeError("'" + type(a).__name__.encode('utf-8')[:200].decode('utf-8', 'ignore') + "' object cannot be interpreted as an integer")
 
 
-index = _Index()
+index = __math('method', 'index', _Index())
 
 
 def _replace_operator_functions():
