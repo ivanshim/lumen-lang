@@ -135,10 +135,13 @@ class Example:
 
     def __init__(self, source, want, exc_msg=None, lineno=0, indent=0,
                  options=None):
-        if source != '' and source[-1] != '\n':
+        # An empty source is one newline. Empty expected text stays empty.
+        if not source.endswith('\n'):
             source = source + '\n'
-        if want != '' and want[-1] != '\n':
+        if want != '' and not want.endswith('\n'):
             want = want + '\n'
+        if exc_msg is not None and not exc_msg.endswith('\n'):
+            exc_msg = exc_msg + '\n'
         self.source = source
         self.want = want
         self.exc_msg = exc_msg
@@ -147,6 +150,22 @@ class Example:
         if options is None:
             options = {}
         self.options = options
+
+    def __eq__(self, other):
+        if type(self) is not type(other):
+            return NotImplemented
+        return (self.source == other.source and self.want == other.want and
+                self.lineno == other.lineno and self.indent == other.indent and
+                self.options == other.options and self.exc_msg == other.exc_msg)
+
+    def __ne__(self, other):
+        equal = self.__eq__(other)
+        if equal is NotImplemented:
+            return NotImplemented
+        return not equal
+
+    def __hash__(self):
+        return hash((self.source, self.want, self.lineno, self.indent, self.exc_msg))
 
 
 class DocTest:
@@ -162,7 +181,39 @@ class DocTest:
         self.docstring = docstring
 
     def __repr__(self):
-        return '<DocTest ' + self.name + ' with ' + str(len(self.examples)) + ' examples>'
+        count = len(self.examples)
+        if count == 0:
+            examples = 'no examples'
+        elif count == 1:
+            examples = '1 example'
+        else:
+            examples = str(count) + ' examples'
+        return ('<DocTest ' + self.name + ' from ' + str(self.filename) + ':' +
+                str(self.lineno) + ' (' + examples + ')>')
+
+    def __eq__(self, other):
+        if type(self) is not type(other):
+            return NotImplemented
+        return (self.examples == other.examples and self.docstring == other.docstring and
+                self.globs == other.globs and self.name == other.name and
+                self.filename == other.filename and self.lineno == other.lineno)
+
+    def __ne__(self, other):
+        equal = self.__eq__(other)
+        if equal is NotImplemented:
+            return NotImplemented
+        return not equal
+
+    def __hash__(self):
+        return hash((self.docstring, self.name, self.filename, self.lineno))
+
+    def __lt__(self, other):
+        if not isinstance(other, DocTest):
+            return NotImplemented
+        self_line = -1 if self.lineno is None else self.lineno
+        other_line = -1 if other.lineno is None else other.lineno
+        return ((self.name, self.filename, self_line, id(self))
+                < (other.name, other.filename, other_line, id(other)))
 
 
 def _copy_dict(source):
@@ -207,7 +258,21 @@ def _leading_spaces(line):
     return count
 
 
-def _directive_options(source):
+def _min_indent(text):
+    """The least indentation of a non-blank line, in spaces."""
+    least = None
+    for line in text.split('\n'):
+        if line.strip() == '':
+            continue
+        count = _leading_spaces(line)
+        if least is None or count < least:
+            least = count
+    if least is None:
+        return 0
+    return least
+
+
+def _directive_options(source, name='<string>', lineno=0):
     """The `# doctest: +FLAG, -FLAG` comment written on an example."""
     options = {}
     for line in source.split('\n'):
@@ -224,16 +289,20 @@ def _directive_options(source):
         at_word = _find_from(comment, 'doctest:', 0, len(comment))
         if at_word < 0:
             continue
-        for word in comment[at_word + 8:].split(','):
-            word = word.strip()
-            if len(word) < 2:
-                continue
-            sign = word[0]
-            if sign != '+' and sign != '-':
-                continue
-            flag = OPTIONFLAGS_BY_NAME.get(word[1:])
+        # CPython: #\s*doctest:\s*([^\n'"]*)$ — quotes or other text kill the match.
+        if comment[:at_word].strip() != '':
+            continue
+        tail = comment[at_word + 8:]
+        if "'" in tail or '"' in tail:
+            continue
+        for word in tail.replace(',', ' ').split():
+            sign = word[:1]
+            flag = None
+            if sign == '+' or sign == '-':
+                flag = OPTIONFLAGS_BY_NAME.get(word[1:])
             if flag is None:
-                continue        # an unknown directive is left alone
+                raise ValueError('line %r of the doctest for %s has an invalid option: %r' %
+                                 (lineno + 1, name, word))
             options[flag] = sign == '+'
     return options
 
@@ -251,43 +320,90 @@ class DocTestParser:
     """Turns the text of a docstring into Examples."""
 
     def parse(self, string, name='<string>'):
-        return self.get_examples(string, name)
-
-    def get_examples(self, string, name='<string>'):
-        examples = []
+        """Examples and the text between them. Example line numbers are 0-based."""
+        string = string.expandtabs()
+        indent_floor = _min_indent(string)
+        if indent_floor:
+            stripped_lines = []
+            for line in string.split('\n'):
+                stripped_lines.append(line[indent_floor:])
+            string = '\n'.join(stripped_lines)
         lines = string.split('\n')
+        output = []
         total = len(lines)
         index = 0
+        last = 0
         while index < total:
             line = lines[index]
             stripped = line.lstrip()
+            if stripped[:3] == '>>>' and not _is_prompt(stripped, PS1):
+                raise ValueError('line %r of the docstring for %s lacks blank after >>>: %r' %
+                                 (index + 1, name, line))
             if not _is_prompt(stripped, PS1):
                 index += 1
                 continue
+            if index > last:
+                output.append('\n'.join(lines[last:index]) + '\n')
+            else:
+                output.append('')
             indent = len(line) - len(stripped)
-            lineno = index + 1
+            lineno = index
             source_lines = [_after_prompt(stripped)]
             index += 1
             while index < total:
-                rest = lines[index][indent:]
-                if not _is_prompt(rest, PS2):
-                    break
-                source_lines.append(_after_prompt(rest))
-                index += 1
+                current = lines[index]
+                rest = current[indent:] if len(current) >= indent else ''
+                if rest[:3] == '...':
+                    if not _is_prompt(rest, PS2):
+                        raise ValueError('line %r of the docstring for %s lacks blank after ...: %r' %
+                                         (index + 1, name, current))
+                    source_lines.append(_after_prompt(rest))
+                    index += 1
+                    continue
+                lead = current.lstrip()
+                if lead[:3] == '...':
+                    if not _is_prompt(lead, PS2):
+                        raise ValueError('line %r of the docstring for %s lacks blank after ...: %r' %
+                                         (index + 1, name, current))
+                    # Numbered from the example's first line, as the prompt check is.
+                    raise ValueError('line %r of the docstring for %s has inconsistent leading whitespace: %r' %
+                                     (lineno + len(source_lines), name, current))
+                break
             want_lines = []
+            prefix = ' ' * indent
             while index < total:
-                if _starts_want_break(lines[index], indent):
+                current = lines[index]
+                # A prompt at any indent starts the next example. CPython's
+                # want pattern stops at ^[ ]*>>>; it is not a want line.
+                if current.strip() == '' or _is_prompt(current.lstrip(), PS1):
                     break
-                want_lines.append(lines[index][indent:])
+                if not current.startswith(prefix):
+                    raise ValueError('line %r of the docstring for %s has inconsistent leading whitespace: %r' %
+                                     (index + 1, name, current))
+                want_lines.append(current[indent:])
                 index += 1
             source = '\n'.join(source_lines)
-            if all(line.strip() == '' or line.lstrip().startswith('#') for line in source_lines):
+            options = _directive_options(source, name, lineno)
+            if all(part.strip() == '' or part.lstrip().startswith('#') for part in source_lines):
+                if options:
+                    raise ValueError('line %r of the doctest for %s has an option '
+                                     'directive on a line with no example: %r' %
+                                     (lineno, name, source))
+                last = index
                 continue
             want = ''
             if len(want_lines) > 0:
                 want = '\n'.join(want_lines) + '\n'
-            examples.append(Example(source, want, None, lineno, indent,
-                                    _directive_options(source)))
+            output.append(Example(source, want, None, lineno, indent, options))
+            last = index
+        output.append('\n'.join(lines[last:]))
+        return output
+
+    def get_examples(self, string, name='<string>'):
+        examples = []
+        for piece in self.parse(string, name):
+            if isinstance(piece, Example):
+                examples.append(piece)
         return examples
 
     def get_doctest(self, string, globs, name, filename, lineno):
@@ -311,6 +427,10 @@ class DocTestFinder:
 
     def find(self, obj, name=None, module=None, globs=None, extraglobs=None):
         names = _namespace_of(obj)
+        self._file_name, self._source_lines = _module_file_and_lines(obj, module)
+        # A class dict does not contain the names the examples use.
+        if globs is None and module is not None and hasattr(module, '__dict__'):
+            globs = module.__dict__
         if callable(obj) and not isinstance(obj, type):
             if name is None:
                 name = getattr(obj, "__name__", "<callable>")
@@ -321,7 +441,7 @@ class DocTestFinder:
             if extraglobs is not None:
                 globs.update(extraglobs)
             found = []
-            self._add(found, name, getattr(obj, "__doc__", None), globs, name)
+            self._add(found, name, getattr(obj, "__doc__", None), globs, name, obj)
             return found
         if name is None:
             name = _module_name_of(obj)
@@ -332,18 +452,21 @@ class DocTestFinder:
             for key in extraglobs:
                 globs[key] = extraglobs[key]
         found = []
-        self._add(found, name, _docstring_of_module(names), globs, name)
+        self._add(found, name, _docstring_of_module(names), globs, name, obj)
         self._from_test_dict(found, names, globs, name)
         self._from_members(found, names, globs, name)
         return found
 
-    def _add(self, found, label, text, globs, filename):
+    def _add(self, found, label, text, globs, filename, owner=None):
         if text is None or not isinstance(text, str):
             return
         examples = self._parser.get_examples(text, label)
         if len(examples) == 0 and self._exclude_empty:
             return
-        found.append(DocTest(examples, globs, label, filename, 0, text))
+        if getattr(self, '_file_name', None):
+            filename = self._file_name
+        lineno = _docstring_lineno(owner, getattr(self, '_source_lines', None))
+        found.append(DocTest(examples, globs, label, filename, lineno, text))
 
     def _from_test_dict(self, found, names, globs, module_name):
         table = names.get('__test__')
@@ -369,14 +492,14 @@ class DocTestFinder:
                 continue
             label = module_name + '.' + key
             self._add(found, label, getattr(value, '__doc__', None), globs,
-                      module_name)
+                      module_name, value)
             if not self._recurse:
                 continue
             methods = _own_methods(value, module_name)
             for method_name in methods:
                 method = getattr(value, method_name, None)
                 self._add(found, label + '.' + method_name,
-                          getattr(method, '__doc__', None), globs, module_name)
+                          getattr(method, '__doc__', None), globs, module_name, method)
 
 
 def _own_methods(value, module_name):
@@ -454,12 +577,32 @@ def _exception_detail(error, message, namespace=None):
     return str(message)
 
 
+def _format_traceback(error):
+    """Traceback text for a failure report. The last line names the exception."""
+    detail = _exception_detail(error, error)
+    if detail == '' or detail[-1:] != '\n':
+        detail = detail + '\n'
+    try:
+        import traceback
+        if isinstance(error, BaseException):
+            text = ''.join(traceback.format_exception(type(error), error, getattr(error, '__traceback__', None)))
+            if isinstance(text, str) and text.startswith('Traceback'):
+                if text[-1:] != '\n':
+                    text = text + '\n'
+                return text
+    except Exception:
+        pass
+    # A frame line lets an ellipsis in the expected report match the stack.
+    return 'Traceback (most recent call last):\n  File "<doctest>", line 1, in <module>\n' + detail
+
+
 class _Attempt:
     """Run one example with interactive expression display."""
 
-    def __init__(self, source, globs):
+    def __init__(self, source, globs, filename):
         self.source = source
         self.globs = globs
+        self.filename = filename
 
     def call(self):
         # A `break` or `continue` written outside a loop belongs to no loop,
@@ -470,13 +613,13 @@ class _Attempt:
         rounds = 0
         while rounds < 1:
             rounds += 1
-            exec(compile(self.source, '<doctest>', 'single'), self.globs)
+            exec(compile(self.source, self.filename, 'single'), self.globs)
             break
 
 
-def _run_example(source, globs, buffer):
+def _run_example(source, globs, buffer, filename):
     """Run one example. Returns what it printed, and how it stopped."""
-    attempt = _Attempt(source, globs)
+    attempt = _Attempt(source, globs, filename)
     outcome = __call_outcome(attempt.call)
     got = buffer.getvalue()
     buffer.seek(0)
@@ -566,10 +709,13 @@ def _ellipsis_match(want, got):
 
 
 def _drop_blankline_markers(want):
+    """A <BLANKLINE> marker is only a blank line when it starts the line."""
     lines = want.split('\n')
     kept = []
+    marker = BLANKLINE_MARKER
+    width = len(marker)
     for line in lines:
-        if line.strip() == BLANKLINE_MARKER:
+        if line.startswith(marker) and line[width:].strip(' ') == '':
             kept.append('')
         else:
             kept.append(line)
@@ -603,32 +749,82 @@ class OutputChecker:
         return want == got
 
     def output_difference(self, example, got, optionflags):
-        return _difference(example, got)
+        return _output_difference(example, got, optionflags)
 
 
 def _indented(text, prefix='    '):
+    """Indent non-blank lines. A blank line stays blank, as CPython's _indent."""
     if text == '':
         return prefix + '(nothing)\n'
     lines = text.split('\n')
     if len(lines) > 0 and lines[len(lines) - 1] == '':
         lines = lines[:len(lines) - 1]
-    out = ''
+    out = []
     for line in lines:
-        out = out + prefix + line + '\n'
-    return out
+        if line:
+            out.append(prefix + line)
+        else:
+            out.append('')
+    return '\n'.join(out) + '\n'
 
 
-def _difference(example, got):
-    text = 'Failed example:\n' + _indented(example.source)
-    if example.want == '':
-        text = text + 'Expected nothing\n'
+def _mark_blanklines(text):
+    """Turn space-only lines into <BLANKLINE>, leaving the newline."""
+    if '\n' not in text:
+        return text
+    parts = text.split('\n')
+    index = 0
+    last = len(parts) - 1
+    while index < last:
+        if parts[index].strip(' ') == '':
+            parts[index] = BLANKLINE_MARKER
+        index += 1
+    return '\n'.join(parts)
+
+
+def _fancy_diff(want, got, optionflags):
+    """CPython's udiff, cdiff, or ndiff report, or None to use Expected/Got."""
+    if not optionflags & (REPORT_UDIFF | REPORT_CDIFF | REPORT_NDIFF):
+        return None
+    if not (optionflags & REPORT_NDIFF):
+        if want.count('\n') <= 2 or got.count('\n') <= 2:
+            return None
+    import difflib
+    want_lines = want.splitlines(True)
+    got_lines = got.splitlines(True)
+    if optionflags & REPORT_UDIFF:
+        diff = list(difflib.unified_diff(want_lines, got_lines, n=2))[2:]
+        kind = 'unified diff with -expected +actual'
+    elif optionflags & REPORT_CDIFF:
+        diff = list(difflib.context_diff(want_lines, got_lines, n=2))[2:]
+        kind = 'context diff with expected followed by actual'
     else:
-        text = text + 'Expected:\n' + _indented(example.want)
+        engine = difflib.Differ(charjunk=difflib.IS_CHARACTER_JUNK)
+        diff = list(engine.compare(want_lines, got_lines))
+        kind = 'ndiff with -expected +actual'
+    return 'Differences (%s):\n' % kind + _indented(''.join(diff))
+
+
+def _output_difference(example, got, optionflags):
+    want = example.want
+    if not (optionflags & DONT_ACCEPT_BLANKLINE):
+        got = _mark_blanklines(got)
+    fancy = _fancy_diff(want, got, optionflags)
+    if fancy is not None:
+        return fancy
+    if want == '':
+        text = 'Expected nothing\n'
+    else:
+        text = 'Expected:\n' + _indented(want)
     if got == '':
         text = text + 'Got nothing\n'
     else:
         text = text + 'Got:\n' + _indented(got)
     return text
+
+
+def _difference(example, got, optionflags=0):
+    return 'Failed example:\n' + _indented(example.source) + _output_difference(example, got, optionflags)
 
 
 class DocTestRunner:
@@ -640,6 +836,9 @@ class DocTestRunner:
         if checker is None:
             checker = OutputChecker()
         self._checker = checker
+        # Unspecified verbosity follows -v, read when the runner is built.
+        if verbose is None:
+            verbose = '-v' in sys.argv
         self._verbose = verbose
         self.optionflags = optionflags
         self.original_optionflags = optionflags
@@ -647,6 +846,26 @@ class DocTestRunner:
         self.failures = 0
         self.skips = 0
         self.reports = []
+
+    def report_start(self, out, test, example):
+        if not self._verbose:
+            return
+        if example.want:
+            out('Trying:\n' + _indented(example.source) +
+                'Expecting:\n' + _indented(example.want))
+        else:
+            out('Trying:\n' + _indented(example.source) +
+                'Expecting nothing\n')
+
+    def _line_number(self, test, example):
+        # example.lineno is the 0-based line of the prompt inside the
+        # docstring. test.lineno is the 0-based file line of that docstring.
+        # The line a failure names counts both, including the prompt line.
+        if test.lineno is not None and example.lineno is not None:
+            return test.lineno + example.lineno + 1
+        if example.lineno is not None:
+            return example.lineno + 1
+        return '?'
 
     def run(self, test, compileflags=None, out=None, clear_globs=True):
         globs = _copy_dict(test.globs)
@@ -659,38 +878,70 @@ class DocTestRunner:
         import io
         buffer = io.StringIO()
         saved = sys.stdout
+        if out is None:
+            out = saved.write
         sys.stdout = buffer
+        import linecache
+        self.test = test
+        self._saved_getlines = linecache.getlines
+        linecache.getlines = self._example_lines
+        original = self.optionflags
         try:
-            for example in test.examples:
-                flags = self.optionflags
+            for index, example in enumerate(test.examples):
+                filename = '<doctest %s[%d]>' % (test.name, index)
+                flags = original
                 for flag in example.options:
                     if example.options[flag]:
                         flags = flags | flag
                     else:
                         flags = flags & ~flag
+                quiet = (flags & REPORT_ONLY_FIRST_FAILURE) and failures > 0
                 if flags & SKIP:
                     self.skips += 1
                     continue
                 tries += 1
-                report = self._check(test, example, globs, flags, buffer)
-                if report is not None:
-                    failures += 1
-                    self.reports.append(report)
-                    if flags & FAIL_FAST:
-                        break
+                if not quiet:
+                    self.report_start(out, test, example)
+                report = self._check(test, example, globs, flags, buffer, filename)
+                if report is None:
+                    if not quiet and self._verbose:
+                        out('ok\n')
+                    continue
+                failures += 1
+                self.reports.append(report)
+                if not quiet:
+                    out(report)
+                if flags & FAIL_FAST:
+                    break
         finally:
+            linecache.getlines = self._saved_getlines
             sys.stdout = saved
+            self.optionflags = original
         self.tries += tries
         self.failures += failures
         return TestResults(failures, tries)
 
-    def _check(self, test, example, globs, flags, buffer):
-        got, error, message = _run_example(example.source, globs, buffer)
-        where = 'File "' + str(test.filename) + '", line ' + \
-                str(example.lineno) + ', in ' + test.name + '\n'
+    def _example_lines(self, filename, module_globals=None):
+        """Source of the example compiled as <doctest name[n]>, else the real file."""
+        if (self.test is not None and isinstance(filename, str) and
+                filename.startswith('<doctest ') and filename.endswith(']>')):
+            body = filename[len('<doctest '):-2]
+            bracket = body.rfind('[')
+            if bracket >= 0 and body[:bracket] == self.test.name:
+                number = body[bracket + 1:]
+                if number.isdigit():
+                    index = int(number)
+                    if 0 <= index < len(self.test.examples):
+                        return self.test.examples[index].source.splitlines(True)
+        return self._saved_getlines(filename, module_globals)
+
+    def _check(self, test, example, globs, flags, buffer, filename):
+        got, error, message = _run_example(example.source, globs, buffer, filename)
+        header = self.DIVIDER + '\nFile "' + str(test.filename) + '", line ' + \
+            str(self._line_number(test, example)) + ', in ' + test.name + '\n'
         if _wants_exception(example.want):
             if error is None:
-                return where + _difference(example, got) + \
+                return header + _difference(example, got, flags) + \
                     'No exception was raised.\n'
             detail = _exception_detail(error, message, globs)
             wanted = _wanted_detail(example.want)
@@ -701,17 +952,13 @@ class DocTestRunner:
                     return None
             elif self._checker.check_output(wanted + '\n', detail + '\n', flags):
                 return None
-            return where + 'Failed example:\n' + _indented(example.source) + \
-                'Expected the exception:\n' + _indented(wanted) + \
-                'Got the exception:\n' + _indented(detail)
+            return header + _difference(example, got + _format_traceback(error), flags)
         if error is not None:
-            detail = _exception_detail(error, message, globs)
-            return where + 'Failed example:\n' + _indented(example.source) + \
-                'Expected:\n' + _indented(example.want) + \
-                'Got an unexpected exception:\n' + _indented(detail)
+            return header + 'Failed example:\n' + _indented(example.source) + \
+                'Exception raised:\n' + _indented(_format_traceback(error))
         if self._checker.check_output(example.want, got, flags):
             return None
-        return where + _difference(example, got)
+        return header + _difference(example, got, flags)
 
     def merge(self, other):
         self.failures += other.failures
@@ -720,9 +967,8 @@ class DocTestRunner:
         self.reports.extend(other.reports)
 
     def summarize(self, verbose=None):
-        for report in self.reports:
-            print(self.DIVIDER)
-            print(report, end='')
+        # Failure text was written as each example finished. The summary is
+        # the counts; printing the reports again would show every failure twice.
         return TestResults(self.failures, self.tries)
 
 
@@ -755,26 +1001,49 @@ class DocTestCase(_NamedCase):
         return 'Doctest: ' + self._dt_test.name
 
     def runTest(self):
+        import io
+        captured = io.StringIO()
         if self._dt_setUp is not None:
             self._dt_setUp(self._dt_test)
         try:
             runner = DocTestRunner(self._dt_checker, False,
                                    self._dt_optionflags | _unittest_reportflags)
-            result = runner.run(self._dt_test)
+            result = runner.run(self._dt_test, out=captured.write)
         finally:
             if self._dt_tearDown is not None:
                 self._dt_tearDown(self._dt_test)
         if result.failed == 0:
+            if runner.skips > 0 and result.attempted == 0:
+                raise unittest.SkipTest('all examples were skipped')
             return None
         head = (str(result.failed) + ' of ' + str(result.attempted) +
                 ' examples failed in ' + self._dt_test.name + '\n')
-        body = ''
-        for report in runner.reports:
-            body = body + '\n' + '-' * 70 + '\n' + report
-        raise self.failureException(head + body)
+        raise self.failureException(head + captured.getvalue())
 
     def __repr__(self):
-        return '<DocTestCase ' + self._dt_test.name + '>'
+        name = self._dt_test.name.split('.')
+        return name[-1] + ' (' + '.'.join(name[:-1]) + ')'
+
+    def __str__(self):
+        return self.__repr__()
+
+    def __eq__(self, other):
+        if type(self) is not type(other):
+            return NotImplemented
+        return (self._dt_test == other._dt_test and
+                self._dt_optionflags == other._dt_optionflags and
+                self._dt_setUp == other._dt_setUp and
+                self._dt_tearDown == other._dt_tearDown and
+                self._dt_checker == other._dt_checker)
+
+    def __ne__(self, other):
+        equal = self.__eq__(other)
+        if equal is NotImplemented:
+            return NotImplemented
+        return not equal
+
+    def __hash__(self):
+        return hash((self._dt_optionflags, self._dt_setUp, self._dt_tearDown, self._dt_checker))
 
 
 def _normalize_module(module, depth=2):
@@ -907,13 +1176,108 @@ def testfile(filename, module_relative=True, name=None, package=None,
     return TestResults(runner.failures, runner.tries, skipped=runner.skips)
 
 
+def _is_module(obj):
+    return isinstance(obj, types.ModuleType)
+
+
+def _module_file_and_lines(obj, module):
+    """The module file name and its source lines, for failure locations."""
+    import linecache
+    if module is None:
+        if _is_module(obj):
+            module = obj
+        else:
+            modname = getattr(obj, '__module__', None)
+            if isinstance(modname, str):
+                module = sys.modules.get(modname)
+    filename = None
+    lines = None
+    if module is None or isinstance(module, dict):
+        return filename, lines
+    filename = getattr(module, '__file__', None) or getattr(module, '__name__', None)
+    if isinstance(filename, str) and filename.endswith('.pyc'):
+        filename = filename[:-1]
+    file_for_lines = getattr(module, '__file__', None)
+    if not isinstance(file_for_lines, str):
+        return filename, lines
+    try:
+        got = linecache.getlines(file_for_lines, getattr(module, '__dict__', None))
+    except Exception:
+        got = None
+    if not got and '.zip/' in file_for_lines:
+        try:
+            import _tokenize
+            text = _tokenize._archived_source(file_for_lines)
+        except Exception:
+            text = None
+        if isinstance(text, str) and text != '':
+            got = [line + '\n' for line in text.splitlines()]
+    if got:
+        lines = got
+    return filename, lines
+
+
+def _docstring_lineno(obj, source_lines):
+    """0-based file line where obj's docstring starts. 0 when unknown.
+
+    Module docstrings stay at 0 so their reported lines do not move.
+    """
+    if obj is None or not source_lines:
+        return 0
+    if isinstance(obj, dict) or _is_module(obj):
+        return 0
+    import re
+    lineno = None
+    if isinstance(obj, type):
+        cname = getattr(obj, '__name__', None)
+        if cname:
+            pat = re.compile(r'^\s*class\s*' + re.escape(cname) + r'\b')
+            for index, line in enumerate(source_lines):
+                if pat.match(line):
+                    lineno = index
+                    break
+    else:
+        code = getattr(obj, '__code__', None)
+        if code is None:
+            func = getattr(obj, '__func__', None)
+            code = getattr(func, '__code__', None) if func is not None else None
+        first = getattr(code, 'co_firstlineno', None) if code is not None else None
+        filename = getattr(code, 'co_filename', None) if code is not None else None
+        if first:
+            lineno = first - 1
+        # <doctest name[n]> is the example that defined this function. Its
+        # source is on linecache only while that example's runner is active.
+        if isinstance(filename, str) and filename.startswith('<doctest ') and first:
+            import linecache
+            try:
+                got = linecache.getlines(filename)
+            except Exception:
+                got = None
+            if got:
+                source_lines = got
+            else:
+                return first
+    if lineno is None:
+        return 0
+    quote = re.compile(r'(^|.*:)\s*\w*("|\')')
+    limit = len(source_lines)
+    while lineno < limit:
+        if quote.match(source_lines[lineno]):
+            return lineno
+        lineno = lineno + 1
+    return 0
+
+
 def testmod(m=None, name=None, globs=None, verbose=None, report=True,
             optionflags=0, extraglobs=None, raise_on_error=False,
             exclude_empty=False):
     """Run every example in a module and report how many failed."""
+    if m is None:
+        m = sys.modules.get('__main__')
     finder = DocTestFinder(verbose, None, True, exclude_empty)
     runner = DocTestRunner(None, verbose, optionflags)
-    for test in finder.find(m, name, None, globs, extraglobs):
+    module = None if m is None or isinstance(m, dict) else m
+    for test in finder.find(m, name, module, globs, extraglobs):
         runner.run(test)
     if report:
         runner.summarize()
@@ -933,15 +1297,75 @@ def run_docstring_examples(f, globs, verbose=False, name='NoName',
     return TestResults(runner.failures, runner.tries)
 
 
+def _comment_line(line):
+    line = line.rstrip()
+    if line:
+        return '# ' + line
+    return '#'
+
+
+def script_from_examples(s):
+    """The examples as a script, and everything else as comments."""
+    output = []
+    for piece in DocTestParser().parse(s):
+        if isinstance(piece, Example):
+            output.append(piece.source[:-1])
+            want = piece.want
+            if want:
+                output.append('# Expected:')
+                for line in want.split('\n')[:-1]:
+                    output.append('## ' + line)
+        else:
+            for line in piece.split('\n')[:-1]:
+                output.append(_comment_line(line))
+    while output and output[-1] == '#':
+        output.pop()
+    while output and output[0] == '#':
+        output.pop(0)
+    return '\n'.join(output) + '\n'
+
+
 def testsource(module, name):
+    module = _normalize_module(module)
+    found = None
     for test in DocTestFinder(False, None, True, False).find(module):
         if test.name == name:
-            source = ''
-            for example in test.examples:
-                source = source + example.source + example.want
-            return source
-    return ''
+            found = test
+            break
+    if found is None:
+        raise ValueError(name, 'not found in tests')
+    return script_from_examples(found.docstring or '')
+
+
+def debug_script(src, pm=False, globs=None):
+    """Run a script under the debugger."""
+    import pdb
+    if globs:
+        globs = _copy_dict(globs)
+    else:
+        globs = {}
+    if pm:
+        try:
+            exec(src, globs, globs)
+        except Exception:
+            print(sys.exc_info()[1])
+            debugger = pdb.Pdb(nosigint=True)
+            debugger.reset()
+            debugger.interaction(None, sys.exc_info()[2])
+    else:
+        pdb.Pdb(nosigint=True).run('exec(%r)' % src, globs, globs)
+
+
+def debug_src(src, pm=False, globs=None):
+    """Debug one docstring's examples."""
+    debug_script(script_from_examples(src), pm, globs)
+
+
+def debug(module, name, pm=False):
+    """Debug the docstring named within a module."""
+    module = _normalize_module(module)
+    debug_script(testsource(module, name), pm, module.__dict__)
 
 
 # Export the supported public doctest API; helper TestCase classes stay private.
-__all__ = ['register_optionflag', 'DONT_ACCEPT_TRUE_FOR_1', 'DONT_ACCEPT_BLANKLINE', 'NORMALIZE_WHITESPACE', 'ELLIPSIS', 'SKIP', 'IGNORE_EXCEPTION_DETAIL', 'COMPARISON_FLAGS', 'REPORT_UDIFF', 'REPORT_CDIFF', 'REPORT_NDIFF', 'REPORT_ONLY_FIRST_FAILURE', 'REPORTING_FLAGS', 'FAIL_FAST', 'Example', 'DocTest', 'DocTestParser', 'DocTestFinder', 'DocTestRunner', 'OutputChecker', 'DocTestFailure', 'UnexpectedException', 'testmod', 'testfile', 'run_docstring_examples', 'DocTestSuite', 'DocFileSuite', 'set_unittest_reportflags', 'testsource']
+__all__ = ['register_optionflag', 'DONT_ACCEPT_TRUE_FOR_1', 'DONT_ACCEPT_BLANKLINE', 'NORMALIZE_WHITESPACE', 'ELLIPSIS', 'SKIP', 'IGNORE_EXCEPTION_DETAIL', 'COMPARISON_FLAGS', 'REPORT_UDIFF', 'REPORT_CDIFF', 'REPORT_NDIFF', 'REPORT_ONLY_FIRST_FAILURE', 'REPORTING_FLAGS', 'FAIL_FAST', 'Example', 'DocTest', 'DocTestParser', 'DocTestFinder', 'DocTestRunner', 'OutputChecker', 'DocTestFailure', 'UnexpectedException', 'testmod', 'testfile', 'run_docstring_examples', 'DocTestSuite', 'DocFileSuite', 'set_unittest_reportflags', 'testsource', 'script_from_examples', 'debug_src', 'debug_script', 'debug']
