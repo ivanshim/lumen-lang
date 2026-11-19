@@ -37,19 +37,17 @@ def _foreign_deleter(cls):
     return False
 
 
-_PLAIN_TYPE_IDS = {
-    id(t) for t in (
-        type, object, str, int, float, bool, bytes, bytearray, complex,
-        type(None), list, tuple, dict, set, frozenset, slice, range,
-        type(_foreign_deleter), type(len), type(sys), property,
-        classmethod, staticmethod,
-    )
-}
+_PLAIN_TYPES = (
+    type, object, str, int, float, bool, bytes, bytearray, complex,
+    type(None), list, tuple, dict, set, frozenset, slice, range,
+    type(_foreign_deleter), type(len), type(sys), property,
+    classmethod, staticmethod,
+)
 
 
 def _has_foreign_finalizer():
     checked = {}
-    plain = _PLAIN_TYPE_IDS
+    plain = {id(t) for t in _PLAIN_TYPES}
 
     def want(obj):
         cls = type(obj)
@@ -97,7 +95,7 @@ def _prime_text_runtime():
         return
     # Constructing the stream loads the backend and caches the codec lookup
     # TextIOWrapper repeats after imports have been cleared.
-    _native_io.TextIOWrapper(_native_io.BytesIO())
+    _native_io.TextIOWrapper(_native_io.BytesIO(), encoding="locale")
     _native_io.TextIOWrapper(_native_io.BytesIO(), encoding="utf-8", errors="strict")
 
 

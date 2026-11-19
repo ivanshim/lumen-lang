@@ -637,6 +637,10 @@ def _exec_backend(source, path, name):
     module = type(sys)(name)
     module.__file__ = path
     module.__package__ = ''
+    builtins_mod = sys.modules.get('builtins')
+    if builtins_mod is None:
+        import builtins as builtins_mod
+    module.__dict__['__builtins__'] = builtins_mod.__dict__
     sys.modules[name] = module
     try:
         exec(code, module.__dict__)
