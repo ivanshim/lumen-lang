@@ -896,6 +896,16 @@ fn run_all(python_run: std::sync::mpsc::Sender<()>) {
     let whole = if inv.file == "-" { std::path::PathBuf::from("<stdin>") } else {
         std::fs::canonicalize(&inv.file).unwrap_or_else(|_| std::path::PathBuf::from(&inv.file))
     };
+    // A script read from a ZIP is named by that archive entry. The path the
+    // run was started with stays the archive, so argv[0] is unchanged.
+    let whole = match zip_entry(&inv.file) {
+        Some((zip_path, inner)) if inv.module_source.is_some() && inv.module_name.as_deref() == Some("__main__") => {
+            let archive = std::fs::canonicalize(&zip_path).unwrap_or_else(|_| std::path::PathBuf::from(&zip_path));
+            let within = if inner.is_empty() { String::new() } else { format!("{inner}/") };
+            archive.join(format!("{within}__main__.py"))
+        }
+        _ => whole,
+    };
     let held = whole.parent().map_or_else(|| ".".to_string(), |p| p.to_string_lossy().into_owned());
     request.push(("SELF".to_string(), "file".to_string(), whole.to_string_lossy().into_owned(), false));
     request.push(("SELF".to_string(), "directory".to_string(), held, false));

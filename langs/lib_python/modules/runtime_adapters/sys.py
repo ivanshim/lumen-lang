@@ -59,3 +59,14 @@ def _environment(name):
 # known so a normal start can call them, and -S still leaves them unset.
 import builtins as _startup_builtins
 del _startup_builtins
+
+# Standard input is the text wrapper over the binary host stream. Its name
+# lives on that buffer, which is where TextIOWrapper.name reads it.
+import _io as _stdio_io
+stdin = _stdio_io.TextIOWrapper(
+    _stdin_buffer,
+    encoding=_stdin_holder.encoding,
+    errors=_stdin_holder.errors,
+    newline=None)
+__stdin__ = stdin
+del _stdio_io, _stdin_holder, _stdin_buffer

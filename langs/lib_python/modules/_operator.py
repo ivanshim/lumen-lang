@@ -65,7 +65,7 @@ class _Index(_BuiltinOperator):
         raise TypeError("'" + type(a).__name__.encode('utf-8')[:200].decode('utf-8', 'ignore') + "' object cannot be interpreted as an integer")
 
 
-index = _Index()
+index = __math('method', 'index', _Index())
 
 
 def _replace_operator_functions():
@@ -80,23 +80,25 @@ def _replace_operator_functions():
     module = sys.modules.get('operator')
     if module is None:
         import operator as module
-    replacements = {}
+    # Match by identity, not id(). id() takes the number object reprs print.
+    found = []
     for name in list(getattr(module, '__all__', ())):
         if name == 'index':
             continue
         value = getattr(module, name, None)
         if value is None or isinstance(value, type) or not callable(value):
             continue
-        replacements[id(value)] = _BuiltinOperator(name, value)
+        found.append((value, _BuiltinOperator(name, value)))
     namespace = globals()
-    for wrapper in replacements.values():
+    for _, wrapper in found:
         namespace[wrapper.__name__] = wrapper
         if wrapper.__name__ not in __all__:
             __all__.append(wrapper.__name__)
     for name, member in list(module.__dict__.items()):
-        wrapper = replacements.get(id(member))
-        if wrapper is not None:
-            setattr(module, name, wrapper)
+        for value, wrapper in found:
+            if member is value:
+                setattr(module, name, wrapper)
+                break
 
 
 _replace_operator_functions()

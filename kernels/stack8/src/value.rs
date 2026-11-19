@@ -2269,6 +2269,7 @@ impl Value {
             // writes it.
             Value::Adapter(w) if w.0 == 4 => format!("<staticmethod({})>", if matches!(w.1[0],Value::Null){"None".to_owned()}else{w.1[0].plain()}),
             Value::Adapter(w) if w.0 == 5 => format!("<classmethod({})>", if matches!(w.1[0],Value::Null){"None".to_owned()}else{w.1[0].plain()}),
+            Value::Adapter(w) if w.0 == 64 => format!("<built-in function {}>", w.1[0].plain()),
             Value::Adapter(parts) if parts.0 == 34 => format!("<coroutine_wrapper object at 0x{:x}>", Rc::as_ptr(parts) as usize),
             Value::Adapter(code) if code.0 == 7 => match code.1.first() {
                 Some(Value::Routine(body)) => format!("<code object {} at {:p}, file {:?}, line {}>",
