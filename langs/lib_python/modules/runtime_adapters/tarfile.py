@@ -2,6 +2,7 @@
 # the same bytes for every case. Reuse members when the file is unchanged.
 _tar_load = TarFile._load
 _tar_members = {}
+_tar_seen = set()
 _tar_loading = set()
 _TAR_CACHE_LIMIT = 8 * 1024 * 1024
 _TAR_FIELDS = (
@@ -104,6 +105,10 @@ def _tar_load_members(self):
                     return
         _tar_load(self)
         if key is not None and self._loaded:
+            # Skip hashing and snapshotting archives opened only once (e.g. CLI).
+            if key not in _tar_seen:
+                _tar_seen.add(key)
+                return
             try:
                 tell = self.fileobj.tell()
             except Exception:

@@ -12,7 +12,11 @@ import _io as _native_io
 
 _finalizer_instances = 0
 _build_class = builtins.__build_class__
-_IO_MODULES = {"_io", "io", "_io_backend"}
+# Modules whose finalizers only release native handles or close binary streams.
+_IO_MODULES = {
+    "_io", "io", "_io_backend", "_io_buffered",
+    "zlib", "_bz2", "_lzma", "posix", "gzip", "tarfile",
+}
 _watched = set()
 
 

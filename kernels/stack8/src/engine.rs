@@ -1,4 +1,5 @@
 include!("../../../src/python_encodings.rs");
+include!("../../../src/plain_source.rs");
 
 thread_local! {
     static PY_ATTRIBUTE_NAMES: std::cell::RefCell<std::collections::HashMap<String, Value>> = std::cell::RefCell::new(std::collections::HashMap::new());
@@ -28154,6 +28155,9 @@ impl<'a> Engine<'a> {
                         .or_else(|| self.library_module_file(&name).and_then(|file| std::fs::read(file).ok()))
                         .or_else(|| self.module_sources.get(name.as_ref()).map(|source| source.as_bytes().to_vec()))
                 }.ok_or_else(|| "ImportError: source not available through get_data()".to_string())?;
+                if let Some(text) = plain_utf8_source(&raw) {
+                    return Ok(Value::text(&text));
+                }
                 let module = self.route_module("_tokenize")?;
                 let decoder = self.member_of(module, "_decode_source")?
                     .ok_or_else(|| "ImportError: source decoder is unavailable".to_string())?;
@@ -29172,6 +29176,9 @@ impl<'a> Engine<'a> {
                 if args.len() == 2 && matches!(&args[1], Value::Text(mode) if mode.as_ref() == "source") {
                     let name = args[0].display(&sp);
                     if let Some((_, source)) = self.sys_path_source(&name).or_else(|| self.library_module_file(&name).and_then(|file| std::fs::read(&file).ok().map(|source| (file, source)))) {
+                        if let Some(text) = plain_utf8_source(&source) {
+                            return Ok(Value::text(&text));
+                        }
                         let tokenizer = self.route_module("_tokenize")?;
                         let decode = self.member_of(tokenizer, "_decode_source")?.ok_or("ImportError: source decoder is unavailable")?;
                         let input = self.byte_make(source, false);

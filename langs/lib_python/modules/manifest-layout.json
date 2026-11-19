@@ -80,6 +80,7 @@
     "runtime_sources/source_inspect.py": "_source_inspect"
   },
   "preludes": {
-    "zipimport": "runtime_adapters/zipimport_bootstrap.py"
+    "zipimport": "runtime_adapters/zipimport_bootstrap.py",
+    "tarfile": "runtime_adapters/tarfile_prefix.py"
   }
 }

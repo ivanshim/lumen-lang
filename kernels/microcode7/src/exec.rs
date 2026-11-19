@@ -1,4 +1,5 @@
 include!("../../../src/python_encodings.rs");
+include!("../../../src/plain_source.rs");
 
 thread_local! {
     static PY_ATTRIBUTE_NAMES: std::cell::RefCell<std::collections::HashMap<String, Value, crate::table::FxBuildHasher>> = std::cell::RefCell::new(std::collections::HashMap::default());
@@ -27983,10 +27984,14 @@ impl<'a> Machine<'a> {
                         let name = v[0].bare();
                         match self.sys_path_source(&name).or_else(|| self.library_module_file(&name).and_then(|file| std::fs::read(&file).ok().map(|source| (file, source)))) {
                             Some((_, raw)) => {
-                                let tokenize = self.load_namespace("_tokenize")?;
-                                let decoder = self.attribute(&tokenize, "_decode_source").ok_or("ImportError: source decoder is unavailable")?;
-                                let bytes = self.octets(raw, false);
-                                self.core_run(&decoder, vec![bytes])?
+                                if let Some(text) = plain_utf8_source(&raw) {
+                                    Value::text(&text)
+                                } else {
+                                    let tokenize = self.load_namespace("_tokenize")?;
+                                    let decoder = self.attribute(&tokenize, "_decode_source").ok_or("ImportError: source decoder is unavailable")?;
+                                    let bytes = self.octets(raw, false);
+                                    self.core_run(&decoder, vec![bytes])?
+                                }
                             }
                             None => match self.library_sources.get(&name) {
                                 Some(text) => Value::text(text),
@@ -29376,6 +29381,9 @@ impl<'a> Machine<'a> {
                         .or_else(|| self.library_module_file(&name).and_then(|filename| std::fs::read(filename).ok()))
                         .or_else(|| self.library_sources.get(&name).map(|text| text.as_bytes().to_vec())),
                 }.ok_or_else(|| String::from("ImportError: source not available through get_data()"))?;
+                if let Some(text) = plain_utf8_source(&content) {
+                    return Ok(Value::text(&text));
+                }
                 let adapter = self.load_namespace("_tokenize")?;
                 let Some(decode) = self.attribute(&adapter, "_decode_source") else {
                     return Err(String::from("ImportError: source decoder is unavailable"));
