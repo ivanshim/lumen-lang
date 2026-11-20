@@ -220,13 +220,16 @@ struct Invocation {
 /// kernel is to run it.
 fn text_is_bytes(language: &Language) -> bool {
     let definition = match language {
-        Language::File { text, .. } => text.clone(),
+        Language::File { text, .. } => text.as_str(),
         Language::Named(name) => match lumen_microcode11::embedded(name) {
-            Ok(text) => text.to_string(),
+            Ok(text) => text,
             Err(_) => return false,
         },
     };
-    lumen_stack8::lang::Lang::parse(&definition).map_or(false, |lang| lang.text_is_bytes)
+    if !definition.contains("ext.system.text.bytes") {
+        return false;
+    }
+    lumen_stack8::lang::Lang::parse(definition).map_or(false, |lang| lang.text_is_bytes)
 }
 
 /// Whether a kernel gives the extension labels any meaning. The four
@@ -872,7 +875,8 @@ fn run_all(python_run: std::sync::mpsc::Sender<()>) {
     // What a web request carries, gathered once here so that a kernel
     // has only to bind it: the full kernels take it, the others do not
     // read the labels that name it.
-    let mut request = web::gathered(text_is_bytes(&inv.language) && honours_extensions(&inv.kernel));
+    let text_bytes = text_is_bytes(&inv.language) && honours_extensions(&inv.kernel);
+    let mut request = web::gathered(text_bytes);
     // Resolve the optional library location before the program can change directory.
     let overlay = inv.python.map_or(&[][..], |v| v.modules);
     for (name, source, file) in overlay.iter().chain(embedded_modules::MODULES.iter().filter(|(name, ..)| !overlay.iter().any(|(overlaid, ..)| overlaid == name))) {

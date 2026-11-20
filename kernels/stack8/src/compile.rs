@@ -88,7 +88,7 @@ fn ast_line(row: u32, column: usize) -> u32 {
 }
 
 /// The global names, each with a slot.
-#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Registry {
     /// Slots owned by another registry need addresses, not placeholder strings.
     #[serde(default)]
@@ -182,6 +182,9 @@ pub struct Registry {
     /// The text under way, where the caller handed it over: the words
     /// an annotation was written with are read back out of it.
     pub source: Option<Rc<str>>,
+    /// Global names declared inside nested routines, captured when compiled directly.
+    #[serde(skip)]
+    pub compiled_wide_globals: Vec<String>,
 }
 
 impl Registry {
@@ -310,7 +313,6 @@ struct BindingPlan {
 }
 
 /// Scope summaries contain names rather than runtime slots or values.
-#[derive(serde::Serialize, serde::Deserialize)]
 struct PreparedScope {
     plans: HashMap<usize, BindingPlan, crate::value::FxBuildHasher>,
     bound: HashSet<String, crate::value::FxBuildHasher>,
@@ -318,7 +320,7 @@ struct PreparedScope {
 }
 
 pub type PreparedEntries = &'static [(u64, &'static [u8], &'static [u8])];
-pub type PreparedSources = &'static [(u64, &'static [u8], usize)];
+pub type PreparedSources = &'static [(u64, u64, usize, usize)];
 thread_local! {
     static PREPARED_DEFINITIONS: std::cell::RefCell<HashMap<String, (PreparedEntries, PreparedSources)>> = std::cell::RefCell::new(HashMap::new());
 }
@@ -402,6 +404,70 @@ impl<'a> PackedTokens<'a> {
         self.at = end;
         Some(text)
     }
+    fn words(&mut self) -> Option<Vec<String>> {
+        let n = self.count()?;
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n { out.push(self.text()?); }
+        Some(out)
+    }
+}
+
+fn push_words<'a>(out: &mut Vec<u8>, iter: impl ExactSizeIterator<Item = &'a str>) {
+    out.extend_from_slice(&(iter.len() as u64).to_le_bytes());
+    for s in iter {
+        out.extend_from_slice(&(s.len() as u64).to_le_bytes());
+        out.extend_from_slice(s.as_bytes());
+    }
+}
+
+fn pack_scope(scope: &PreparedScope) -> Vec<u8> {
+    let mut out = Vec::with_capacity(512);
+    let mut plan_entries: Vec<(usize, &BindingPlan)> = scope.plans.iter().map(|(&k, v)| (k, v)).collect();
+    plan_entries.sort_by_key(|(k, _)| *k);
+    out.extend_from_slice(&(plan_entries.len() as u64).to_le_bytes());
+    for (id, plan) in plan_entries {
+        out.extend_from_slice(&(id as u64).to_le_bytes());
+        push_words(&mut out, plan.names.iter().map(String::as_str));
+        out.extend_from_slice(&(plan.globals.len() as u64).to_le_bytes());
+        for (a, b) in &plan.globals {
+            out.extend_from_slice(&(a.len() as u64).to_le_bytes());
+            out.extend_from_slice(a.as_bytes());
+            out.extend_from_slice(&(b.len() as u64).to_le_bytes());
+            out.extend_from_slice(b.as_bytes());
+        }
+        push_words(&mut out, plan.nonlocals.iter().map(String::as_str));
+        push_words(&mut out, plan.class_nonlocals.iter().map(String::as_str));
+    }
+    let mut bound: Vec<&str> = scope.bound.iter().map(String::as_str).collect();
+    bound.sort_unstable();
+    push_words(&mut out, bound.into_iter());
+    let mut exports: Vec<&str> = scope.exports.iter().map(String::as_str).collect();
+    exports.sort_unstable();
+    push_words(&mut out, exports.into_iter());
+    out
+}
+
+fn unpack_scope(raw: &[u8]) -> Option<PreparedScope> {
+    let mut cur = PackedTokens { bytes: raw, at: 0 };
+    let plan_count = cur.count()?;
+    let mut plans = HashMap::with_capacity_and_hasher(plan_count, Default::default());
+    for _ in 0..plan_count {
+        let id = cur.count()?;
+        let names = cur.words()?;
+        let gcount = cur.count()?;
+        let mut globals = Vec::with_capacity(gcount);
+        for _ in 0..gcount { globals.push((cur.text()?, cur.text()?)); }
+        let nonlocals = cur.words()?;
+        let class_nonlocals = cur.words()?;
+        plans.insert(id, BindingPlan { names, globals, nonlocals, class_nonlocals });
+    }
+    let bcount = cur.count()?;
+    let mut bound = HashSet::with_capacity_and_hasher(bcount, Default::default());
+    for _ in 0..bcount { bound.insert(cur.text()?); }
+    let ecount = cur.count()?;
+    let mut exports = HashSet::with_capacity_and_hasher(ecount, Default::default());
+    for _ in 0..ecount { exports.insert(cur.text()?); }
+    (cur.at == raw.len()).then_some(PreparedScope { plans, bound, exports })
 }
 
 fn unpack_tokens(proof: &[u8]) -> Option<Vec<Token>> {
@@ -425,13 +491,24 @@ fn unpack_tokens(proof: &[u8]) -> Option<Vec<Token>> {
 pub(crate) fn prepared_tokens(source: &str, lang: &Lang) -> Option<(Vec<Token>, usize)> {
     if lang.prologue_brief_setting.is_some() { return None; }
     let key = source_stamp(source);
-    let (_, _, index) = lang.prepared_source_tokens?.iter().find(|(stamp, compressed, _)|
-        *stamp == key && unpack_library_proof(compressed).is_some_and(|bytes| bytes.as_slice() == source.as_bytes()))?;
-    let (_, proof, _) = lang.prepared_scopes?.get(*index)?;
-    Some((unpack_tokens(&unpack_library_proof(proof)?)?, *index))
+    let check = source_digest(source);
+    let len = source.len();
+    let &(_, _, _, index) = lang.prepared_source_tokens?.iter().find(|&&(stamp, extra, bytes, _)|
+        stamp == key && extra == check && bytes == len)?;
+    let (_, proof, _) = lang.prepared_scopes?.get(index)?;
+    Some((unpack_tokens(&unpack_library_proof(proof)?)?, index))
 }
 
 pub fn source_stamp(source: &str) -> u64 { token_stamp(source.as_bytes()) }
+
+pub fn source_digest(source: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &b in source.as_bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x100000001b3).rotate_left(7);
+    }
+    h ^ (source.len() as u64).wrapping_mul(0x9e3779b97f4a7c15)
+}
 
 fn token_stamp(bytes: &[u8]) -> u64 {
     use std::hash::Hasher;
@@ -474,18 +551,18 @@ fn prepared_scope(tokens: &[Token], lang: &Lang, hint: Option<usize>) -> Option<
     // spelled out and matched against it again.
     if let Some(at) = hint {
         let (_, _, text) = entries.get(at)?;
-        return serde_json::from_slice(&unpack_library_proof(text)?).ok();
+        return unpack_scope(&unpack_library_proof(text)?);
     }
     let fingerprint = token_fingerprint(tokens);
     let stamp = token_stamp(&fingerprint);
     for &(key, proof, text) in entries {
-        if key == stamp && unpack_library_proof(proof).as_deref().map(Vec::as_slice) == Some(fingerprint.as_slice()) { return serde_json::from_slice(&unpack_library_proof(text)?).ok(); }
+        if key == stamp && unpack_library_proof(proof).as_deref().map(Vec::as_slice) == Some(fingerprint.as_slice()) { return unpack_scope(&unpack_library_proof(text)?); }
     }
     None
 }
 
 /// Produce the same lexical scope survey used by ordinary module imports.
-pub fn prepare_library(definition: &str, source: &str) -> Option<(u64, Vec<u8>, String)> {
+pub fn prepare_library(definition: &str, source: &str) -> Option<(u64, Vec<u8>, Vec<u8>)> {
     let lang = Lang::parse(definition).ok()?;
     let tokens = crate::lex::lex_position(source, &lang).ok()?;
     let tokens = crate::layout::layout_position(tokens, &lang, 0).ok()?;
@@ -495,7 +572,9 @@ pub fn prepare_library(definition: &str, source: &str) -> Option<(u64, Vec<u8>, 
     let proof = token_fingerprint(&tokens);
     if unpack_tokens(&proof).as_deref() != Some(tokens.as_slice()) { return None; }
     let stamp = token_stamp(&proof);
-    serde_json::to_string(&PreparedScope { plans, bound: registry.program_bound, exports: registry.builtin_exports }).ok().map(|text| (stamp, proof, text))
+    let packed = pack_scope(&PreparedScope { plans, bound: registry.program_bound, exports: registry.builtin_exports });
+    if unpack_scope(&packed).is_none() { return None; }
+    Some((stamp, proof, packed))
 }
 
 
@@ -1269,7 +1348,7 @@ fn compile_pass(
     // Discovery retains bindings and syntax checks, not discarded runtime metadata.
     let (root_constants, root_names) = if discovering { (Vec::new(), Vec::new()) } else { code_metadata(&unit.instrs, &None, &[], false) };
     a.registry.future_bits = a.future_bits;
-    Ok(Rc::new(Routine { globals_rebound: false, code_snapshot: Default::default(), image_origin: (0, a.before, a.future_bits | a.image_modes), instruction_image: None, exception_image: None, code_identity: Rc::new(()), embedded_integers: None, source_end: a.pos, source_content: a.source_content.clone(), source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), cell_names: Vec::new(), code_flags: 0, future_bits: a.future_bits, lineless: false, location_bytes: None, declared_stack: None, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(if discovering { unit.instrs } else { peephole(unit.instrs) }), revised: std::cell::RefCell::new(None) }))
+    Ok(Rc::new(Routine { globals_rebound: false, code_snapshot: Default::default(), compiled_registry: None, image_origin: (0, a.before, a.future_bits | a.image_modes), instruction_image: None, exception_image: None, code_identity: Rc::new(()), embedded_integers: None, source_end: a.pos, source_content: a.source_content.clone(), source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), cell_names: Vec::new(), code_flags: 0, future_bits: a.future_bits, lineless: false, location_bytes: None, declared_stack: None, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(if discovering { unit.instrs } else { peephole(unit.instrs) }), revised: std::cell::RefCell::new(None) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -2689,7 +2768,7 @@ impl<'a> Compiler<'a> {
         local_names.retain(|name| formals.contains(name) || !cell_names.contains(name));
         if doc.is_some() { code_flags |= 0x4000000; }
         if within.as_ref().is_some_and(|class| qualified == format!("{class}.{name}")) { code_flags |= 0x8000000; }
-        Ok(Rc::new(Routine { globals_rebound: false, code_snapshot: Default::default(), image_origin: (source, self.before, self.future_bits | self.image_modes), instruction_image: None, exception_image: None, code_identity: Rc::new(()), embedded_integers: None, source_end: self.pos, source_content: self.source_content.clone(), source_tokens: self.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation, code_constants, code_names, local_names, cell_names, code_flags, future_bits: self.future_bits, lineless: false, location_bytes: None, declared_stack: None, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(if self.discovering { instrs } else { peephole(instrs) }), revised: std::cell::RefCell::new(None) }))
+        Ok(Rc::new(Routine { globals_rebound: false, code_snapshot: Default::default(), compiled_registry: None, image_origin: (source, self.before, self.future_bits | self.image_modes), instruction_image: None, exception_image: None, code_identity: Rc::new(()), embedded_integers: None, source_end: self.pos, source_content: self.source_content.clone(), source_tokens: self.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation, code_constants, code_names, local_names, cell_names, code_flags, future_bits: self.future_bits, lineless: false, location_bytes: None, declared_stack: None, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(if self.discovering { instrs } else { peephole(instrs) }), revised: std::cell::RefCell::new(None) }))
     }
 
     /// The words an annotation was written with, read back out of the text

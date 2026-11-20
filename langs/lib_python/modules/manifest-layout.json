@@ -48,7 +48,8 @@
     "test.support.warnings_helper": "runtime_adapters/warnings_helper.py",
     "re._compiler": "runtime_adapters/re_compiler.py",
     "tarfile": "runtime_adapters/tarfile.py",
-    "random": "runtime_adapters/random_randrange.py"
+    "random": "runtime_adapters/random_randrange.py",
+    "shutil": "runtime_adapters/shutil.py"
   },
   "data": {
     "_codec_sjis": {

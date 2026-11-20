@@ -60,6 +60,35 @@ def isfunction(object):
         __type_params__ tuple of type parameters"""
     return isinstance(object, types.FunctionType)
 
+def isbuiltin(object):
+    """Return true if the object is a built-in function or method."""
+    return isinstance(object, types.BuiltinFunctionType)
+
+def ismethoddescriptor(object):
+    """Return true if the object is a method descriptor.
+
+    But not if ismethod(), isclass() or isfunction() is true.
+    """
+    if isclass(object) or ismethod(object) or isfunction(object):
+        return False
+    tp = type(object)
+    return (hasattr(tp, "__get__")
+            and not hasattr(tp, "__set__")
+            and not hasattr(tp, "__delete__"))
+
+def ismethodwrapper(object):
+    """Return true if the object is a method wrapper."""
+    return isinstance(object, types.MethodWrapperType)
+
+def isroutine(object):
+    """Return true if the object is any kind of function or method."""
+    return (isbuiltin(object)
+            or isfunction(object)
+            or ismethod(object)
+            or ismethoddescriptor(object)
+            or ismethodwrapper(object)
+            or isinstance(object, functools._singledispatchmethod_get))
+
 def _signature_is_functionlike(obj):
     """Private helper to test if `obj` is a duck type of FunctionType.
     A good example of such objects are functions compiled with

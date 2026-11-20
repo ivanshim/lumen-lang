@@ -70,3 +70,17 @@ stdin = _stdio_io.TextIOWrapper(
     newline=None)
 __stdin__ = stdin
 del _stdio_io, _stdin_holder, _stdin_buffer
+
+# CPython 3.13+ exposes the experimental JIT here. This runtime has none.
+class _jit:
+    @staticmethod
+    def is_available():
+        return False
+
+    @staticmethod
+    def is_enabled():
+        return False
+
+    @staticmethod
+    def is_active():
+        return False
