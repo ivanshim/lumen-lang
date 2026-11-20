@@ -4,7 +4,7 @@
 use crate::data::{Among, Names, Value};
 use crate::table::Table;
 use crate::unicode::{altered, property};
-use std::rc::Rc;
+use crate::data::Rc;
 use num_traits::ToPrimitive;
 
 #[derive(Hash, Eq, PartialEq, Copy, Clone, Debug)]
@@ -788,6 +788,10 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
                     _ => (),
                 }
             }
+            let words: Option<Vec<&str>> = row.iter().map(|entry| match entry {
+                Value::Text(word) => Some(word.as_ref()), _ => None,
+            }).collect();
+            if let Some(words) = words { return Ok(Value::text(&words.join(source))); }
             let mut result: Vec<u32> = Vec::new();
             for (position, item) in row.into_iter().enumerate() {
                 let numbers = item.character_numbers().ok_or_else(|| g.bad("join"))?;
@@ -840,7 +844,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     Ok(answer)
 }
 
-fn seek(work: Work, source: &std::rc::Rc<str>, g: &Given) -> Result<Value,String> {
+fn seek(work: Work, source: &crate::data::Rc<str>, g: &Given) -> Result<Value,String> {
     // A search borrows its selected bytes instead of building a row
     // of characters and a second string. Bounds still name characters;
     // a Unicode boundary is reached from whichever end is nearer.
@@ -932,7 +936,7 @@ fn fill_mapping(table:&Table, pattern:&str, mapping:&Value, names:Names, level:u
 pub(crate) fn extent_of_string(subject: &Rc<str>) -> usize {
     // Walking a short word costs less than maintaining its weak cache entry.
     if subject.len() < 65 { return subject.chars().count(); }
-    type LengthEntry = (std::rc::Weak<str>, usize);
+    type LengthEntry = (crate::data::Weak<str>, usize);
     thread_local! {
         static EXTENTS: std::cell::RefCell<std::collections::BTreeMap<usize, LengthEntry>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
     }

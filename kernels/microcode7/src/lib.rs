@@ -37,13 +37,15 @@ mod complex;
 mod byteformat;
 mod crypto;
 mod context;
+mod activation;
 pub mod capsule;
 pub mod datetime_api;
+mod turn;
 pub mod tuples;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
+use crate::data::Rc;
 
 use table::Table;
 use data::Value;
@@ -311,6 +313,7 @@ fn import_rejoined(text: &str, table: &Table, added: u32) -> Option<String> {
 
 fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let _tuple_scope = tuples::Scope::enter(table.has_any("ext.builtin.tuple"));
+    let _turn = turn::Turn::fresh().take().map_err(|why| format!("interpreter turn refused: {why:?}"))?;
     // A file reader ends a line at a CRLF pair or a lone CR before
     // passing its contents on.
     let file_text = if source.contains('\r') && table.syntax_exceptions {
@@ -321,7 +324,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     let joined = import_rejoined(source, table, ahead);
     let source = joined.as_deref().unwrap_or(source);
     escape_notices_ahead_of_run(source, table, ahead, request);
-    table.source.replace(Some(std::rc::Rc::from(source)));
+    table.source.replace(Some(crate::data::Rc::from(source)));
     let read = scan::scan_position(source, table).map_err(|(said, row, col)| cannot_read(table, &said, row, request, ahead, false, source, Some(col), None));
     let shaped = indent::indent_position(read?, table, ahead).map_err(|(said, row, col)| cannot_read(table, &said, row, request, ahead, false, source, Some(col), None));
     let tokens = shaped?;
@@ -430,7 +433,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
             };
             written_at(&mut carried, &steps, held);
         }
-        machine.define(name, Value::Dict(std::rc::Rc::new(carried.into())));
+        machine.define(name, Value::Dict(crate::data::Rc::new(carried.into())));
     }
     // The body as it came, for a program that would read it itself.
     if let Some(name) = table.single("ext.system.request.body") {
@@ -580,7 +583,7 @@ fn written_at(entries: &mut Vec<(Value, Value)>, steps: &[&str], value: Value) {
     let at = match entries.iter().position(|(k, _)| k.equals(&key)) {
         Some(at) => at,
         None => {
-            entries.push((key, Value::Dict(std::rc::Rc::new(Vec::new().into()))));
+            entries.push((key, Value::Dict(crate::data::Rc::new(Vec::new().into()))));
             entries.len() - 1
         }
     };
@@ -589,7 +592,7 @@ fn written_at(entries: &mut Vec<(Value, Value)>, steps: &[&str], value: Value) {
         _ => Vec::new().into(),
     };
     written_at(&mut deeper, &steps[1..], value);
-    entries[at].1 = Value::Dict(std::rc::Rc::new(deeper));
+    entries[at].1 = Value::Dict(crate::data::Rc::new(deeper));
 }
 
 /// Whether the words are a span's own complaint, which the table tells

@@ -246,19 +246,19 @@ impl Machine<'_> {
                     });
                     let Some(Value::Blueprint(definition)) = definition else { continue; };
                     let blueprint = instance.blueprint();
-                    let recognized = std::rc::Rc::ptr_eq(&blueprint, &definition) || blueprint.ancestry().iter().any(|base| std::rc::Rc::ptr_eq(base, &definition));
+                    let recognized = crate::data::Rc::ptr_eq(&blueprint, &definition) || blueprint.ancestry().iter().any(|base| crate::data::Rc::ptr_eq(base, &definition));
                     if !recognized { continue; }
                     if member == "memoryview" {
                         let contiguous = match self.read_class_member(value.clone(), "c_contiguous", false) {
                             Ok(flag) => flag.is_true(),
-                            Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
+                            Err(escape) => { self.act.got_away = Some(escape); return Err(self.bad_answer()); }
                         };
                         if !contiguous { return Err(String::from("BufferError: memoryview: underlying buffer is not C-contiguous")); }
                     }
                     let method = self.inherited_entry(&blueprint, export).ok_or_else(|| String::from("TypeError: missing buffer export"))?;
                     let exported = match self.apply_held(method, vec![value.clone()]) {
                         Ok(answer) => answer,
-                        Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
+                        Err(escape) => { self.act.got_away = Some(escape); return Err(self.bad_answer()); }
                     };
                     if let Value::Octets { cell, .. } = exported.settled() { return Ok(cell.borrow().to_vec()); }
                     return Err(String::from("TypeError: invalid buffer export"));

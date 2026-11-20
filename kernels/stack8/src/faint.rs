@@ -16,7 +16,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
-use std::rc::{Rc, Weak};
+use crate::value::{Rc, Weak};
 
 use crate::code::Routine;
 use crate::value::{Class, CursorSource, Descriptor, Ending, Generator, Instance, Keep, Members, Phase, Value};

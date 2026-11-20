@@ -43,7 +43,7 @@ use std::collections::HashMap;
 use std::cell::{Cell as StateCell, RefCell};
 use num_bigint::BigInt;
 use num_integer::Integer;
-use std::rc::{Rc, Weak};
+use crate::value::{Rc, Weak};
 
 use num_traits::{ToPrimitive, Signed, Zero, One};
 
@@ -142,7 +142,7 @@ fn watch_host_signals() {
 thread_local! {
     /// The hashes tuples holding instances were given, by the tuple's own
     /// place, kept beside a weak hold that tells whether it still stands.
-    static TUPLE_HASHES: RefCell<HashMap<usize, (std::rc::Weak<Vec<Value>>, Value)>> = RefCell::new(HashMap::new());
+    static TUPLE_HASHES: RefCell<HashMap<usize, (crate::value::Weak<Vec<Value>>, Value)>> = RefCell::new(HashMap::new());
 }
 
 
@@ -329,13 +329,7 @@ pub struct Engine<'a> {
     /// the program runs can be assembled against the same ones.
     registry: crate::compile::Registry,
     data: Vec<Value>,
-    caught: Vec<Value>,
-    /// How many of the held faults belong to whoever asked a suspended
-    /// body for its next value. A body's own held faults stand above
-    /// them, so that it sees its own first and the caller's behind, and
-    /// so that what it puts away while it sleeps is found again at the
-    /// same remove however deep the caller stood.
-    held_base: usize,
+    thread: crate::thread_state::ThreadState,
     memo: HashMap<String, Value>,
     core_ids: HashMap<String, usize>,
     /// A loose member descriptor, keyed by the kind's word and the member
@@ -433,7 +427,7 @@ pub struct Engine<'a> {
     when_done: RefCell<Vec<(Value, Vec<Value>)>>,
     /// Every object made, held loosely, in the order they were made, so
     /// that those still standing when the run ends can be let go.
-    things_made: RefCell<Vec<std::rc::Weak<Instance>>>,
+    things_made: RefCell<Vec<crate::value::Weak<Instance>>>,
     objects_prune_at: std::cell::Cell<usize>,
     /// The classes made beneath each class, keyed by where the forebear
     /// stands and held loosely, so __subclasses__ names only those still
@@ -443,11 +437,6 @@ pub struct Engine<'a> {
     /// The files already read where the program asked for them to be
     /// read only once, by the whole name each stands under.
     read_already: RefCell<std::collections::HashSet<String>>,
-    /// A fault raised inside a source read in, carried out past the
-    /// reading: what the reading answers with is a note and no fault of
-    /// its own, so a throw or an ending is kept here and raised again
-    /// where the reading stood.
-    carried: Option<Fault>,
     /// The handler each signal number was given to answer with: a
     /// callable of the program's own, the mark for paying the signal no
     /// mind, or the mark for the signal's own way. A number never given
@@ -1061,7 +1050,7 @@ impl<'a> Engine<'a> {
 
     fn chain_context_from(&self, raised: &Value, base: usize) {
         let Some(name) = &self.lang.exception_context else { return };
-        let Some(Value::Object(handling)) = self.caught.get(base..).and_then(|tail| tail.last()).map(Value::contents) else { return };
+        let Some(Value::Object(handling)) = self.thread.caught.get(base..).and_then(|tail| tail.last()).map(Value::contents) else { return };
         let Value::Object(object) = raised.contents() else { return };
         if Keep::ptr_eq(&handling, &object) { return; }
         let slot = StateCell::new(0);
@@ -1092,7 +1081,7 @@ impl<'a> Engine<'a> {
     fn chain_context(&self, raised: &Value) {
         let Some(name) = &self.lang.exception_context else { return };
         let Value::Object(object) = raised.contents() else { return };
-        let Some(Value::Object(handling)) = self.caught.last().map(Value::contents) else { return };
+        let Some(Value::Object(handling)) = self.thread.caught.last().map(Value::contents) else { return };
         if Keep::ptr_eq(&handling, &object) { return; }
         let slot = StateCell::new(0);
         let behind = |link: &Keep| Self::context_behind(link, name, &slot);
@@ -1869,8 +1858,7 @@ impl<'a> Engine<'a> {
             lang,
             world,
             data: Vec::new(),
-            caught: Vec::new(),
-            held_base: 0,
+            thread: crate::thread_state::ThreadState::new(),
             memo: HashMap::new(),
             core_ids: HashMap::new(),
             loose_members: RefCell::new(HashMap::new()),
@@ -1946,7 +1934,6 @@ impl<'a> Engine<'a> {
             concrete_kinds: RefCell::new(HashMap::new()),
             class_children: RefCell::new(HashMap::new()),
             read_already: RefCell::new(std::collections::HashSet::new()),
-            carried: None,
             signal_handlers: HashMap::new(),
             wakeup_reporter: None,
             absent_member: None,
@@ -2157,7 +2144,7 @@ impl<'a> Engine<'a> {
             // the reading and not to the reading, so it is carried out
             // and raised again there.
             Err(other) => {
-                self.carried = Some(other);
+                self.thread.carried = Some(other);
                 return Err("the source read in did not finish".to_string());
             }
         }
@@ -2511,7 +2498,7 @@ impl<'a> Engine<'a> {
                 if !matches!(&fault, Fault::Thrown(Value::Object(error)) if error.class_now().name == "AttributeError") && !matches!(&fault, Fault::Note(message) if message.starts_with("AttributeError:")) {
                     self.ignore_fault(fault, &coroutine, "coroutine");
                 }
-                self.carried.take();
+                self.thread.carried.take();
             }
         }
         let tell = self.class_get(module, &words[1], false)?;
@@ -2570,7 +2557,7 @@ impl<'a> Engine<'a> {
     fn speak_ignoring(&mut self, callee: Value, args: Vec<Value>, kind: &str) {
         let shown = callee.clone();
         if let Err(words) = self.call_held(callee, args) {
-            let fault = self.carried.take().unwrap_or(Fault::Note(words));
+            let fault = self.thread.carried.take().unwrap_or(Fault::Note(words));
             self.ignore_fault(fault, &shown, kind);
         }
         if self.lang.signals_between_statements {
@@ -2599,7 +2586,7 @@ impl<'a> Engine<'a> {
         };
         if let Ok(Some(report)) = self.member_of(sys, "_report_unraisable") {
             let _ = self.call_held(report, vec![raised, trace, about.clone(), Value::text(kind)]);
-            self.carried.take();
+            self.thread.carried.take();
         }
     }
 
@@ -2651,9 +2638,9 @@ impl<'a> Engine<'a> {
             }
         });
         if limit.is_some_and(|limit| swollen || large_source || growth >= limit) {
-            let pending = self.carried.take();
+            let pending = self.thread.carried.take();
             self.collect_cycles(false);
-            self.carried = pending;
+            self.thread.carried = pending;
         }
     }
 
@@ -2765,7 +2752,7 @@ impl<'a> Engine<'a> {
             for &at in quiet_slots { if let Some(quiet) = quiet_positions.get_mut(at) { *quiet = true; } }
             let active_world = self.world.iter().enumerate().filter_map(|(at, value)|
                 (!quiet_positions[at] && !matches!(value, Value::Blank | Value::Null)).then_some(value));
-            active_world.chain(&self.data).chain(&self.caught).chain(&self.buffer)
+            active_world.chain(&self.data).chain(&self.thread.caught).chain(&self.buffer)
             .chain(self.given.iter().flatten()).chain(self.modules.values()).chain(self.memo.values())
             .chain(self.native_exceptions.values()).chain(std::iter::once(&self.trace_hook)).cloned()
             .chain(self.outer_book.iter().cloned().map(Value::Bond))
@@ -3302,7 +3289,7 @@ impl<'a> Engine<'a> {
         if let Value::Object(object) = &value {
             object.fields.borrow_mut().retain(|(name, _)| name != "\0diagnostic");
         }
-        self.caught.push(value);
+        self.thread.caught.push(value);
     }
 
     /// Offer a fault of the kernel's own to the innermost guard as a
@@ -3701,7 +3688,7 @@ impl<'a> Engine<'a> {
         };
         outcome.map_err(|fled| match fled {
             Fault::Note(words) => words,
-            other => { self.carried = Some(other); self.lang.stream_failed[0].clone() }
+            other => { self.thread.carried = Some(other); self.lang.stream_failed[0].clone() }
         })
     }
     fn has_explicit_globals(routine: &Routine) -> bool {
@@ -3725,7 +3712,7 @@ impl<'a> Engine<'a> {
                             let reference = self.unresolved_annotation_name(&names, &slot.ident)?;
                             let cell = Self::adapter(31, vec![Value::Binding(shared.clone())]);
                             self.class_write(reference.clone(), "__cell__", Some(cell), true).map_err(|fault| {
-                                self.carried = Some(fault); self.special_fault()
+                                self.thread.carried = Some(fault); self.special_fault()
                             })?;
                             return Ok(reference);
                         }
@@ -3776,7 +3763,7 @@ impl<'a> Engine<'a> {
         }
         let explicit = Self::public_name(&slot.ident) && self.outer_book.is_some()
             && self.running_routine.as_ref().is_some_and(|body| (body.code_flags & 1 != 0 || body.class_namespace.is_some()) && body.globe.as_ref().is_some_and(|globals| matches!(globals.contents(), Value::Map(_))));
-        let location = if explicit { Some(Kept::Outer) } else { self.book_of(slot.far) };
+        let location = if explicit { Some(Kept::Outer) } else { self.book_of(slot.far, &slot.ident) };
         if let Some(kept) = location {
             if let Some(found) = self.read_booked(kept, slot.far, &slot.ident) {
                 if matches!(&found, Err(message) if message.starts_with("Undefined variable:")) {
@@ -3895,7 +3882,7 @@ impl<'a> Engine<'a> {
             frame[s] = Value::Bond(shared.clone());
             return Ok(shared);
         }
-        if let Some(book) = self.book_of(slot.far) {
+        if let Some(book) = self.book_of(slot.far, &slot.ident) {
             if let Some(found) = self.read_booked(book, slot.far, &slot.ident) {
                 let held = found?;
                 let shared = match held {
@@ -3923,10 +3910,14 @@ impl<'a> Engine<'a> {
     /// Put a value straight into a binding's own place, past any shared
     /// cell it holds: how a name is fastened to another's cell.
     fn put_cell(&mut self, slot: &Cell, frame: &mut [Value], v: Value) {
+        if slot.near.is_empty() && self.supplied_globals(&slot.ident) {
+            self.write_booked(Kept::Outer, &slot.ident, Some(v), None);
+            return;
+        }
         match slot.near.first() {
             Some(&s) => frame[s] = v,
             None => {
-                if let Some(kept) = self.book_of(slot.far) { self.write_booked(kept, &slot.ident, Some(v.clone()), Some(slot.far)); }
+                if let Some(kept) = self.book_of(slot.far, &slot.ident) { self.write_booked(kept, &slot.ident, Some(v.clone()), Some(slot.far)); }
                 self.world[slot.far] = v;
             }
         }
@@ -3937,7 +3928,7 @@ impl<'a> Engine<'a> {
     fn forget_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Flow<()> {
         if slot.near.is_empty() && Self::public_name(&slot.ident)
             && self.running_routine.as_ref().is_some_and(|routine| routine.code_flags & 1 != 0 && Self::function_book(routine).is_some()) {
-            if let Some(book) = &self.outer_book { compiled_book_write(book, &slot.ident, None, Some(slot.far)); }
+            if let Some(book) = &self.outer_book { compiled_book_write(book, &slot.ident, None, None); }
             return Ok(());
         }
         if slot.near.is_empty() && slot.ident.as_bytes().first() != Some(&b'#') && self.annotation_scope().is_some()
@@ -3954,9 +3945,9 @@ impl<'a> Engine<'a> {
             frame[s] = Value::Blank;
         }
         if slot.near.is_empty() {
-            if let Some(kept) = self.book_of(slot.far) {
+            if let Some(kept) = self.book_of(slot.far, &slot.ident) {
                 self.write_booked(kept, &slot.ident, None, Some(slot.far));
-                if let Some(fled) = self.carried.take() { return Err(fled); }
+                if let Some(fled) = self.thread.carried.take() { return Err(fled); }
             }
             if (&slot.ident).as_bytes().first() != Some(&b'#') && !self.lang.module_cache.is_empty() && self.module_slots.contains_key(&self.source) {
                 if let Value::Bond(cell) = &self.world[slot.far] {
@@ -3972,7 +3963,7 @@ impl<'a> Engine<'a> {
     /// Delete a user name without reading through a mapping's lookup hooks.
     fn delete_name(&mut self, slot: &Cell, frame: &mut [Value]) -> Flow<()> {
         if slot.near.is_empty() {
-            if let Some(kept) = self.book_of(slot.far) {
+            if let Some(kept) = self.book_of(slot.far, &slot.ident) {
                 let book = match kept {
                     Kept::Module(at) => self.module_books[at].1.clone(),
                     Kept::Outer => self.outer_book.clone().ok_or_else(|| format!("Undefined variable: {}", slot.ident))?,
@@ -4013,8 +4004,9 @@ impl<'a> Engine<'a> {
         // way too, since what it holds is kept there and not here, and
         // so is a name nothing has bound where the language keeps its
         // unbound names in a module.
-        matches!(self.world[slot.far], Value::Bond(_)) || self.book_of(slot.far).is_some()
+        matches!(self.world[slot.far], Value::Bond(_))
             || (!self.lang.names_module.is_empty() && matches!(self.world[slot.far], Value::Blank))
+            || self.book_of(slot.far, &slot.ident).is_some()
     }
 
     /// The cell a binding lives in, for reading in place.
@@ -4105,7 +4097,7 @@ impl<'a> Engine<'a> {
         if slot.near.is_empty() && Self::public_name(&slot.ident)
             && self.running_routine.as_ref().is_some_and(|routine| routine.code_flags & 1 != 0 && Self::function_book(routine).is_some()) {
             let value = self.keep_collection(v);
-            if let Some(book) = &self.outer_book { compiled_book_write(book, &slot.ident, Some(value), Some(slot.far)); }
+            if let Some(book) = &self.outer_book { compiled_book_write(book, &slot.ident, Some(value), None); }
             return Ok(());
         }
         if self.lang.bind_names {
@@ -4441,12 +4433,12 @@ impl<'a> Engine<'a> {
         match &source.contents() {
             Value::Generator(_) | Value::Object(_) if self.lang.python_numbers => {
                 let expanded = self.special_items(&source.contents());
-                if let Some(raised) = self.carried.take() { return Err(raised); }
+                if let Some(raised) = self.thread.carried.take() { return Err(raised); }
                 Ok(expanded?)
             }
             Value::Cursor(_) => {
                 let members = self.core_members(source);
-                if let Some(fled) = self.carried.take() { return Err(fled); }
+                if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                 Ok(members?)
             }
             Value::Counted(range) => {
@@ -4457,7 +4449,7 @@ impl<'a> Engine<'a> {
             }
             Value::Object(_) if self.worth_free_of(source, &[15]).is_some() || self.special_value(source, 15).is_some() || self.indexed_walk(source).is_some() => {
                 let members = self.core_members(source);
-                if let Some(fled) = self.carried.take() { return Err(fled); }
+                if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                 Ok(members?)
             }
             Value::Array(row) | Value::Tuple(row) => Ok(row.as_ref().clone()),
@@ -4466,7 +4458,7 @@ impl<'a> Engine<'a> {
             Value::Map(entries) => Ok(entries.iter().map(|(key, _)| match key { Value::Hashed(pair) => pair.0.clone(), plain => plain.clone() }).collect()),
             Value::Object(_) => {
                 let members = self.comprehension_items(source);
-                if let Some(fled) = self.carried.take() { return Err(fled); }
+                if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                 Ok(members?)
             }
             _ => Err(format!("TypeError: '{}' object is not iterable", source.core_kind()).into()),
@@ -4915,7 +4907,7 @@ impl<'a> Engine<'a> {
                 let Value::Bond(peers) = &state.1[3] else { return Err("TypeError: invalid tee peers".into()); };
                 let Value::Array(old) = peers.borrow().contents() else { return Err("TypeError: invalid tee peers".into()); };
                 let mut live = old.to_vec();
-                live.push(crate::faint::make(crate::faint::Hold::Object(crate::value::Keep::downgrade(object)), std::rc::Weak::new(), None));
+                live.push(crate::faint::make(crate::faint::Hold::Object(crate::value::Keep::downgrade(object)), crate::value::Weak::new(), None));
                 *peers.borrow_mut() = Value::array(live);
                 return Ok(Value::Null);
             }
@@ -4977,7 +4969,7 @@ impl<'a> Engine<'a> {
             let token = crate::tokenize::scan(&[value.clone(), Value::Flag(true)])?;
             if !matches!(token, Value::Null) { return Ok(Some(token)); }
             let slow = self.class_get(value.clone(), "_next_slow", false).map_err(|fault| {
-                self.carried = Some(fault);
+                self.thread.carried = Some(fault);
                 self.special_fault()
             })?;
             return self.core_apply(&slow, Vec::new()).map(Some);
@@ -5722,7 +5714,7 @@ impl<'a> Engine<'a> {
             _ => None,
         };
         let depth = taking.as_ref().map_or_else(|| self.data.len(), |step| step.floor);
-        let active = taking.as_ref().map_or_else(|| self.caught.len(), |step| self.held_base + step.held);
+        let active = taking.as_ref().map_or_else(|| self.thread.caught.len(), |step| self.thread.held_base + step.held);
         let ending = match taking.map_or(Phase::Body, |step| step.phase) {
             Phase::Body => {
                 // A special method the body ran may have raised, and what it
@@ -5752,7 +5744,7 @@ impl<'a> Engine<'a> {
                     other => other,
                 };
                 let ending = match ran {
-                    Err(Fault::Note(words)) => match self.carried.take() {
+                    Err(Fault::Note(words)) => match self.thread.carried.take() {
                         Some(fled) => Err(fled),
                         None => match self.as_fault(&words) { Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(words)) },
                     },
@@ -5813,7 +5805,7 @@ impl<'a> Engine<'a> {
                 let walk = self.context_walk(value, "__aexit__")?;
                 return self.resume_context_exit(plan, at, suspended, ending, walk, depth, active, kept);
             }
-            self.caught.truncate(active);
+            self.thread.caught.truncate(active);
             left?;
             let answer = self.drop_top()?;
             self.data.truncate(kept);
@@ -5847,7 +5839,7 @@ impl<'a> Engine<'a> {
                         self.data.truncate(depth);
                         self.hold_exception(raised.clone());
                         let handled = self.grouped_attempt(program, frame, instrs, plan, raised);
-                        self.caught.truncate(active);
+                        self.thread.caught.truncate(active);
                         handled
                     }
                     Err(Fault::Thrown(raised)) => {
@@ -5907,8 +5899,8 @@ impl<'a> Engine<'a> {
         state.resuming = false;
         if let Some(raised) = state.hurled.take() {
             state.delegate = None;
-            self.chain_context_from(&raised, self.held_base);
-            self.caught.truncate(active);
+            self.chain_context_from(&raised, self.thread.held_base);
+            self.thread.caught.truncate(active);
             return Err(Fault::Thrown(raised));
         }
         let sent = std::mem::replace(&mut state.sent, Value::Null);
@@ -5920,14 +5912,14 @@ impl<'a> Engine<'a> {
             }
             Err(fault) => {
                 state.delegate = None;
-                self.caught.truncate(active);
+                self.thread.caught.truncate(active);
                 return Err(fault);
             }
             Ok(None) => state.delegate = None,
         }
         let answer = Self::delegate_returned(&walk);
         self.data.truncate(saved);
-        self.caught.truncate(active);
+        self.thread.caught.truncate(active);
         if matches!(&ending, Err(Fault::Thrown(_))) && self.special_truth(&answer)? {
             self.data.truncate(depth);
             return Ok(Passage::Along(plan.after));
@@ -5938,7 +5930,7 @@ impl<'a> Engine<'a> {
     /// Word of where a body gave way, kept with the walk so that
     /// stepping back in finds the same watch standing.
     fn gave_way(&self, suspended: Option<&mut Generator>, at: usize, floor: usize, held: usize, phase: Phase) -> Flow<Passage> {
-        let held = held.saturating_sub(self.held_base);
+        let held = held.saturating_sub(self.thread.held_base);
         if let Some(kept) = suspended { kept.resume.push(Step { at, floor, held, phase }); }
         Ok(Passage::Suspended)
     }
@@ -5974,7 +5966,7 @@ impl<'a> Engine<'a> {
     fn attempt_clauses(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt, at: usize, suspended: Option<&mut Generator>, raised: Value, resumed: Option<usize>, depth: usize, active: usize) -> Flow<Passage> {
         let handled = self.attempt_taking(program, frame, instrs, plan, at, suspended, raised, resumed, depth, active);
         // What the walk is still holding stays held while it sleeps.
-        if !matches!(handled, Ok(Passage::Suspended)) { self.caught.truncate(active); }
+        if !matches!(handled, Ok(Passage::Suspended)) { self.thread.caught.truncate(active); }
         handled
     }
 
@@ -6059,7 +6051,7 @@ impl<'a> Engine<'a> {
             return self.gave_way(suspended, at, depth, active, Phase::Last(Self::as_left(ending), saved));
         }
         let finished = self.raised_of_note(finished);
-        self.caught.truncate(active);
+        self.thread.caught.truncate(active);
         match finished {
             Ok(Passage::Along(mark)) if mark == last.1 => self.data.truncate(saved),
             Ok(end @ Passage::Leaves { cycle: None, .. }) => {
@@ -6112,7 +6104,7 @@ impl<'a> Engine<'a> {
                 }
             };
             let Some(matched) = matched else { continue };
-            if let Some(holding) = self.caught.last_mut() { *holding = matched.clone(); }
+            if let Some(holding) = self.thread.caught.last_mut() { *holding = matched.clone(); }
             self.under = None;
             self.entering = None;
             if let Some(cell) = &arm.held { self.store_cell(cell, frame, matched.clone())?; }
@@ -6384,7 +6376,7 @@ impl<'a> Engine<'a> {
 
     fn delegated_fault(&mut self, fault: Fault) -> Fault {
         match fault {
-            Fault::Note(words) => self.carried.take()
+            Fault::Note(words) => self.thread.carried.take()
                 .unwrap_or_else(|| self.as_fault(&words).map(Fault::Thrown).unwrap_or(Fault::Note(words))),
             other => other,
         }
@@ -6439,7 +6431,7 @@ impl<'a> Engine<'a> {
                     self.class_apply(member, if matches!(sent, Value::Null) { Vec::new() } else { vec![sent] })
                 };
                 let outcome = match outcome {
-                    Err(Fault::Note(_)) if self.carried.is_some() => Err(self.carried.take().expect("iterator fault")),
+                    Err(Fault::Note(_)) if self.thread.carried.is_some() => Err(self.thread.carried.take().expect("iterator fault")),
                     other => other,
                 };
                 return match outcome {
@@ -6484,7 +6476,7 @@ impl<'a> Engine<'a> {
         }
         match self.core_step(walk) {
             Ok(item) => Ok(item),
-            Err(words) => Err(match self.carried.take() { Some(fault) => fault, None => words.into() }),
+            Err(words) => Err(match self.thread.carried.take() { Some(fault) => fault, None => words.into() }),
         }
     }
 
@@ -6628,7 +6620,7 @@ impl<'a> Engine<'a> {
                         let shut = self.shut_delegate(&walk);
                         held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?.delegate = None;
                         let shut = match shut {
-                            Err(Fault::Note(words)) => Err(self.carried.take().unwrap_or_else(|| self.as_fault(&words).map(Fault::Thrown).unwrap_or(Fault::Note(words)))),
+                            Err(Fault::Note(words)) => Err(self.thread.carried.take().unwrap_or_else(|| self.as_fault(&words).map(Fault::Thrown).unwrap_or(Fault::Note(words)))),
                             other => other,
                         };
                         match shut {
@@ -6854,8 +6846,8 @@ impl<'a> Engine<'a> {
         // The faults the body itself is handling stand above the
         // caller's, so that it sees its own first and the caller's behind
         // them, as a body called from a clause does.
-        let outer_base = std::mem::replace(&mut self.held_base, self.caught.len());
-        self.caught.append(&mut kept.held);
+        let outer_base = std::mem::replace(&mut self.thread.held_base, self.thread.caught.len());
+        self.thread.caught.append(&mut kept.held);
         let mut locals = std::mem::take(&mut kept.frame);
         if let Some(frame) = &kept.trace_frame {
             let fields = frame.fields.borrow();
@@ -6943,8 +6935,8 @@ impl<'a> Engine<'a> {
         self.line = line;
         kept.frame = locals;
         kept.stack = std::mem::replace(&mut self.data, outer);
-        kept.held = self.caught.split_off(self.held_base);
-        self.held_base = outer_base;
+        kept.held = self.thread.caught.split_off(self.thread.held_base);
+        self.thread.held_base = outer_base;
         kept.resuming = false;
         kept.hurled = None;
         if kept.handed.is_none() || result.is_err() {
@@ -6994,7 +6986,7 @@ impl<'a> Engine<'a> {
         if self.in_trace_hook || matches!(self.trace_hook, Value::Null) { return Ok(()); }
         let Some(frame) = self.trace_frame.clone() else { return Ok(()) };
         if event == "line" {
-            frame.fields.borrow_mut().retain(|(key, value)| key != "\0traced_exception" || self.caught.iter().any(|held| held.same_place(value)));
+            frame.fields.borrow_mut().retain(|(key, value)| key != "\0traced_exception" || self.thread.caught.iter().any(|held| held.same_place(value)));
         }
         if event == "exception" {
             if let Value::Tuple(parts) = &argument { frame.fields.borrow_mut().push(("\0traced_exception".into(), parts[1].clone())); }
@@ -7019,7 +7011,7 @@ impl<'a> Engine<'a> {
             Err(message) => {
                 self.trace_hook = Value::Null;
                 if let Some((_, callback)) = frame.fields.borrow_mut().iter_mut().find(|(key, _)| key == "f_trace") { *callback = Value::Null; }
-                let failure = self.carried.take().unwrap_or(Fault::Note(message));
+                let failure = self.thread.carried.take().unwrap_or(Fault::Note(message));
                 let failure = self.raised_of_note::<()>(Err(failure)).expect_err("trace callback failed");
                 if event == "exception" { self.trace_outside_body(&failure); }
                 Err(failure)
@@ -7316,7 +7308,7 @@ impl<'a> Engine<'a> {
         let Some(frame) = Self::locals_proxy_frame(proxy) else { return Ok(()) };
         if let Some(book) = self.locals_class_book(&frame) {
             let name = key.plain();
-            if let Err(fault) = self.book_put(&book, &name, Some(value)) { self.carried = Some(fault); return Err(self.special_fault()); }
+            if let Err(fault) = self.book_put(&book, &name, Some(value)) { self.thread.carried = Some(fault); return Err(self.special_fault()); }
             self.locals_rebuild(proxy);
             return Ok(());
         }
@@ -7348,7 +7340,7 @@ impl<'a> Engine<'a> {
     }
 
     fn locals_reverse_union(&mut self, proxy: &Keep, source: &Value) -> Res<Value> {
-        let keys = self.class_get(source.clone(), "keys", false).map_err(|fault| { self.carried = Some(fault); String::new() })?;
+        let keys = self.class_get(source.clone(), "keys", false).map_err(|fault| { self.thread.carried = Some(fault); String::new() })?;
         let supplied = self.call_held(keys, Vec::new())?;
         let walk = self.core_iterator(&supplied)?;
         let mut merged = Vec::new();
@@ -7484,6 +7476,20 @@ impl<'a> Engine<'a> {
             }
             "__reduce__" | "__reduce_ex__" => Err("TypeError: cannot pickle 'FrameLocalsProxy' object".to_string()),
             _ => Err(self.lang.method_errors["arguments"].clone()),
+        }
+    }
+
+    /// A whole number given an allocation of its own: the small numbers
+    /// the run keeps one copy of come back as themselves, any other gets
+    /// an allocation of its own, so that two readings are two numbers,
+    /// the way the reference's unmarshalling makes them.
+    fn fresh_whole(&self, value: &Value) -> Res<Value> {
+        match value.contents() {
+            Value::Small(number) if (-5..=256).contains(&number) => Ok(Value::Small(number)),
+            Value::Small(number) => Ok(Value::Huge(Rc::new(num_bigint::BigInt::from(number)))),
+            Value::Huge(number) => Ok(Value::Huge(Rc::new((*number).clone()))),
+            Value::Flag(flag) => Ok(Value::Small(i64::from(flag))),
+            _ => Err("TypeError: expected an integer".into()),
         }
     }
 
@@ -7628,7 +7634,7 @@ impl<'a> Engine<'a> {
             if let Some((owner, names, values)) = self.inline_comp.clone() {
                 if owner == crate::value::Keep::as_ptr(object) as usize {
                     let copied = match self.builtin_call(Builtin::Dict, "dict", vec![(None, Value::Bond(source.clone()))]) {
-                        Ok(value) => value.contents(), Err(message) => { self.carried = Some(Fault::Note(message)); return; }
+                        Ok(value) => value.contents(), Err(message) => { self.thread.carried = Some(Fault::Note(message)); return; }
                     };
                     let view = match current { Value::Bond(view) if !Rc::ptr_eq(&view, &source) => view, _ => Rc::new(RefCell::new(Value::Null)) };
                     *view.borrow_mut() = copied;
@@ -7744,14 +7750,14 @@ impl<'a> Engine<'a> {
         self.book_source = previous_book_source;
         if self.lang.trace_fields.len() < 11 { return result; }
         let result = match result {
-            Err(Fault::Note(words)) => match self.carried.take() {
+            Err(Fault::Note(words)) => match self.thread.carried.take() {
                 Some(fault) => Err(fault),
                 None => match self.as_fault(&words) {
                     Some(value) => {
                         // Attaching a frame does not change the command line's
                         // existing diagnostic for an uncaught kernel fault.
                         if let Value::Object(object) = &value {
-                            if self.caught.is_empty() && !words.starts_with('\0') {
+                            if self.thread.caught.is_empty() && !words.starts_with('\0') {
                                 object.fields.borrow_mut().push(("\0diagnostic".into(), Value::text(&words)));
                             }
                         }
@@ -7799,17 +7805,17 @@ impl<'a> Engine<'a> {
             if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut().retain(|(word, _)| word != "\0traced_exception"); }
             // Raised where the body left off, so what the body itself
             // was handling stands behind it.
-            self.chain_context_from(&value, self.held_base);
+            self.chain_context_from(&value, self.thread.held_base);
             if matches!(instrs.get(pc), Some(Instr::Act(Action::Delegate | Action::Awaited, _))) {
                 if let Some(kept) = suspended.as_deref_mut() { kept.delegate = None; }
                 self.record_trace(&value, program);
                 if let Value::Object(exception) = &value {
                     self.trace_event("exception", Value::tuple(vec![Value::Class(exception.class_now()), value.clone(), self.trace_of(&value)]))?;
                 }
-                let depth = self.caught.len();
-                self.caught.push(value.clone());
+                let depth = self.thread.caught.len();
+                self.thread.caught.push(value.clone());
                 let cleanup = self.trace_event("line", Value::Null);
-                self.caught.truncate(depth);
+                self.thread.caught.truncate(depth);
                 cleanup?;
             }
             return Err(Fault::Thrown(value));
@@ -7914,7 +7920,7 @@ impl<'a> Engine<'a> {
                         Value::Routine(body) if self.fresh_routines => {
                             let mut made = (**body).clone();
                             self.capture_definition_builtins(&mut made)?;
-                            if let Some(title) = self.creation_title(&made) { made.home = Some(title); }
+                            if let Some(title) = self.creation_title(&program) { made.home = Some(title); }
                             Value::Routine(Rc::new(made))
                         }
                         other => other.clone(),
@@ -7949,7 +7955,7 @@ impl<'a> Engine<'a> {
                 Instr::Write(slot) => {
                     let v = self.drop_top()?;
                     self.store_cell(slot, frame, v)?;
-                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                 }
                 Instr::Act(Action::Suspend | Action::Delegate, _) |
                 Instr::Act(Action::Awaited, _) if matches!(&instrs[pc], Instr::Act(Action::Suspend | Action::Delegate, _))
@@ -8220,7 +8226,7 @@ impl<'a> Engine<'a> {
                         Value::Bond(shared) => self.put_cell(slot, frame, Value::Bond(shared)),
                         held => self.store_cell(slot, frame, held)?,
                     }
-                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                 }
                 Instr::BondItem(slot) => {
                     let at = self.drop_top()?;
@@ -8814,11 +8820,11 @@ impl<'a> Engine<'a> {
             Ok(row) => Ok(row),
             Err(_) => {
                 let note = Self::named_fault(&self.lang.core_words["core.dict.sequence"], &at.to_string());
-                match self.carried.take() {
-                    Some(Fault::Thrown(value)) => { self.attach_note(&value, &note); self.carried = Some(Fault::Thrown(value)); }
-                    Some(other) => { self.carried = Some(other); }
+                match self.thread.carried.take() {
+                    Some(Fault::Thrown(value)) => { self.attach_note(&value, &note); self.thread.carried = Some(Fault::Thrown(value)); }
+                    Some(other) => { self.thread.carried = Some(other); }
                     None => match self.as_fault("TypeError: object is not iterable") {
-                        Some(raised) => { self.attach_note(&raised, &note); self.carried = Some(Fault::Thrown(raised)); }
+                        Some(raised) => { self.attach_note(&raised, &note); self.thread.carried = Some(Fault::Thrown(raised)); }
                         None => return Err("TypeError: object is not iterable".into()),
                     },
                 }
@@ -9582,7 +9588,7 @@ impl<'a> Engine<'a> {
             }
         }
         if [self.class_word("allocate"), self.class_word("doc")].contains(&name) && matches!(value.contents(),Value::Flag(_)|Value::Small(_)|Value::Huge(_)|Value::Real(_)|Value::Complex(_)|Value::Text(_)|Value::Codepoints(_)|Value::Array(_)|Value::Tuple(_)|Value::Map(_)|Value::Bytes(..)|Value::Set(_)) {
-            let result=self.class_get(value.clone(),name,true).map_err(|fault|{self.carried=Some(fault);self.special_fault()})?;
+            let result=self.class_get(value.clone(),name,true).map_err(|fault|{self.thread.carried=Some(fault);self.special_fault()})?;
             return Ok(Some(result));
         }
         let held = value.contents();
@@ -9604,7 +9610,7 @@ impl<'a> Engine<'a> {
             && matches!(&held, Value::Native(op, _) if Self::kind_builtin(op)) {
             return self.class_get(held, name, false).map(Some).map_err(|fault| match fault {
                 Fault::Note(message) => message,
-                raised => { self.carried = Some(raised); String::new() },
+                raised => { self.thread.carried = Some(raised); String::new() },
             });
         }
         if let Value::Native(_, _) = &held {
@@ -9676,7 +9682,7 @@ impl<'a> Engine<'a> {
         // cell that holds it cannot be borrowed a second time.
         match self.coroutine_member(&held, name) {
             Ok(Some(member)) => return Ok(Some(member)),
-            Err(fault) => { self.carried = Some(fault); return Err(self.special_fault()); }
+            Err(fault) => { self.thread.carried = Some(fault); return Err(self.special_fault()); }
             _ => {},
         }
         if let Value::Generator(held) = &held {
@@ -10056,7 +10062,7 @@ impl<'a> Engine<'a> {
         if self.is_async_generator(receiver) && matches!(place, 83 | 84) {
             if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
             return Ok(if place == 83 { receiver.clone() }
-                else { self.async_generator_awaitable(receiver.clone(), 0, Value::Null).map_err(|fault| { self.carried = Some(fault); self.special_fault() })? });
+                else { self.async_generator_awaitable(receiver.clone(), 0, Value::Null).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })? });
         }
         let original = receiver;
         let underlying = Self::worth_of(original).filter(|_| self.lang.native_protocols);
@@ -10265,7 +10271,7 @@ impl<'a> Engine<'a> {
             return match self.perform(&Action::ForgetWithin, 2) {
                 Ok(()) => { self.drop_top().map_err(|_| self.special_fault())?; Ok(Value::Null) }
                 Err(Fault::Note(words)) => { self.data.truncate(depth); Err(words) }
-                Err(fled) => { self.data.truncate(depth); self.carried = Some(fled); Err(String::new()) }
+                Err(fled) => { self.data.truncate(depth); self.thread.carried = Some(fled); Err(String::new()) }
             };
         }
         // The compound writings: a row grows or repeats where it stands,
@@ -10299,7 +10305,7 @@ impl<'a> Engine<'a> {
             return match self.perform(&sign, 1) {
                 Ok(()) => self.drop_top().map_err(|_| self.special_fault()),
                 Err(Fault::Note(words)) => { self.data.truncate(depth); Err(words) }
-                Err(fled) => { self.data.truncate(depth); self.carried = Some(fled); Err(String::new()) }
+                Err(fled) => { self.data.truncate(depth); self.thread.carried = Some(fled); Err(String::new()) }
             };
         }
         let held = if (2..=7).contains(&place) && Self::sequence_row(receiver).is_some() {
@@ -10367,7 +10373,7 @@ impl<'a> Engine<'a> {
                 Ok(Some(answer)) => return Ok(Some(answer)),
                 Ok(None) => {}
                 Err(Fault::Note(words)) => return Err(words),
-                Err(fault) => { self.carried = Some(fault); return Err(self.special_fault()); }
+                Err(fault) => { self.thread.carried = Some(fault); return Err(self.special_fault()); }
             }
         }
         if matches!(value, Value::Object(object) if Self::own_kind(&object.class_now()).as_deref() == Some("Union")) {
@@ -10375,7 +10381,7 @@ impl<'a> Engine<'a> {
                 Ok(Some(answer)) => return Ok(Some(answer)),
                 Ok(None) => {}
                 Err(Fault::Note(words)) => return Err(words),
-                Err(fault) => { self.carried = Some(fault); return Err(self.special_fault()); }
+                Err(fault) => { self.thread.carried = Some(fault); return Err(self.special_fault()); }
             }
         }
         if place == 15 && self.lang.type_parameters {
@@ -10411,7 +10417,7 @@ impl<'a> Engine<'a> {
             let answer = self.bind_class_value(method, Some(value.clone()), maker).and_then(|bound| self.class_apply(bound, args));
             return match answer {
                 Ok(held) => Ok(Some(held)), Err(Fault::Note(words)) => Err(words),
-                Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+                Err(fault) => { self.thread.carried = Some(fault); Err(self.special_fault()) }
             };
         }
         let selected = self.special_value(value, place);
@@ -10433,7 +10439,7 @@ impl<'a> Engine<'a> {
                 return match self.class_apply(wrapped.1[0].clone(), args) {
                     Ok(answer) => Ok(Some(answer)),
                     Err(Fault::Note(words)) => Err(words),
-                    Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
+                    Err(fled) => { self.thread.carried = Some(fled); Err(self.special_fault()) }
                 };
             }
             Some(Value::Routine(routine)) => routine,
@@ -10452,7 +10458,7 @@ impl<'a> Engine<'a> {
                 };
                 return match result {
                     Ok(answer) => Ok(Some(answer)), Err(Fault::Note(words)) => Err(words),
-                    Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+                    Err(fault) => { self.thread.carried = Some(fault); Err(self.special_fault()) }
                 };
             }
         };
@@ -10462,7 +10468,7 @@ impl<'a> Engine<'a> {
             Ok(()) => Ok(Some(self.drop_top().map_err(|_| self.special_fault())?)),
             Err(Fault::Note(words)) => Err(words),
             Err(other) => {
-                self.carried = Some(other);
+                self.thread.carried = Some(other);
                 Err(self.special_fault())
             }
         }
@@ -10612,7 +10618,7 @@ impl<'a> Engine<'a> {
                         Ok(Value::Text(found))=>{name=found.to_string();break;}
                         Ok(_)=>break,
                         Err(fault) if self.attribute_fault(&fault)=>{},
-                        Err(fault)=>{self.carried=Some(fault);return Err(String::new());}
+                        Err(fault)=>{self.thread.carried=Some(fault);return Err(String::new());}
                     }
                 }
                 let receiver=self.special_text(&binding.1[1],true)?;
@@ -10757,7 +10763,7 @@ impl<'a> Engine<'a> {
                         return match self.module_repr_value(value.clone()) {
                             Ok(text) => Ok(text.plain()),
                             Err(Fault::Note(message)) => Err(message),
-                            Err(raised) => { self.carried = Some(raised); Err(String::new()) },
+                            Err(raised) => { self.thread.carried = Some(raised); Err(String::new()) },
                         };
                     }
                     let module = self.class_word("main");
@@ -10902,19 +10908,19 @@ impl<'a> Engine<'a> {
         let module = match self.import_module("warnings") {
             Ok(value) => value,
             Err(Fault::Note(message)) => return Err(message),
-            Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+            Err(raised) => { self.thread.carried = Some(raised); return Err(String::new()); }
         };
         let callback = match self.class_get(module, "warn_explicit", false) {
             Ok(value) => value.contents(),
             Err(Fault::Note(message)) => return Err(message),
-            Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+            Err(raised) => { self.thread.carried = Some(raised); return Err(String::new()); }
         };
         let arguments = vec![Value::text("~ on an instance of bool is deprecated"), category,
             Value::text("<string>"), Value::Small(1), Value::text("__main__")];
         match self.class_apply(callback, arguments) {
             Ok(_) => Ok(()),
             Err(Fault::Note(message)) => Err(message),
-            Err(raised) => { self.carried = Some(raised); Err(String::new()) }
+            Err(raised) => { self.thread.carried = Some(raised); Err(String::new()) }
         }
     }
 
@@ -11191,18 +11197,18 @@ impl<'a> Engine<'a> {
         let module = match self.import_module(&module_name) {
             Ok(module) => module,
             Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+            Err(fled) => { self.thread.carried = Some(fled); return Err(String::new()); }
         };
         let teller = match self.class_get(module, &teller_name, false) {
             Ok(teller) => teller.contents(),
             Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+            Err(fled) => { self.thread.carried = Some(fled); return Err(String::new()); }
         };
         let handed = vec![Value::text(message), category, Value::text("<string>"), Value::Small(1)];
         match self.class_apply(teller, handed) {
             Ok(_) => Ok(()),
             Err(Fault::Note(told)) => Err(told),
-            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+            Err(fled) => { self.thread.carried = Some(fled); Err(String::new()) }
         }
     }
 
@@ -11528,7 +11534,10 @@ impl<'a> Engine<'a> {
             return Ok(Value::Flag(a.equals(b) != matches!(op, Action::Ne)));
         }
         if let (Action::At, Value::View(proxy)) = (op, a) {
-            if proxy.1 == "mapping" { return self.special_dyad(op, &proxy.0.proxy_dictionary(), b); }
+            if proxy.1 == "mapping" {
+                if let Some(Some(found)) = a.proxy_text_value(b) { return Ok(found); }
+                return self.special_dyad(op, &proxy.0.proxy_dictionary(), b);
+            }
         }
         if self.lang.sequence_values && matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge) {
             // A row of words a string method hands back stands for the
@@ -11756,7 +11765,7 @@ impl<'a> Engine<'a> {
                     return match self.class_apply(maker.contents(), vec![a.clone(), b.clone()]) {
                         Ok(alias) => Ok(alias),
                         Err(Fault::Note(words)) => Err(words),
-                        Err(escape) => { self.carried = Some(escape); Err(self.special_fault()) }
+                        Err(escape) => { self.thread.carried = Some(escape); Err(self.special_fault()) }
                     };
                 } else if kind.names_kind() && !matches!(kind, Builtin::SortOf) {
                     // A builtin kind with no generic alias is not subscriptable.
@@ -11814,7 +11823,7 @@ impl<'a> Engine<'a> {
                 return match asked {
                     Ok(answer) => Ok(answer),
                     Err(Fault::Note(words)) => Err(words),
-                    Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
+                    Err(fled) => { self.thread.carried = Some(fled); Err(self.special_fault()) }
                 };
             } else if self.exception_class(c) {
                 // A group class is parameterisable, as the reference's is;
@@ -11823,17 +11832,17 @@ impl<'a> Engine<'a> {
                     let module = match self.import_module("types") {
                         Ok(module) => module,
                         Err(Fault::Note(words)) => return Err(words),
-                        Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
+                        Err(escape) => { self.thread.carried = Some(escape); return Err(self.special_fault()); }
                     };
                     let maker = match self.class_get(module, "GenericAlias", false) {
                         Ok(maker) => maker,
                         Err(Fault::Note(words)) => return Err(words),
-                        Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
+                        Err(escape) => { self.thread.carried = Some(escape); return Err(self.special_fault()); }
                     };
                     return match self.class_apply(maker.contents(), vec![a.clone(), b.clone()]) {
                         Ok(alias) => Ok(alias),
                         Err(Fault::Note(words)) => Err(words),
-                        Err(escape) => { self.carried = Some(escape); Err(self.special_fault()) }
+                        Err(escape) => { self.thread.carried = Some(escape); Err(self.special_fault()) }
                     };
                 }
                 return Err(format!("TypeError: type '{}' is not subscriptable", c.name).into());
@@ -12108,7 +12117,7 @@ impl<'a> Engine<'a> {
                     return match self.bind_class_value(method, Some(a.clone()), o.class_now()).and_then(|bound| self.class_apply(bound, vec![b.clone()])) {
                         Ok(value) => Ok(value),
                         Err(Fault::Note(words)) => Err(words),
-                        Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+                        Err(fled) => { self.thread.carried = Some(fled); Err(String::new()) }
                     };
                 }
             }
@@ -12291,7 +12300,7 @@ impl<'a> Engine<'a> {
                 return match self.class_apply(handler, vec![target.clone(), key.clone()]) {
                     Ok(answer) => Ok(Some(answer)),
                     Err(Fault::Note(words)) => Err(words),
-                    Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+                    Err(fault) => { self.thread.carried = Some(fault); Err(self.special_fault()) }
                 };
             }
         }
@@ -12719,8 +12728,8 @@ impl<'a> Engine<'a> {
                 match self.resume_generator(body, Value::Null) {
                     Ok(Some(item)) => item,
                     Ok(None) if args.len() == 2 => args[1].clone(),
-                    Ok(None) => { self.carried = Some(self.stop_of(body)); return Err(self.special_fault()); }
-                    Err(fault) => { self.carried = Some(fault); return Err(self.special_fault()); }
+                    Ok(None) => { self.thread.carried = Some(self.stop_of(body)); return Err(self.special_fault()); }
+                    Err(fault) => { self.thread.carried = Some(fault); return Err(self.special_fault()); }
                 }
             }
             Builtin::Next if args.len() == 2 => {
@@ -12779,7 +12788,7 @@ impl<'a> Engine<'a> {
             // ends, and the walk it is the method of ends there too.
             Err(Fault::Note(words)) if self.lang.special_stop.iter().any(|n| words == *n || words.starts_with(&format!("{}:", n))) => Ok(None),
             Err(Fault::Note(words)) => Err(words),
-            Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+            Err(fault) => { self.thread.carried = Some(fault); Err(self.special_fault()) }
         }
     }
 
@@ -13037,7 +13046,7 @@ impl<'a> Engine<'a> {
             return self.await_iterator(operation);
         }
         let answer = self.special_call(walker, 84, Vec::new());
-        if let Some(escape) = self.carried.take() { return Err(escape); }
+        if let Some(escape) = self.thread.carried.take() { return Err(escape); }
         let operation = answer?.ok_or_else(|| self.special_fault())?;
         let kind = operation.core_kind();
         match self.awaited_walk(operation) {
@@ -13086,7 +13095,7 @@ impl<'a> Engine<'a> {
             Ok(item) => Ok(Some(item)),
             Err(fault) if self.async_exhausted(&fault) => Ok(None),
             Err(Fault::Note(words)) => Err(words),
-            Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+            Err(fault) => { self.thread.carried = Some(fault); Err(self.special_fault()) }
         }
     }
 
@@ -13099,7 +13108,7 @@ impl<'a> Engine<'a> {
         let mut found = Vec::new();
         while resting || found.len() <= count {
             let stepped = self.core_step(walk);
-            if let Some(fled) = self.carried.take() { return Err(fled); }
+            if let Some(fled) = self.thread.carried.take() { return Err(fled); }
             let Some(value) = stepped? else { break };
             found.push(value);
         }
@@ -13587,7 +13596,7 @@ impl<'a> Engine<'a> {
 
     fn hint_type_error(&self, message:&str)->bool {
         let Some(kind)=self.lang.exceptions.get(8) else{return false};
-        match self.carried.as_ref() {
+        match self.thread.carried.as_ref() {
             Some(Fault::Thrown(Value::Object(instance)))=>{
                 let class=instance.class_now();
                 class.name==*kind || class.lineage.borrow().iter().any(|base|base.name==*kind)
@@ -13607,7 +13616,7 @@ impl<'a> Engine<'a> {
         match self.bind_class_value(member,Some(value.clone()),owner) {
             Ok(callable)=>Ok(Some(callable)),
             Err(Fault::Note(words))=>Err(words),
-            Err(fault)=>{self.carried=Some(fault);Err(self.special_fault())},
+            Err(fault)=>{self.thread.carried=Some(fault);Err(self.special_fault())},
         }
     }
     fn list_hint(&mut self, value:&Value)->Res<()> {
@@ -13620,7 +13629,7 @@ impl<'a> Engine<'a> {
                 match self.class_apply(callable,Vec::new()) {
                     Ok(number)=>Ok(Some(number)),
                     Err(Fault::Note(words))=>Err(words),
-                    Err(fault)=>{self.carried=Some(fault);Err(self.special_fault())},
+                    Err(fault)=>{self.thread.carried=Some(fault);Err(self.special_fault())},
                 }
             } else if let Some(mapping) = mapping { self.builtin(Builtin::Length, "len", &mut vec![mapping]).map(Some) }
             else {self.special_call(value,slot,Vec::new())};
@@ -13628,7 +13637,7 @@ impl<'a> Engine<'a> {
                 Ok(None)=>continue,
                 Ok(Some(Value::Declined(_))) if slot==78=>return Ok(()),
                 Ok(Some(number))=>number.contents(),
-                Err(error) if self.hint_type_error(&error)=>{self.carried=None;continue;},
+                Err(error) if self.hint_type_error(&error)=>{self.thread.carried=None;continue;},
                 Err(error)=>return Err(error),
             };
             let native=Self::worth_of(&hint).unwrap_or(hint).contents();
@@ -13637,7 +13646,7 @@ impl<'a> Engine<'a> {
                 match self.special_index(&whole) {
                     Ok(Some(number))=>number,
                     Ok(None)=>continue,
-                    Err(note) if self.hint_type_error(&note)=>{self.carried=None;continue;},
+                    Err(note) if self.hint_type_error(&note)=>{self.thread.carried=None;continue;},
                     Err(note)=>return Err(note),
                 }
             } else {whole};
@@ -13786,12 +13795,12 @@ impl<'a> Engine<'a> {
                     }
                     if *builtin == Builtin::ClassTool(30) && !self.lang.partial_call_words.is_empty() {
                         let made = self.class_work(30, supplied);
-                        if let Some(fled) = self.carried.take() { return Err(fled); }
+                        if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                         self.data.push(made?); return Ok(());
                     }
                     // The property builtin takes its accessors by name; the making of the property sorts them.
-                    if *builtin == Builtin::ClassTool(13) { let made = self.class_work(13, supplied); if let Some(fled) = self.carried.take() { return Err(fled); } self.data.push(made?); return Ok(()); }
-                    if *builtin==Builtin::ClassTool(11) && !self.class_word("descriptor.get").is_empty() { let made=self.class_work(11,supplied); if let Some(fled) = self.carried.take() { return Err(fled); } self.data.push(made?); return Ok(()); }
+                    if *builtin == Builtin::ClassTool(13) { let made = self.class_work(13, supplied); if let Some(fled) = self.thread.carried.take() { return Err(fled); } self.data.push(made?); return Ok(()); }
+                    if *builtin==Builtin::ClassTool(11) && !self.class_word("descriptor.get").is_empty() { let made=self.class_work(11,supplied); if let Some(fled) = self.thread.carried.take() { return Err(fled); } self.data.push(made?); return Ok(()); }
                     for (key,v) in self.call_items_for(supplied, Callee::Builtin(name))? {
                         if key.is_some(){let words=&self.lang.call_builtin_amiss;return Err(format!("{}{}{}",words.first().map_or("",String::as_str),name,words.get(1).map_or("",String::as_str)).into());}
                         args.push(v);
@@ -13800,7 +13809,7 @@ impl<'a> Engine<'a> {
                     // again here, as it is where a builtin reached as a
                     // value does the same work.
                     let made = match builtin{Builtin::ClassTool(i)=>self.class_work(*i,args),_=>self.class_type(args)};
-                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                     Some(made?)
                 },
                 _ => None,
@@ -14114,7 +14123,7 @@ impl<'a> Engine<'a> {
                     return Ok(self.data.push(Value::Adapter(Rc::new((30, vec![subject])))));
                 }
                 let told = self.special_call(&subject, 83, Vec::new());
-                if let Some(fled) = self.carried.take() { return Err(fled); }
+                if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                 let Some(walker) = told? else {
                     let kind = match &subject { Value::Object(o) => o.class_now().name.clone(), other => other.core_kind() };
                     return Err(format!("TypeError: 'async for' requires an object with __aiter__ method, got {kind}").into());
@@ -14413,7 +14422,7 @@ impl<'a> Engine<'a> {
                 if self.special_method(&target, 13).is_some() {
                     self.drop_top()?;
                     let told = self.special_call(&target, 13, vec![named]);
-                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                     told?;
                     self.data.push(Value::Null);
                     return Ok(());
@@ -14436,7 +14445,7 @@ impl<'a> Engine<'a> {
                     // where a row or a text is shortened at a place.
                     Value::Object(_) if Self::counts_places(&target) => {
                         let asked = self.special_index(&named);
-                        if let Some(fled) = self.carried.take() { return Err(fled); }
+                        if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                         asked?.unwrap_or_else(|| named.clone())
                     }
                     _ => named,
@@ -14788,7 +14797,7 @@ impl<'a> Engine<'a> {
                             for (key, value) in items { if let Some(key) = key { named.push((key, value)); } else { positional.push(value); } }
                             this.value_method_inner(&method.0, &method.1, positional, named)
                         });
-                        if let Some(fled) = self.carried.take() { return Err(fled); }
+                        if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                         self.data.push(result?);
                         return Ok(());
                     }
@@ -14816,7 +14825,7 @@ impl<'a> Engine<'a> {
                         // answers keeps the cell its names stand for,
                         // the very way the builtin named outright
                         // keeps it.
-                        if let Some(fled) = self.carried.take() { return Err(fled); }
+                        if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                         let made = answer?;
                         self.data.push(self.keep_collection(made));
                         Ok(())
@@ -14939,7 +14948,7 @@ impl<'a> Engine<'a> {
                         Some(native) => {
                             let mut given = self.drop_many(argc - 1)?;
                             let outcome = self.builtin(native, &word, &mut given);
-                            let held = match self.carried.take() {
+                            let held = match self.thread.carried.take() {
                                 Some(fled) => return Err(fled),
                                 None => outcome?,
                             };
@@ -15315,7 +15324,7 @@ impl<'a> Engine<'a> {
                 let held = self.drop_top()?;
                 let asked = self.settled_in_place(inner, &held, &by);
                 // What the method raised on the way out is raised on.
-                if let Some(fled) = self.carried.take() { return Err(fled); }
+                if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                 match asked? {
                     Some(answer) => answer,
                     // A thing keeping a worth of a builtin kind is
@@ -15333,7 +15342,7 @@ impl<'a> Engine<'a> {
                         // What a method the writing called raised on the
                         // way out is raised on, and not the words that
                         // stood in for it.
-                        if let Some(fled) = self.carried.take() { return Err(fled); }
+                        if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                         told?
                     }
                     // With a plain thing on either side the working goes
@@ -15792,7 +15801,7 @@ impl<'a> Engine<'a> {
                             self.registry.program_bound.insert(name.clone());
                         }
                         self.world.resize(self.registry.idents.len(), Value::Blank);
-                        if let Some(book) = self.book_of(at) { self.write_booked(book, &name, Some(value.clone()), Some(at)); }
+                        if let Some(book) = self.book_of(at, &name) { self.write_booked(book, &name, Some(value.clone()), Some(at)); }
                         match &self.world[at] {
                             Value::Bond(cell) => *cell.borrow_mut() = value,
                             _ if destination.is_some() => self.world[at] = Value::Bond(Rc::new(RefCell::new(value))),
@@ -16459,7 +16468,7 @@ impl<'a> Engine<'a> {
                     if let Some(proxy @ Value::View(_)) = Self::view_in(&subject).filter(|view| matches!(view, Value::View(w) if w.1 == "mapping")) {
                         let positional: Vec<Value> = self.call_items(args)?.into_iter().map(|(_, value)| value).collect();
                         let answer = self.value_method(&proxy, &format!("mapping{name}"), positional, Vec::new());
-                        if let Some(fled) = self.carried.take() { return Err(fled); }
+                        if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                         self.data.push(answer?);
                         return Ok(());
                     }
@@ -16750,7 +16759,8 @@ impl<'a> Engine<'a> {
                 };
                 let carried = self.drop_many(argc - 1)?;
                 let mut made = (*program).clone();
-                if let Some(title) = self.creation_title(&program) { made.home = Some(title); }
+                self.capture_definition_builtins(&mut made)?;
+                if let Some(title) = self.creation_title(&made) { made.home = Some(title); }
                 made.held = carried;
                 Value::Routine(Rc::new(made))
             },
@@ -16792,7 +16802,7 @@ impl<'a> Engine<'a> {
             => {
                 // Raising again with nothing held is a fault of its own,
                 // told under whatever class the language's words name.
-                let Some(value) = self.caught.last().cloned() else {
+                let Some(value) = self.thread.caught.last().cloned() else {
                     return Err(format!("\0{}", self.lang.throw_empty.as_deref().unwrap_or_default()).into());
                 };
                 if let Value::Object(error) = &value {
@@ -16968,7 +16978,7 @@ impl<'a> Engine<'a> {
                     self.class_get(held.clone(), &word, false)?
                 } else {
                     let told = self.special_call(&held, 85, Vec::new());
-                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                     let value = told?.ok_or_else(|| self.special_fault())?;
                     self.context_walk(value, "__aenter__")?
                 }
@@ -17001,7 +17011,7 @@ impl<'a> Engine<'a> {
                     // and not the words that stand in for a method giving
                     // back nothing of its own.
                     let told = self.special_call(&held, 33, Vec::new());
-                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                     told?.ok_or_else(|| self.unmanaged(&o.class_now().name))?
                 } else if self.lang.with_invalid.len() == 2 {
                     // A value that is no object has no such methods at all,
@@ -17074,7 +17084,7 @@ impl<'a> Engine<'a> {
                     // raised on, so it reaches the arms round the loop
                     // rather than the words that stood in for it.
                     let told = self.special_builtin(Builtin::Iter, std::slice::from_ref(&handed));
-                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                     let iterator = told?.ok_or_else(|| self.special_fault())?;
                     self.data.push(Value::Walking(Rc::new(RefCell::new((iterator, None)))));
                     return Ok(());
@@ -17203,7 +17213,7 @@ impl<'a> Engine<'a> {
                     // that code raised is raised on rather than the
                     // words that stood in for it while it waited.
                     let more = self.core_more(&pair[0]);
-                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                     self.data.push(Value::Flag(more?)); return Ok(());
                 }
                 if let Some(set) = self.walked_set(&pair[0])? {
@@ -17216,7 +17226,7 @@ impl<'a> Engine<'a> {
                     // piece of the program, and what it raised is raised
                     // on in place of the stand-in words.
                     let answer = self.special_step(&iterator);
-                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                     let answer = answer?;
                     let more = answer.is_some();
                     walk.borrow_mut().1 = answer;
@@ -17273,7 +17283,7 @@ impl<'a> Engine<'a> {
                 match self.walk_asked(&pair[0], named)? {
                     None if matches!(pair[0], Value::Cursor(_)) => if key { pair[1].clone() } else {
                         let stepped = self.core_step(&pair[0]);
-                        if let Some(fled) = self.carried.take() { return Err(fled); }
+                        if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                         stepped?.ok_or_else(|| self.core_fault("core.exhausted", ""))?
                     },
                     Some(answer) => answer,
@@ -17421,7 +17431,7 @@ impl<'a> Engine<'a> {
                 // next builtin is called: a value's last holder may be here.
                 args.clear();
                 self.buffer = args;
-                match self.carried.take() {
+                match self.thread.carried.take() {
                     Some(fled) => return Err(fled),
                     None => result?,
                 }
@@ -17443,7 +17453,7 @@ impl<'a> Engine<'a> {
                 let told = self.special_dyad(dyadic, &a, &b);
                 // What a method of a thing raised on the way out is
                 // raised on, not the words that stood in for it.
-                if let Some(fled) = self.carried.take() { return Err(fled); }
+                if let Some(fled) = self.thread.carried.take() { return Err(fled); }
                 told?
             },
             _ => unreachable!(),
@@ -18230,7 +18240,10 @@ impl<'a> Engine<'a> {
         // as a set does under the set signs; elsewhere it stands for
         // its items.
         if matches!(op, Action::At) {
-            if let Value::View(window) = a { if window.1 == "mapping" { return self.element(&window.0.proxy_dictionary(), b, Reading::Plain); } }
+            if let Value::View(window) = a { if window.1 == "mapping" {
+                if let Some(Some(found)) = a.proxy_text_value(b) { return Ok(found); }
+                return self.element(&window.0.proxy_dictionary(), b, Reading::Plain);
+            } }
         }
         if matches!(a, Value::View(_)) || matches!(b, Value::View(_)) {
             // The reading of the map itself by a key answers from the
@@ -18364,7 +18377,7 @@ impl<'a> Engine<'a> {
             return match self.join_types(a, b) {
                 Ok(union) => Ok(union),
                 Err(Fault::Note(words)) => Err(words),
-                Err(fault) => { self.carried = Some(fault); Err(String::new()) }
+                Err(fault) => { self.thread.carried = Some(fault); Err(String::new()) }
             };
         }
         // Rows, tuples and text as a language of sequences works them:
@@ -19706,7 +19719,10 @@ impl<'a> Engine<'a> {
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
         if let Value::View(window) = target {
-            if window.1 == "mapping" { return self.element(&window.0.proxy_dictionary(), at, how); }
+            if window.1 == "mapping" {
+                if let Some(Some(found)) = target.proxy_text_value(at) { return Ok(found); }
+                return self.element(&window.0.proxy_dictionary(), at, how);
+            }
         }
         if matches!(target, Value::Collection(..) | Value::Bond(_) | Value::View(_)) { return self.element(&target.contents(), at, how); }
         if let Some(cell) = self.walked_set(target)? {
@@ -20620,7 +20636,7 @@ impl<'a> Engine<'a> {
                     let answer = self.bind_class_value(method, Some(receiver), maker).and_then(|bound| self.class_apply(bound, Vec::new()));
                     return match answer {
                         Ok(walk) => Ok(Some(walk)), Err(Fault::Note(words)) => Err(words),
-                        Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+                        Err(fault) => { self.thread.carried = Some(fault); Err(self.special_fault()) }
                     };
                 }
             }
@@ -20629,7 +20645,7 @@ impl<'a> Engine<'a> {
         match self.class_apply(handing, vec![Value::Class(class.clone())]) {
             Ok(yielded) => Ok(Some(yielded)),
             Err(Fault::Note(words)) => Err(words),
-            Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
+            Err(fled) => { self.thread.carried = Some(fled); Err(self.special_fault()) }
         }
     }
 
@@ -20674,7 +20690,7 @@ impl<'a> Engine<'a> {
         match value {
             Value::Generator(held) => {
                 let mut items = Vec::new();
-                while let Some(item) = self.resume_generator(held, Value::Null).map_err(|fault| { self.carried = Some(fault); self.special_fault() })? { items.push(item); }
+                while let Some(item) = self.resume_generator(held, Value::Null).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })? { items.push(item); }
                 Ok(items)
             }
             Value::Tuple(items) | Value::Array(items) => Ok(items.as_ref().clone()),
@@ -20814,7 +20830,7 @@ impl<'a> Engine<'a> {
                     Some(method) => match self.class_apply(method, vec![bound.clone()]) {
                         Ok(answer) => answer,
                         Err(Fault::Note(words)) => return Err(words),
-                        Err(fled) => { self.carried = Some(fled); return Err(self.lang.slice_bounds.clone().unwrap_or_default()); }
+                        Err(fled) => { self.thread.carried = Some(fled); return Err(self.lang.slice_bounds.clone().unwrap_or_default()); }
                     },
                     None => bound.clone(),
                 }
@@ -20878,7 +20894,7 @@ impl<'a> Engine<'a> {
         match self.import_module(path) {
             Ok(module) => Ok(module),
             Err(Fault::Note(words)) => Err(words),
-            Err(fled) => { self.carried = Some(fled); Err(self.lang.stream_failed[0].clone()) }
+            Err(fled) => { self.thread.carried = Some(fled); Err(self.lang.stream_failed[0].clone()) }
         }
     }
 
@@ -20896,7 +20912,7 @@ impl<'a> Engine<'a> {
             Ok(()) => self.drop_top().map(Some),
             Err(fault) if self.attribute_fault(&fault) => { self.absent_member = None; Ok(None) }
             Err(Fault::Note(words)) => Err(words),
-            Err(fled) => { self.carried = Some(fled); Err(self.lang.stream_failed[0].clone()) }
+            Err(fled) => { self.thread.carried = Some(fled); Err(self.lang.stream_failed[0].clone()) }
         };
         self.data.truncate(floor);
         read
@@ -20913,7 +20929,7 @@ impl<'a> Engine<'a> {
         let answered = match self.perform(&Action::Invoke(Rc::from("")), count) {
             Ok(()) => self.drop_top(),
             Err(Fault::Note(words)) => Err(words),
-            Err(fled) => { self.carried = Some(fled); Err(self.lang.stream_failed[0].clone()) }
+            Err(fled) => { self.thread.carried = Some(fled); Err(self.lang.stream_failed[0].clone()) }
         };
         self.data.truncate(floor);
         answered
@@ -20975,7 +20991,7 @@ impl<'a> Engine<'a> {
                 Some(routine) if !matches!(routine, Value::Small(_)) => {
                     match self.call_held(routine, vec![Value::Small(number as i64), Value::Null]) {
                         Ok(_) => Ok(()),
-                        Err(words) => Err(match self.carried.take() { Some(fled) => fled, None => Fault::Note(words) }),
+                        Err(words) => Err(match self.thread.carried.take() { Some(fled) => fled, None => Fault::Note(words) }),
                     }
                 }
                 _ if number == 2 => Err(Fault::Note("\0KeyboardInterrupt:".to_string())),
@@ -20995,7 +21011,7 @@ impl<'a> Engine<'a> {
         match self.deliver_signals() {
             Ok(()) => Ok(()),
             Err(Fault::Note(words)) => Err(words),
-            Err(raised) => { self.carried = Some(raised); Err(self.special_fault()) }
+            Err(raised) => { self.thread.carried = Some(raised); Err(self.special_fault()) }
         }
     }
 
@@ -21017,9 +21033,9 @@ impl<'a> Engine<'a> {
                 let supplied = items.into_iter().map(|(key, value)| match key {
                     Some(key) => Value::Tie(Rc::new((key, value))), None => value,
                 }).collect();
-                return this.class_work(30, supplied).map_err(|fault| match this.carried.take().unwrap_or(fault) {
+                return this.class_work(30, supplied).map_err(|fault| match this.thread.carried.take().unwrap_or(fault) {
                     Fault::Note(words) => words,
-                    raised => { this.carried = Some(raised); this.special_fault() }
+                    raised => { this.thread.carried = Some(raised); this.special_fault() }
                 });
             }
             let named = this.keyword_items(items)?; invoke(this, named)
@@ -21057,9 +21073,9 @@ impl<'a> Engine<'a> {
         if let Builtin::ClassTool(job) = builtin {
             let supplied = items.into_iter().map(|(key, value)| match key { Some(key) => Value::Tie(Rc::new((Value::text(&key), value))), None => value }).collect();
             return self.class_work(job, supplied).map_err(|fault| {
-                match self.carried.take().unwrap_or(fault) {
+                match self.thread.carried.take().unwrap_or(fault) {
                     Fault::Note(words) => words,
-                    raised => { self.carried = Some(raised); self.special_fault() }
+                    raised => { self.thread.carried = Some(raised); self.special_fault() }
                 }
             });
         }
@@ -21081,11 +21097,11 @@ impl<'a> Engine<'a> {
         }
         if self.fuller_classes() && builtin == Builtin::ClassTool(11) {
             args.extend(named.into_iter().map(|(key, value)| Value::Tie(Rc::new((Value::text(&key), value)))));
-            return self.class_work(11, args).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
+            return self.class_work(11, args).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() });
         }
         if self.fuller_classes() && builtin == Builtin::SortOf && (args.len() != 1 || !named.is_empty()) {
             args.extend(named.into_iter().map(|(word, value)| Value::Tie(Rc::new((Value::text(&word), value)))));
-            return self.class_type(args).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
+            return self.class_type(args).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() });
         }
         if builtin == Builtin::ToText && !self.lang.to_string_object.is_empty() && !named.is_empty() {
             let count = args.len() + named.len();
@@ -21418,7 +21434,7 @@ impl<'a> Engine<'a> {
         if operation == "classmethod_bind" {
             return match self.explicit_classmethod(receiver, args, named) {
                 Ok(value) => Ok(value), Err(Fault::Note(message)) => Err(message),
-                Err(fault) => { self.carried = Some(fault); Err(String::new()) }
+                Err(fault) => { self.thread.carried = Some(fault); Err(String::new()) }
             };
         }
         if operation == "__typing_subst__" && self.lang.type_parameters {
@@ -21432,7 +21448,7 @@ impl<'a> Engine<'a> {
             let number = self.special_index(&args[0])?.unwrap_or_else(|| args[0].contents());
             number.as_big()?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?;
             let answer = self.class_get(receiver.clone(), "__reduce__", false).and_then(|method| self.class_apply(method, Vec::new()));
-            return match answer { Ok(result) => Ok(result), Err(Fault::Note(message)) => Err(message), Err(raised) => { self.carried = Some(raised); Err(String::new()) } };
+            return match answer { Ok(result) => Ok(result), Err(Fault::Note(message)) => Err(message), Err(raised) => { self.thread.carried = Some(raised); Err(String::new()) } };
         }
         if matches!(operation, "descriptor_reduce" | "descriptor_reduce_ex") {
             let expected = usize::from(operation.ends_with("_ex"));
@@ -21446,7 +21462,7 @@ impl<'a> Engine<'a> {
         if operation == "float_getformat" {
             if !named.is_empty() || args.len() != 1 {
                 let owner = if matches!(receiver, Value::Class(_)) {
-                    self.class_get(receiver.clone(), "__qualname__", false).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?.plain()
+                    self.class_get(receiver.clone(), "__qualname__", false).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?.plain()
                 } else { String::from("float") };
                 if !named.is_empty() { return Err(format!("TypeError: {owner}.__getformat__() takes no keyword arguments")); }
                 return Err(format!("TypeError: {owner}.__getformat__() takes exactly one argument ({} given)", args.len()));
@@ -21454,7 +21470,7 @@ impl<'a> Engine<'a> {
             let argument = Self::worth_of(&args[0]).unwrap_or_else(|| args[0].contents()).contents();
             if let Err(fault) = self.type_utf8(&argument) {
                 if let Fault::Note(words) = fault { return Err(words); }
-                self.carried = Some(fault); return Err(String::new());
+                self.thread.carried = Some(fault); return Err(String::new());
             }
             if matches!(&argument, Value::Text(word) if word.contains('\0')) { return Err(String::from("ValueError: embedded null character")); }
             return match argument {
@@ -21479,7 +21495,7 @@ impl<'a> Engine<'a> {
             return match answer {
                 Ok(value) => Ok(value),
                 Err(Fault::Note(words)) => Err(words),
-                Err(thrown) => { self.carried = Some(thrown); Err(String::new()) }
+                Err(thrown) => { self.thread.carried = Some(thrown); Err(String::new()) }
             };
         }
         let window = Self::view_in(receiver);
@@ -21489,6 +21505,9 @@ impl<'a> Engine<'a> {
             if view.1 == "mapping" && operation.starts_with("__") && operation != "__dir__" {
                 if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
                 if operation == "__ior__" { return Err("TypeError: '|=' is not supported by mappingproxy; use '|' instead".into()); }
+                if operation == "__getitem__" && args.len() == 1 {
+                    if let Some(Some(found)) = receiver.proxy_text_value(&args[0]) { return Ok(found); }
+                }
                 let backing = if matches!(&view.0, Value::Class(_)) { view.0.proxy_dictionary() } else { view.0.clone() };
                 let unary = match operation { "__len__" => Some(Builtin::Length), "__iter__" => Some(Builtin::Iter), "__reversed__" => Some(Builtin::Reversed), "__hash__" => Some(Builtin::Hash), _ => None };
                 if let Some(op) = unary {
@@ -21535,10 +21554,10 @@ impl<'a> Engine<'a> {
                     return self.value_method(&view.0.proxy_dictionary(), operation, args, named);
                 }
                 if matches!(view.0.contents(), Value::Map(_)) && !matches!(view.0.contents(), Value::Object(_)) { return self.value_method(&view.0, operation, args, named); }
-                let callable = self.class_get(view.0.clone(), operation, false).map_err(|fault| { self.carried = Some(fault); String::new() })?;
+                let callable = self.class_get(view.0.clone(), operation, false).map_err(|fault| { self.thread.carried = Some(fault); String::new() })?;
                 let mut supplied = args;
                 supplied.extend(named.into_iter().map(|(key, value)| Value::Tie(Rc::new((Value::text(&key), value)))));
-                return self.class_apply(callable, supplied).map_err(|fault| { self.carried = Some(fault); String::new() });
+                return self.class_apply(callable, supplied).map_err(|fault| { self.thread.carried = Some(fault); String::new() });
             }
         }
         if self.builtin_directory_method(receiver, operation).is_some() {
@@ -21554,7 +21573,7 @@ impl<'a> Engine<'a> {
                 return match self.code_metadata_call("positions", vec![receiver.clone()]) {
                     Ok(value) => Ok(value),
                     Err(Fault::Note(message)) => Err(message),
-                    Err(fault) => { self.carried = Some(fault); Err(String::new()) }
+                    Err(fault) => { self.thread.carried = Some(fault); Err(String::new()) }
                 };
             }
             let mut row = body.declared_on;
@@ -21583,7 +21602,7 @@ impl<'a> Engine<'a> {
                 }
                 positions.push(Value::tuple(span));
             }
-            return self.iterator(Value::tuple(positions)).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
+            return self.iterator(Value::tuple(positions)).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() });
         }
         if operation == "code_lines" {
             if !args.is_empty() || !named.is_empty() { return Err("TypeError: code location iterator takes no arguments".into()); }
@@ -21591,7 +21610,7 @@ impl<'a> Engine<'a> {
             return match self.code_metadata_call(entry, vec![receiver.clone()]) {
                 Ok(value) => Ok(value),
                 Err(Fault::Note(message)) => Err(message),
-                Err(fault) => { self.carried = Some(fault); Err(String::new()) }
+                Err(fault) => { self.thread.carried = Some(fault); Err(String::new()) }
             };
         }
         if operation == "code_replace" {
@@ -21600,7 +21619,7 @@ impl<'a> Engine<'a> {
                     if !args.is_empty() { return Err("TypeError: code.replace() takes no positional arguments".into()); }
                     let mut fields = object.fields.borrow().clone();
                     let cached = fields.iter().find(|(name, _)| name == "\0native_code").map(|(_, value)| value.clone());
-                    if named.iter().any(|(key, _)| key != "co_consts") {
+                    if named.iter().any(|(key, _)| key != "co_consts" && key != "co_flags") {
                         if let Some(cached) = cached.as_ref() { return self.value_method(cached, operation, args, named); }
                     }
                     if let Some(cached) = cached {
@@ -21608,6 +21627,16 @@ impl<'a> Engine<'a> {
                         fields.iter_mut().find(|(name, _)| name == "\0native_code").expect("cached code").1 = revised;
                     }
                     for (key, value) in named {
+                        if key == "co_flags" {
+                            let integer = value.contents();
+                            if !matches!(integer, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err("TypeError: co_flags must be int".into()); }
+                            let bits = integer.as_big()?.to_i64().ok_or("OverflowError: Python int too large to convert to C long")?;
+                            fields.iter_mut().find(|(name, _)| name == "co_flags").unwrap().1 = Value::Small(bits);
+                            if !fields.iter().any(|(name, _)| name == "\0replace_constants") {
+                                fields.push(("\0replace_constants".to_owned(), Value::Flag(true)));
+                            }
+                            continue;
+                        }
                         if key != "co_consts" { return Err(format!("NotImplementedError: compiled source replacement of {key} is unavailable")); }
                         let Value::Tuple(constants) = value.contents() else { return Err("TypeError: co_consts must be tuple".into()); };
                         fields.iter_mut().find(|(name, _)| name == "co_consts").unwrap().1 = Value::tuple(constants.as_ref().clone());
@@ -21622,11 +21651,12 @@ impl<'a> Engine<'a> {
             let Value::Adapter(handle) = receiver.contents() else { return Err(self.special_fault()) };
             let Some(Value::Routine(original)) = handle.1.first() else { return Err(self.special_fault()) };
             if !args.is_empty() { return Err("TypeError: code.replace() takes no positional arguments".into()); }
+            let supplied_constants = named.iter().find(|(key, _)| key == "co_consts").map(|(_, value)| value.clone());
             let dictionary = Value::Map(Rc::new(named.into_iter().map(|(key, value)| (Value::text(&key), value)).collect()));
             let checked = match self.code_metadata_call("validate_replace", vec![receiver.clone(), dictionary]) {
                 Ok(value) => match value.contents() { Value::Map(values) => values, _ => return Err(self.special_fault()) },
                 Err(Fault::Note(message)) => return Err(message),
-                Err(fault) => { self.carried = Some(fault); return Err(String::new()); }
+                Err(fault) => { self.thread.carried = Some(fault); return Err(String::new()); }
             };
             let mut changed = (**original).clone();
             let mut positional = original.parameter_rules.as_ref().map_or(original.formals.len(), |r| r.iter().filter(|kind| **kind < 2).count());
@@ -21635,13 +21665,20 @@ impl<'a> Engine<'a> {
             let layout_changed = checked.iter().any(|(key, _)| matches!(key.plain().as_str(), "co_argcount" | "co_posonlyargcount" | "co_kwonlyargcount" | "co_flags" | "co_varnames"));
             for (key, value) in checked.iter() {
                 let key = key.plain();
-                match (key.as_str(), value.contents()) {
+                let checked_value = match value.contents() {
+                    integer @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_)) => Value::Small(integer.as_big()?.to_i64().ok_or("OverflowError: Python int too large to convert to C long")?),
+                    other => other,
+                };
+                match (key.as_str(), checked_value) {
                     ("co_argcount", Value::Small(count)) => positional = count as usize,
                     ("co_posonlyargcount", Value::Small(count)) => posonly = count as usize,
                     ("co_kwonlyargcount", Value::Small(count)) => keywords = count as usize,
                     ("co_nlocals", _) => {},
                     ("co_stacksize", Value::Small(size)) => changed.declared_stack = Some(size),
-                    ("co_consts", Value::Tuple(values)) => changed = changed.replacing_constants(&values)?,
+                    ("co_consts", Value::Tuple(values)) => {
+                        let values = match &supplied_constants { Some(Value::Tuple(row)) => row.clone(), _ => values.clone() };
+                        changed = changed.replacing_constants(&values)?;
+                    }
                     ("co_name", Value::Text(text)) => changed.ident = text.to_string(),
                     ("co_qualname", Value::Text(text)) => changed.qualified = text.to_string(),
                     ("co_filename", Value::Text(text)) => changed.written_in = Some(text),
@@ -21650,18 +21687,23 @@ impl<'a> Engine<'a> {
                         let current = match self.class_get(receiver.clone(), "co_linetable", false) {
                             Ok(value) => value,
                             Err(Fault::Note(message)) => return Err(message),
-                            Err(fault) => { self.carried = Some(fault); return Err(String::new()); }
+                            Err(fault) => { self.thread.carried = Some(fault); return Err(String::new()); }
                         };
-                        if !current.equals(&table) { changed.location_bytes = Some(table); }
+                        if !current.equals(&table) {
+                            if changed.location_baseline.is_none() { changed.location_baseline = Some(current); }
+                            changed.location_bytes = Some(table);
+                        }
                     }
                     ("co_firstlineno", Value::Small(line)) => {
                         if line as u32 == changed.declared_on { continue; }
                         if changed.location_bytes.is_none() {
-                            changed.location_bytes = Some(match self.class_get(receiver.clone(), "co_linetable", false) {
+                            let retained = match self.class_get(receiver.clone(), "co_linetable", false) {
                                 Ok(value) => value,
                                 Err(Fault::Note(message)) => return Err(message),
-                                Err(fault) => { self.carried = Some(fault); return Err(String::new()); }
-                            });
+                                Err(fault) => { self.thread.carried = Some(fault); return Err(String::new()); }
+                            };
+                            if changed.location_baseline.is_none() { changed.location_baseline = Some(retained.clone()); }
+                            changed.location_bytes = Some(retained);
                         }
                         changed.declared_on = line as u32;
                     }
@@ -21706,6 +21748,10 @@ impl<'a> Engine<'a> {
                         let body = Self::native_code_subject(&loaded)?;
                         let adopted = body.replacing_constants(&changed.code_constants)?;
                         changed.instrs = adopted.instrs.clone();
+                        changed.live_source = body.live_source.clone();
+                        changed.body_spelling = body.body_spelling.clone();
+                        changed.compiled_optimize = body.compiled_optimize;
+                        changed.source_content = body.source_content.clone();
                         changed.source_tokens = body.source_tokens.clone();
                         changed.source_end = body.source_end;
                         changed.image_origin = body.image_origin.clone();
@@ -21767,7 +21813,7 @@ impl<'a> Engine<'a> {
                             for local in &mut state.frame { *local = Value::Blank; }
                         } else {
                             if let Err(fault) = self.close_generator(&walk) {
-                                self.carried = Some(fault);
+                                self.thread.carried = Some(fault);
                                 return Err(self.special_fault());
                             }
                             return Ok(Value::Null);
@@ -21804,12 +21850,12 @@ impl<'a> Engine<'a> {
                 let valid = if operation == 2 { args.is_empty() } else { args.len() == 1 };
                 if !valid { return Err(self.lang.method_errors["arguments"].clone()); }
                 return self.async_generator_awaitable(receiver.contents(), operation as i64 + 1,
-                    args.first().cloned().unwrap_or(Value::Null)).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
+                    args.first().cloned().unwrap_or(Value::Null)).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() });
             }
             if let Some(which) = self.lang.async_generator_methods.iter().enumerate().skip(4)
                 .find(|(_, word)| *word == operation).map(|(at, _)| at) {
                 if !args.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
-                if which == 4 { return self.async_generator_awaitable(receiver.contents(), 0, Value::Null).map_err(|fault| { self.carried = Some(fault); self.special_fault() }); }
+                if which == 4 { return self.async_generator_awaitable(receiver.contents(), 0, Value::Null).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() }); }
                 return Ok(receiver.contents());
             }
         }
@@ -21831,7 +21877,7 @@ impl<'a> Engine<'a> {
                         Err(Fault::Thrown(value)) if self.is_exit(&value) || self.async_exhausted(&Fault::Thrown(value.clone()))
                             || matches!(&value, Value::Object(o) if self.stop_class(&o.class_now())) => Ok(Value::Null),
                         Ok(_) => Err("RuntimeError: coroutine ignored GeneratorExit".to_string()),
-                        Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+                        Err(fault) => { self.thread.carried = Some(fault); Err(self.special_fault()) }
                     };
                 }
                 let answer = if operation == "throw" {
@@ -21847,7 +21893,7 @@ impl<'a> Engine<'a> {
                 } else { return Err(self.special_fault()); };
                 return match self.async_operation_result(answer) {
                     Ok(value) => Ok(value),
-                    Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+                    Err(fault) => { self.thread.carried = Some(fault); Err(self.special_fault()) }
                 };
             }
         }
@@ -21879,7 +21925,7 @@ impl<'a> Engine<'a> {
             self.data.truncate(floor);
             return match answer {
                 Ok(value) => Ok(value), Err(Fault::Note(words)) => Err(words),
-                Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+                Err(fault) => { self.thread.carried = Some(fault); Err(self.special_fault()) }
             };
         }
         if operation == "__buffer__" || operation == "__release_buffer__" {
@@ -21912,7 +21958,7 @@ impl<'a> Engine<'a> {
             return match receiver {
                 Value::Class(class) => self.class_make(class.clone(), vec![converted]).map_err(|fault| match fault {
                     Fault::Note(message) => message,
-                    raised => { self.carried = Some(raised); String::new() },
+                    raised => { self.thread.carried = Some(raised); String::new() },
                 }),
                 Value::Native(Builtin::AsReal, _) => Ok(converted),
                 _ => Err(self.lang.method_errors["arguments"].clone()),
@@ -21930,7 +21976,7 @@ impl<'a> Engine<'a> {
             return match receiver {
                 Value::Class(class) => self.class_make(class.clone(), vec![converted]).map_err(|fault| match fault {
                     Fault::Note(message) => message,
-                    raised => { self.carried = Some(raised); String::new() },
+                    raised => { self.thread.carried = Some(raised); String::new() },
                 }),
                 Value::Native(Builtin::Complex, _) => Ok(converted),
                 _ => Err(self.lang.method_errors["arguments"].clone()),
@@ -21950,13 +21996,13 @@ impl<'a> Engine<'a> {
             return Ok(Value::text(if cfg!(target_endian = "little") { "IEEE, little-endian" } else { "IEEE, big-endian" }));
         }
         if matches!(operation, "bytes_fromhex" | "bytearray_fromhex") {
-            let title = self.class_get(receiver.clone(), &self.class_word("qualified").to_owned(), false).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?.plain();
+            let title = self.class_get(receiver.clone(), &self.class_word("qualified").to_owned(), false).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?.plain();
             if !named.is_empty() { return Err(format!("TypeError: {title}.fromhex() takes no keyword arguments")); }
             if args.len() != 1 { return Err(format!("TypeError: {title}.fromhex() takes exactly one argument ({} given)", args.len())); }
             let kind = operation.trim_end_matches("_fromhex");
             let factory = Value::Native(Builtin::Bytes(if kind == "bytearray" { 49 } else { 5 }), Rc::from(format!("{kind}.fromhex")));
-            let bytes = self.class_apply(factory, args).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
-            return self.class_apply(receiver.clone(), vec![bytes]).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
+            let bytes = self.class_apply(factory, args).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?;
+            return self.class_apply(receiver.clone(), vec![bytes]).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() });
         }
         if operation == "float_fromhex" {
             if !named.is_empty() || args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
@@ -21965,7 +22011,7 @@ impl<'a> Engine<'a> {
             if let Value::Class(class) = receiver {
                 return self.class_make(class.clone(), vec![parsed]).map_err(|fault| match fault {
                     Fault::Note(message) => message,
-                    raised => { self.carried = Some(raised); String::new() },
+                    raised => { self.thread.carried = Some(raised); String::new() },
                 });
             }
             return Err(self.lang.method_errors["arguments"].clone());
@@ -21987,7 +22033,7 @@ impl<'a> Engine<'a> {
             if let Value::Class(class) = receiver {
                 return self.class_make(class.clone(), vec![parsed]).map_err(|fault| match fault {
                     Fault::Note(message) => message,
-                    raised => { self.carried = Some(raised); String::new() },
+                    raised => { self.thread.carried = Some(raised); String::new() },
                 });
             }
             return Err(self.lang.method_errors["arguments"].clone());
@@ -22019,7 +22065,7 @@ impl<'a> Engine<'a> {
                 return match self.class_make(class.clone(), vec![result]) {
                     Ok(v) => Ok(v),
                     Err(Fault::Note(message)) => Err(message),
-                    Err(raised) => { self.carried = Some(raised); Err(String::new()) }
+                    Err(raised) => { self.thread.carried = Some(raised); Err(String::new()) }
                 };
             }
             return Ok(result);
@@ -22191,7 +22237,7 @@ impl<'a> Engine<'a> {
                     Err(Fault::Note(words)) => Err(words),
                     // A value raised on the way is carried out past the
                     // words this answer may hold.
-                    Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+                    Err(fled) => { self.thread.carried = Some(fled); Err(String::new()) }
                 };
             }
         }
@@ -22416,7 +22462,7 @@ impl<'a> Engine<'a> {
                 let made = match self.class_apply(Value::Class(c.clone()), Vec::new()) {
                     Ok(made) => made,
                     Err(Fault::Note(words)) => return Err(words),
-                    Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+                    Err(fled) => { self.thread.carried = Some(fled); return Err(String::new()); }
                 };
                 let copy = Self::frozen_beneath(&made);
                 let mut working = if copy { self.frozen_rows(&made)? } else { made };
@@ -22427,7 +22473,7 @@ impl<'a> Engine<'a> {
                     return match self.class_apply(Value::Class(c), vec![working]) {
                         Ok(made) => Ok(made),
                         Err(Fault::Note(words)) => Err(words),
-                        Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+                        Err(fled) => { self.thread.carried = Some(fled); Err(String::new()) }
                     };
                 }
                 return Ok(working);
@@ -22515,21 +22561,21 @@ impl<'a> Engine<'a> {
         let view = match self.class_apply(getter, vec![value.clone(), Value::Small(0)]) {
             Ok(view) => view,
             Err(Fault::Note(words)) => return Err(words),
-            Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+            Err(raised) => { self.thread.carried = Some(raised); return Err(String::new()); }
         };
         let content = self.bytes_argument(&view);
-        let pending = self.carried.take();
+        let pending = self.thread.carried.take();
         if let Some(release) = self.class_value(&object.class_now(), &hooks[1]) {
             let released = self.class_apply(release, vec![value.clone(), view]);
             if content.is_ok() {
                 match released {
                     Ok(_) => (),
                     Err(Fault::Note(words)) => return Err(words),
-                    Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+                    Err(raised) => { self.thread.carried = Some(raised); return Err(String::new()); }
                 }
             }
         }
-        if pending.is_some() { self.carried = pending; }
+        if pending.is_some() { self.thread.carried = pending; }
         content
     }
 
@@ -23247,7 +23293,7 @@ impl<'a> Engine<'a> {
                 let result = match self.class_apply(method, vec![value.clone()]) {
                     Ok(answer) => answer,
                     Err(Fault::Note(words)) => return Err(words),
-                    Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+                    Err(raised) => { self.thread.carried = Some(raised); return Err(String::new()); }
                 };
                 match result {
                     Value::Bytes(row, false, _) => Ok(Some(row.borrow().to_vec())),
@@ -23558,7 +23604,7 @@ impl<'a> Engine<'a> {
                         let acquire = self.class_get(module, "_buffer_view", false)?;
                         self.class_apply(acquire, vec![source.clone(), Value::Small(284), Value::text("")])
                     })();
-                    let view = acquired.map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                    let view = acquired.map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?;
                     held.push(view.clone());
                     view
                 };
@@ -23794,11 +23840,11 @@ impl<'a> Engine<'a> {
     /// a TypeError, whether it was thrown or merely worded by the
     /// kernel. Any other fault is left standing.
     fn forget_type_error(&mut self, fault: &str) -> bool {
-        if matches!(&self.carried, Some(Fault::Thrown(Value::Object(object))) if object.class_now().named("TypeError", false)) {
-            self.carried = None;
+        if matches!(&self.thread.carried, Some(Fault::Thrown(Value::Object(object))) if object.class_now().named("TypeError", false)) {
+            self.thread.carried = None;
             return true;
         }
-        self.carried.is_none() && self.worded_type_error(fault)
+        self.thread.carried.is_none() && self.worded_type_error(fault)
     }
 
     /// Whether a fault the kernel worded for itself is one the language
@@ -23969,7 +24015,7 @@ impl<'a> Engine<'a> {
                 let source = match self.class_apply(method, vec![args[0].clone()]) {
                     Ok(bytes) => bytes,
                     Err(Fault::Note(message)) => return Err(message),
-                    Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+                    Err(raised) => { self.thread.carried = Some(raised); return Err(String::new()); }
                 };
                 self.byte_row(&source, false)?
             }
@@ -24191,7 +24237,7 @@ impl<'a> Engine<'a> {
         })();
         match acquired {
             Ok(view) => Ok(view), Err(Fault::Note(words)) => Err(words),
-            Err(raised) => { self.carried = Some(raised); Err(String::new()) }
+            Err(raised) => { self.thread.carried = Some(raised); Err(String::new()) }
         }
     }
 
@@ -24201,12 +24247,12 @@ impl<'a> Engine<'a> {
         match copied {
             Ok(Value::Bytes(row, ..)) => Ok(row.borrow().clone()),
             Ok(_) => Err(self.byte_fault("arguments")), Err(Fault::Note(words)) => Err(words),
-            Err(raised) => { self.carried = Some(raised); Err(String::new()) }
+            Err(raised) => { self.thread.carried = Some(raised); Err(String::new()) }
         }
     }
 
     fn byte_buffers_close<T>(&mut self, held: Vec<Value>, mut result: Res<T>) -> Res<T> {
-        let original = self.carried.take();
+        let original = self.thread.carried.take();
         let failed = result.is_err();
         for view in held {
             if matches!(view, Value::Export(_)) { drop(view); continue; }
@@ -24215,12 +24261,12 @@ impl<'a> Engine<'a> {
                 if let Err(fault) = release {
                     result = Err(match fault {
                         Fault::Note(words) => words,
-                        other => { self.carried = Some(other); String::new() }
+                        other => { self.thread.carried = Some(other); String::new() }
                     });
                 }
             }
         }
-        if failed { self.carried = original; }
+        if failed { self.thread.carried = original; }
         result
     }
 
@@ -24283,7 +24329,7 @@ impl<'a> Engine<'a> {
             Ok(Value::Bytes(cell, ..)) => Ok(cell.borrow().clone()),
             Ok(_) => Err(self.byte_fault("arguments")),
             Err(Fault::Note(words)) => Err(words),
-            Err(raised) => { self.carried = Some(raised); Err(String::new()) }
+            Err(raised) => { self.thread.carried = Some(raised); Err(String::new()) }
         }
     }
 
@@ -25606,14 +25652,14 @@ impl<'a> Engine<'a> {
         if task == 63 {
             return match self.pickle_buffer_work(args) {
                 Ok(value) => Ok(value), Err(Fault::Note(message)) => Err(message),
-                Err(exception) => { self.carried = Some(exception); Err(String::new()) },
+                Err(exception) => { self.thread.carried = Some(exception); Err(String::new()) },
             };
         }
         if task == 61 {
             if args.len() != 2 { return Err("TypeError: escape_decode requires a buffer and an error policy".into()); }
             let input = Self::worth_of(&args[0]).filter(|value| matches!(value.contents(), Value::Text(_) | Value::Codepoints(_))).unwrap_or_else(|| args[0].contents());
             if let Err(raised) = self.type_utf8(&input) {
-                match raised { Fault::Note(message) => return Err(message), exception => { self.carried = Some(exception); return Err(String::new()); } }
+                match raised { Fault::Note(message) => return Err(message), exception => { self.thread.carried = Some(exception); return Err(String::new()); } }
             }
             let data = match input {
                 Value::Text(text) => text.as_bytes().to_vec(),
@@ -25628,7 +25674,7 @@ impl<'a> Engine<'a> {
             };
             let errors = Self::worth_of(&args[1]).filter(|value| matches!(value.contents(), Value::Text(_) | Value::Codepoints(_))).unwrap_or_else(|| args[1].contents());
             if let Err(raised) = self.type_utf8(&errors) {
-                match raised { Fault::Note(message) => return Err(message), exception => { self.carried = Some(exception); return Err(String::new()); } }
+                match raised { Fault::Note(message) => return Err(message), exception => { self.thread.carried = Some(exception); return Err(String::new()); } }
             }
             let policy = match errors { Value::Null => "strict".to_owned(), Value::Text(word) => {
                 if word.contains('\0') { return Err("ValueError: embedded null character".into()); }
@@ -25690,7 +25736,7 @@ impl<'a> Engine<'a> {
                         let release=self.class_get(view,"release",false)?;self.class_apply(release,Vec::new())?;
                         copied
                     })();
-                    let result=result.map_err(|fault|{self.carried=Some(fault);self.special_fault()})?;
+                    let result=result.map_err(|fault|{self.thread.carried=Some(fault);self.special_fault()})?;
                     let row = self.byte_row(&result, false)?;
                     return Ok(self.byte_make(row, task == 1));
                 }
@@ -25718,7 +25764,7 @@ impl<'a> Engine<'a> {
                     let result = match self.class_apply(method, vec![source.clone()]) {
                         Ok(v) => v,
                         Err(Fault::Note(message)) => return Err(message),
-                        Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+                        Err(raised) => { self.thread.carried = Some(raised); return Err(String::new()); }
                     };
                     if !matches!(result, Value::Bytes(_, false, _)) { return Err(self.byte_fault("arguments")); }
                     result
@@ -26137,13 +26183,13 @@ impl<'a> Engine<'a> {
         let entered = self.tell_profiler("c_call", &seen, callable.clone());
         let answer = match entered {
             Ok(()) => work(self),
-            Err(fault) => { self.carried = Some(fault); Err(String::new()) }
+            Err(fault) => { self.thread.carried = Some(fault); Err(String::new()) }
         };
         self.native_open.set(false);
         let word = if answer.is_ok() { "c_return" } else { "c_exception" };
         let left = self.tell_profiler(word, &seen, callable);
         match (answer, left) {
-            (Ok(_), Err(fault)) => { self.carried = Some(fault); Err(String::new()) }
+            (Ok(_), Err(fault)) => { self.thread.carried = Some(fault); Err(String::new()) }
             (answer, _) => answer,
         }
     }
@@ -26781,7 +26827,7 @@ impl<'a> Engine<'a> {
             Builtin::Text(_) => { return self.builtin_arm_4(builtin, name, args); },
             Builtin::ClassTool(work) =>return self.class_work(work, args.clone()).map_err(|fault| match fault {
                 Fault::Note(words)=>words,
-                raised=>{self.carried=Some(raised);String::new()},
+                raised=>{self.thread.carried=Some(raised);String::new()},
             }),
             Builtin::Echo => {
                 arity(1)?;
@@ -26893,7 +26939,7 @@ impl<'a> Engine<'a> {
             // that one is told of instead.
             Builtin::FaultItself => {
                 arity(0)?;
-                self.caught.last().cloned().unwrap_or(Value::Null)
+                self.thread.caught.last().cloned().unwrap_or(Value::Null)
             }
             Builtin::TrackedObjects => { return self.builtin_arm_14(builtin, name, args); }
             Builtin::WeakMake => return self.faint_allocate(name, args),
@@ -27324,7 +27370,7 @@ impl<'a> Engine<'a> {
                             let answer = match called {
                                 Ok(value) => value,
                                 Err(Fault::Note(message)) => return Err(message),
-                                Err(escape) => { self.carried = Some(escape); return Err(String::new()); }
+                                Err(escape) => { self.thread.carried = Some(escape); return Err(String::new()); }
                             };
                             let raw = Self::worth_of(&answer).unwrap_or_else(|| answer.contents());
                             if !matches!(raw, Value::Bytes(_, false, _)) {
@@ -27411,8 +27457,8 @@ impl<'a> Engine<'a> {
                             let entries = match self.special_dyad(&Action::At, &normalized[1], &key) {
                                 Ok(value) => vec![(key, value)],
                                 Err(words) => {
-                                    let missing = matches!(&self.carried, Some(Fault::Thrown(Value::Object(o))) if self.stands_on(&o.class_now(), 5));
-                                    if missing { self.carried.take(); }
+                                    let missing = matches!(&self.thread.carried, Some(Fault::Thrown(Value::Object(o))) if self.stands_on(&o.class_now(), 5));
+                                    if missing { self.thread.carried.take(); }
                                     else if !words.starts_with("KeyError:") && !words.starts_with("IndexError:") && !words.starts_with("LookupError:") { return Err(words); }
                                     Vec::new()
                                 }
@@ -27684,7 +27730,7 @@ impl<'a> Engine<'a> {
                 // the reading and not what came after.
                 if self.any_waiting.get() {
                     if let Err(fault) = self.hand_over_complaints() {
-                        self.carried = Some(fault);
+                        self.thread.carried = Some(fault);
                     }
                 }
                 self.calls.pop();
@@ -27937,7 +27983,7 @@ impl<'a> Engine<'a> {
             Builtin::FaultInHand
             => {
                 if args.len() > 1 { return Err(self.lang.module_helper_amiss.clone()); }
-                let held = match args.first() { Some(given) => Some(given.clone()), None => self.caught.last().cloned() };
+                let held = match args.first() { Some(given) => Some(given.clone()), None => self.thread.caught.last().cloned() };
                 let Some(fault) = held else { return Ok(Value::array(vec![Value::Null, Value::Null])) };
                 let kind = match &fault { Value::Object(o) => Value::text(&o.class_now().name), _ => Value::Null };
                 let words = self.special_text(&fault, false)?;
@@ -28187,7 +28233,7 @@ impl<'a> Engine<'a> {
                                     vec![Value::Small(errno), message[1].clone(), args[2].clone()]
                                 };
                                 let error = self.exception_instance(kind, err_args, Value::Null);
-                                self.carried = Some(Fault::Thrown(error));
+                                self.thread.carried = Some(Fault::Thrown(error));
                                 return Err(String::new());
                             }
                         }
@@ -28245,7 +28291,7 @@ impl<'a> Engine<'a> {
                     _ => crate::posix::call(args, || {
                         self.deliver_signals().map_err(|fault| match fault {
                             Fault::Note(words) => words,
-                            raised => { self.carried = Some(raised); self.special_fault() }
+                            raised => { self.thread.carried = Some(raised); self.special_fault() }
                         })
                     })?,
                 }
@@ -28648,7 +28694,7 @@ impl<'a> Engine<'a> {
                 return match self.io_text_append(args) {
                     Ok(value) => Ok(value),
                     Err(Fault::Note(message)) => Err(message),
-                    Err(fault) => { self.carried = Some(fault); Err(String::new()) }
+                    Err(fault) => { self.thread.carried = Some(fault); Err(String::new()) }
                 };
             }
             Builtin::AsciiSpan
@@ -28945,6 +28991,16 @@ impl<'a> Engine<'a> {
                             Value::Flag(true)
                         } else { Value::Flag(false) }
                     }
+                    // Readers finish only after EOF, including inherited descendant pipes.
+                    9 => {
+                        arity(2)?;
+                        let which = as_index(&args[1])? as i64;
+                        let kept = self.beside.borrow();
+                        Value::Flag(kept.get(&which).is_some_and(|process| {
+                            process.out_capture.as_ref().is_none_or(|reader| reader.is_finished())
+                                && process.err_capture.as_ref().is_none_or(|reader| reader.is_finished())
+                        }))
+                    }
                     _ => return Err(format!("{}() unknown step {}", name, step)),
                 }
             },
@@ -29081,7 +29137,7 @@ impl<'a> Engine<'a> {
                 match self.import_module(&args[0].display(&sp)) {
                     Ok(module) => module,
                     Err(Fault::Note(words)) => return Err(words),
-                    Err(fault) => { self.carried = Some(fault); return Err("module did not finish".into()); }
+                    Err(fault) => { self.thread.carried = Some(fault); return Err("module did not finish".into()); }
                 }
             },
             _ => unreachable!(),
@@ -29194,7 +29250,7 @@ impl<'a> Engine<'a> {
                         let message = value.display(&sp);
                         Value::array(vec![Value::Flag(false), value, Value::text(&message)])
                     }
-                    Err(fault) => { self.data.truncate(depth); self.carried = Some(fault); return Err("the call stopped the run".into()); }
+                    Err(fault) => { self.data.truncate(depth); self.thread.carried = Some(fault); return Err("the call stopped the run".into()); }
                 };
                 self.data.truncate(depth);
                 answer
@@ -29259,7 +29315,7 @@ impl<'a> Engine<'a> {
                         // its ownership is the holds the run actually has
                         // on it, counted over the reachable roots.
                         let mut roots: Vec<Value> = args.to_vec();
-                        roots.extend(self.world.iter().chain(&self.data).chain(&self.caught).chain(&self.buffer)
+                        roots.extend(self.world.iter().chain(&self.data).chain(&self.thread.caught).chain(&self.buffer)
                             .chain(self.given.iter().flatten()).chain(self.modules.values()).chain(self.memo.values())
                             .chain(self.native_exceptions.values()).chain(std::iter::once(&self.trace_hook)).cloned()
                             .chain(self.function_members.iter().filter_map(|(function, _)| function.revive()))
@@ -29682,7 +29738,7 @@ impl<'a> Engine<'a> {
                             for number in [row.year as i64+1900,row.month as i64+1,row.day as i64,row.hour as i64,row.minute as i64,row.second as i64,(row.weekday as i64+6)%7,row.yearday as i64+1,row.summer as i64] {fields.push(Value::Small(number));}
                             fields.push(if row.abbreviation.is_null(){Value::Null}else{Value::text(&unsafe{std::ffi::CStr::from_ptr(row.abbreviation)}.to_string_lossy())});fields.push(Value::Small(row.east));
                             let class=Value::Class(self.calendar_kind());
-                            return self.calendar_sequence(class,vec![Value::tuple(fields)]).map_err(|fault|{self.carried=Some(fault);self.special_fault()});
+                            return self.calendar_sequence(class,vec![Value::tuple(fields)]).map_err(|fault|{self.thread.carried=Some(fault);self.special_fault()});
                         }
                         if matches!(task.as_ref(),"process_time"|"thread_time") && args.len()<=2 {
                             #[cfg(target_os = "linux")]
@@ -31166,7 +31222,7 @@ impl<'a> Engine<'a> {
                 if self.fuller_classes() && (args.len() != 1 || args.first().is_some_and(|value| Self::proxy_reading(value).is_none() && matches!(value.contents(), Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)))) {
                     return self.class_type(args.clone()).map_err(|fault| match fault {
                         Fault::Note(message) => message,
-                        raised => { self.carried = Some(raised); String::new() },
+                        raised => { self.thread.carried = Some(raised); String::new() },
                     });
                 }
                 arity(1)?;
@@ -31733,7 +31789,7 @@ fn dumped(v: &Value, depth: usize, binary_reals: bool, sp: &Wording) -> String {
     // shown plainly, since a cell no other name reaches is a value like
     // any other; a value shown on its own is never marked.
     let shared = |item: &Value| match item {
-        Value::Bond(cell) if std::rc::Rc::strong_count(cell) > 1 => "&",
+        Value::Bond(cell) if crate::value::Rc::strong_count(cell) > 1 => "&",
         _ => "",
     };
     match v {
@@ -32548,6 +32604,29 @@ impl Engine<'_> {
         Ok(Value::Null)
     }
 
+    /// Return the immutable compilation input, body boundary and compiler class slots.
+    fn code_record_origin(&self, value: &Value) -> Res<Value> {
+        let held = value.contents();
+        let (source, boundary, constants, originals, features, optimize, lineless) = match &held {
+            Value::Adapter(parts) if parts.0 == 7 => match parts.1.first() {
+                Some(Value::Routine(body)) => (body.live_source.clone(), Value::tuple(vec![Value::Small(body.source_end as i64), Value::Text(body.body_spelling.clone())]),
+                    body.code_constants.clone(), body.initial_constants.as_ref().map_or_else(|| body.code_constants.clone(), |v| v.as_ref().clone()), (body.image_origin.2 & !0x307) | if body.image_origin.2 & 4 != 0 { 8192 } else { 0 }, body.compiled_optimize, body.lineless),
+                _ => return Err("TypeError: expected code".into()),
+            },
+            Value::Object(object) if object.class_now().constants.iter().any(|(key, v)| key == "\0kind" && matches!(v, Value::Text(k) if k.as_ref() == "code")) => {
+                let fields = object.fields.borrow();
+                let source = fields.iter().find_map(|(key, v)| if key == "source" { if let Value::Text(text) = v { Some(text.clone()) } else { None } } else { None }).ok_or("ValueError: code has no retained input")?;
+                let row = |key: &str| fields.iter().find_map(|(name, v)| if name == key { if let Value::Tuple(row) = v { Some(row.as_ref().clone()) } else { None } } else { None }).unwrap_or_default();
+                let number = |key: &str| fields.iter().find_map(|(name, v)| if name == key { if let Value::Small(n) = v { Some(*n) } else { None } } else { None }).unwrap_or(0);
+                (source, Value::Small(-1), row("co_consts"), row("\0initial_constants"), number("\0compile_features"), number("co_optimize"), false)
+            }
+            _ => return Err("TypeError: expected code".into()),
+        };
+        let slots = constants.iter().enumerate().filter_map(|(at, value)|
+            if self.stands_for_kind(value) && originals.get(at).is_some_and(|old| old.same_value(value) || old.same_place(value) || matches!((old, value), (Value::SortOf(a), Value::SortOf(b)) if a == b)) { Some(Value::Small(at as i64)) } else { None }).collect();
+        Ok(Value::tuple(vec![Value::Text(source), boundary, Value::tuple(slots), Value::Small(features), Value::Small(optimize), Value::Flag(lineless)]))
+    }
+
     fn native_reduce(&mut self, value: &Value) -> Res<Value> {
         if matches!(value, Value::Adapter(parts) if parts.0 == 7) || matches!(value, Value::Object(_)) {
             if let Ok(body) = Self::native_code_subject(value) {
@@ -32558,12 +32637,11 @@ impl Engine<'_> {
                     let held = match self.class_get(code.clone(), name, false) {
                         Ok(held) => held,
                         Err(Fault::Note(message)) => return Err(message),
-                        Err(fault) => { self.carried = Some(fault); return Err(String::new()); }
+                        Err(fault) => { self.thread.carried = Some(fault); return Err(String::new()); }
                     };
                     fields.push((Value::text(name), held));
                 }
-                return Ok(Value::tuple(vec![Value::text("native-code"), self.byte_make(body.native_image(), false), Value::Map(Rc::new(fields.into()))]));
-            }
+                return Ok(Value::tuple(vec![Value::text("native-code"), self.byte_make(body.native_image(), false), Value::Map(Rc::new(fields.into()))]));            }
         }
         if let Value::Class(c) = value {
             return Ok(Value::tuple(vec![Value::text("class"), Value::text(&c.name)]));
@@ -32778,7 +32856,7 @@ impl Engine<'_> {
         if let Value::Adapter(parts) = walk {
             if parts.0 == 34 {
                 let Value::Generator(body) = &parts.1[0] else { return Err(self.special_fault()); };
-                return self.resume_generator(body, Value::Null).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
+                return self.resume_generator(body, Value::Null).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() });
             }
         }
         if self.is_coroutine(walk) { return Err(self.core_fault("core.not_iterator", &walk.core_kind())); }
@@ -32792,7 +32870,7 @@ impl Engine<'_> {
                 Err(Fault::Note(words)) => Err(words),
                 Err(Fault::Thrown(value)) => {
                     let words = Fault::Thrown(value.clone()).told(&self.wording());
-                    self.carried = Some(Fault::Thrown(value));
+                    self.thread.carried = Some(Fault::Thrown(value));
                     Err(words)
                 }
                 Err(other) => Err(other.told(&self.wording())),
@@ -32815,13 +32893,13 @@ impl Engine<'_> {
                 Err(words) => {
                     let stopped = if let Some(selected) = &types { self.selected_stop_raised(selected) } else { self.stop_raised() };
                     if stopped { cell.borrow_mut().finished = true; return Ok(None); }
-                    let stopped_cause = match &self.carried {
+                    let stopped_cause = match &self.thread.carried {
                         Some(Fault::Thrown(Value::Object(object))) if self.lang.special_stop.iter().any(|name| object.class_now().named(name, false)) => Some(Value::Object(object.clone())),
                         _ => None,
                     };
                     if let (Some(cause), Some(runtime)) = (stopped_cause, self.furnished(13)) {
                         let raised = self.exception_instance(runtime, vec![Value::text("callable raised StopIteration")], cause);
-                        self.carried = Some(Fault::Thrown(raised));
+                        self.thread.carried = Some(Fault::Thrown(raised));
                         return Err("RuntimeError: callable raised StopIteration".into());
                     }
                     return Err(words);
@@ -33011,8 +33089,8 @@ impl Engine<'_> {
     /// Whether the fault carried out of a call is the one that ends a
     /// walk; if it is, it is taken, and the walk ends quietly.
     fn stop_raised(&mut self) -> bool {
-        let ended = matches!(&self.carried, Some(Fault::Thrown(Value::Object(o))) if self.lang.special_stop.iter().any(|name| o.class_now().named(name, false)));
-        if ended { self.carried = None; }
+        let ended = matches!(&self.thread.carried, Some(Fault::Thrown(Value::Object(o))) if self.lang.special_stop.iter().any(|name| o.class_now().named(name, false)));
+        if ended { self.thread.carried = None; }
         ended
     }
 
@@ -33021,10 +33099,10 @@ impl Engine<'_> {
     /// the kernel raises for itself is said as words alone and carries
     /// no value, so those words are read for the class they stand for.
     fn places_over(&mut self, told: &str) -> bool {
-        let over = matches!(&self.carried, Some(Fault::Thrown(Value::Object(o)))
+        let over = matches!(&self.thread.carried, Some(Fault::Thrown(Value::Object(o)))
             if self.lang.fault_index.as_deref().map_or(false, |name| o.class_now().named(name, false)) || self.lang.special_stop.iter().any(|name| o.class_now().named(name, false)));
-        if over { self.carried = None; return true; }
-        self.carried.is_none() && matches!(self.class_for(told), Some(class)
+        if over { self.thread.carried = None; return true; }
+        self.thread.carried.is_none() && matches!(self.class_for(told), Some(class)
             if self.lang.fault_index.as_deref() == Some(class.as_str()) || self.lang.special_stop.contains(&class))
     }
 
@@ -33157,7 +33235,7 @@ impl Engine<'_> {
             Value::Adapter(_) => match self.class_apply(work.clone(), args) {
                 Ok(answer) => Ok(answer),
                 Err(raised) => {
-                    self.carried = Some(raised);
+                    self.thread.carried = Some(raised);
                     Err(self.core_fault("core.unready", &work.core_kind()))
                 }
             },
@@ -33166,14 +33244,14 @@ impl Engine<'_> {
             Value::ValueMethod(method) => self.value_method(&method.0, &method.1, args, Vec::new()),
             Value::Method(..) => match self.class_apply(work.clone(), args) {
                 Ok(value) => Ok(value),
-                Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+                Err(fault) => { self.thread.carried = Some(fault); Err(self.special_fault()) }
             },
             // A member wrapper (a bound class or static method, or a
             // kind's loose member) stands for the call it wraps, and is
             // applied the way a direct call applies it.
             Value::Routine(p) => {
                 if let Err(f) = self.invoke(p, args) {
-                    self.carried = Some(f);
+                    self.thread.carried = Some(f);
                     return Err(self.core_fault("core.unready", &p.ident));
                 }
                 self.drop_top()
@@ -33185,7 +33263,7 @@ impl Engine<'_> {
                 self.data.push(work.clone());
                 self.data.extend(args);
                 if let Err(f) = self.perform(&Action::Make, count) {
-                    self.carried = Some(f);
+                    self.thread.carried = Some(f);
                     return Err(self.core_fault("core.unready", &work.core_kind()));
                 }
                 self.drop_top()
@@ -33210,7 +33288,7 @@ impl Engine<'_> {
         if self.fuller_classes() {
             return self.beneath(value, kind, false).map_err(|fault| match fault {
                 Fault::Note(words)=>words,
-                raised=>{self.carried=Some(raised);String::new()},
+                raised=>{self.thread.carried=Some(raised);String::new()},
             });
         }
         if matches!(kind.contents(), Value::Object(o) if o.class_now().name == "GenericAlias") {
@@ -33323,8 +33401,8 @@ impl Engine<'_> {
                 _ => false,
             }
         }
-        let caught = matches!(&self.carried, Some(Fault::Thrown(Value::Object(object))) if accepts(selected, &object.class_now()));
-        if caught { self.carried = None; }
+        let caught = matches!(&self.thread.carried, Some(Fault::Thrown(Value::Object(object))) if accepts(selected, &object.class_now()));
+        if caught { self.thread.carried = None; }
         caught
     }
 
@@ -33364,7 +33442,7 @@ impl Engine<'_> {
             if let Some(view @ Value::View(_)) = Self::view_in(&args[0]) {
                 if let Value::Text(member) = args[1].contents() {
                     let read = self.class_get(view, &member, false);
-                    return match read { Ok(value) => Ok(if b == Builtin::HasAttr { Value::Flag(true) } else { value }), Err(fault) if self.attribute_fault(&fault) => if b == Builtin::HasAttr { self.absent_member = None; Ok(Value::Flag(false)) } else if args.len() == 3 { self.absent_member = None; Ok(args[2].clone()) } else { self.carried = Some(fault); Err(String::new()) }, Err(fault) => { self.carried = Some(fault); Err(String::new()) } };
+                    return match read { Ok(value) => Ok(if b == Builtin::HasAttr { Value::Flag(true) } else { value }), Err(fault) if self.attribute_fault(&fault) => if b == Builtin::HasAttr { self.absent_member = None; Ok(Value::Flag(false)) } else if args.len() == 3 { self.absent_member = None; Ok(args[2].clone()) } else { self.thread.carried = Some(fault); Err(String::new()) }, Err(fault) => { self.thread.carried = Some(fault); Err(String::new()) } };
                 }
             }
         }
@@ -33409,10 +33487,10 @@ impl Engine<'_> {
                         Err(Fault::Note(words)) => Err(words),
                         Err(Fault::Thrown(value)) => {
                             let words = Fault::Thrown(value.clone()).told(&self.wording());
-                            self.carried = Some(Fault::Thrown(value));
+                            self.thread.carried = Some(Fault::Thrown(value));
                             Err(words)
                         }
-                        Err(raised) => { self.carried = Some(raised); Err(self.special_fault()) },
+                        Err(raised) => { self.thread.carried = Some(raised); Err(self.special_fault()) },
                     };
                 }
             }
@@ -33680,6 +33758,8 @@ impl Engine<'_> {
                     Value::Small(5) if args.len() == 2 => Value::Small(args[1].retained_count().ok_or("NotImplementedError: this value has no ownership identity")?.python_count()),
                     Value::Small(11) if args.len() == 2 => self.native_code_analysis(&args[1])?,
                     Value::Small(12) if args.len() == 2 => self.native_code_load(&args[1])?,
+                    Value::Small(13) if args.len() == 2 => self.fresh_whole(&args[1])?,
+                    Value::Small(14) if args.len() == 2 => self.code_record_origin(&args[1])?,
                     _ => return Err("TypeError: invalid tracing operation".into()),
                 }
             }
@@ -33932,8 +34012,8 @@ impl Engine<'_> {
                         return match self.resume_generator(body, Value::Null) {
                             Ok(Some(item)) => Ok(item),
                             Ok(None) if args.len() == 2 => Ok(args[1].clone()),
-                            Ok(None) => { self.carried = Some(self.stop_of(body)); Err(self.special_fault()) }
-                            Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+                            Ok(None) => { self.thread.carried = Some(self.stop_of(body)); Err(self.special_fault()) }
+                            Err(fault) => { self.thread.carried = Some(fault); Err(self.special_fault()) }
                         };
                     }
                     if parts.0 == 32 {
@@ -33943,7 +34023,7 @@ impl Engine<'_> {
                         }
                         return match self.async_operation_result(item) {
                             Ok(value) => Ok(value),
-                            Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+                            Err(fault) => { self.thread.carried = Some(fault); Err(self.special_fault()) }
                         };
                     }
                 }
@@ -33954,7 +34034,7 @@ impl Engine<'_> {
                         // exhaustion, parked behind the words for it.
                         if let Value::Generator(state) = &args[0] {
                             let state = state.clone();
-                            if let fault @ Fault::Thrown(_) = self.stop_of(&state) { self.carried = Some(fault); }
+                            if let fault @ Fault::Thrown(_) = self.stop_of(&state) { self.thread.carried = Some(fault); }
                         }
                         return Err(self.core_fault("core.exhausted", ""));
                     }
@@ -34558,12 +34638,12 @@ impl Engine<'_> {
         let kind = match self.class_type(vec![path.clone()]) {
             Ok(Value::Class(kind)) => kind,
             Ok(_) => return Err(format!("TypeError: expected str, bytes or os.PathLike object, not {}", Self::shown_kind(&path))),
-            Err(fault) => {self.carried = Some(fault); return Err(self.special_fault());}
+            Err(fault) => {self.thread.carried = Some(fault); return Err(self.special_fault());}
         };
         let missing = || format!("TypeError: expected str, bytes or os.PathLike object, not {}", Self::shown_kind(&path));
         let Some(function) = self.class_value(&kind, "__fspath__").filter(|v| !matches!(v, Value::Null)) else {return Err(missing());};
         let invoked = self.bind_class_value(function, Some(path.clone()), kind).and_then(|method| self.class_apply(method, Vec::new()));
-        let answer = match invoked { Ok(value) => value, Err(fault) => {self.carried = Some(fault); return Err(self.special_fault());} };
+        let answer = match invoked { Ok(value) => value, Err(fault) => {self.thread.carried = Some(fault); return Err(self.special_fault());} };
         if acceptable(&answer.contents()) { return Ok(answer); }
         Err(format!("TypeError: expected {}.__fspath__() to return str or bytes, not {}", Self::shown_kind(&path), Self::shown_kind(&answer)))
     }
@@ -34695,7 +34775,7 @@ impl Engine<'_> {
             if let Some(module) = self.finder_import(path)? { return Ok(module); }
         }
         if self.lang.warning_backend.first().is_some_and(|word| word == path) {
-            return self.make_warning_backend().map_err(|words| self.carried.take().unwrap_or(Fault::Note(words)));
+            return self.make_warning_backend().map_err(|words| self.thread.carried.take().unwrap_or(Fault::Note(words)));
         }
         // A directory the program itself put on `sys.path` is looked
         // in, in the order it stands there, ahead of the library: a
@@ -34746,7 +34826,7 @@ impl Engine<'_> {
                     None => Value::Null,
                 };
                 let spec = self.call_held(resolve, vec![Value::text(path), search])
-                    .map_err(|message| self.carried.take().unwrap_or_else(|| Fault::Note(message)))?;
+                    .map_err(|message| self.thread.carried.take().unwrap_or_else(|| Fault::Note(message)))?;
                 Ok((bridge, spec))
             })();
             self.importing.remove("\0path-hooks");
@@ -34754,7 +34834,7 @@ impl Engine<'_> {
             if !matches!(spec.contents(), Value::Null) {
                 let load = self.class_get(bridge, "load", false)?;
                 let loaded = self.call_held(load, vec![spec])
-                    .map_err(|message| self.carried.take().unwrap_or_else(|| Fault::Note(message)))?;
+                    .map_err(|message| self.thread.carried.take().unwrap_or_else(|| Fault::Note(message)))?;
                 self.modules.insert(path.to_owned(), loaded.clone());
                 self.module_addresses_ready.set(false);
                 return Ok(loaded);
@@ -34769,7 +34849,7 @@ impl Engine<'_> {
                 } else {
                     match self.source_bytes(bytes, file) {
                         Ok(text) => text.to_string(),
-                        Err(fault) => return Err(self.carried.take().unwrap_or_else(|| fault.into())),
+                        Err(fault) => return Err(self.thread.carried.take().unwrap_or_else(|| fault.into())),
                     }
                 };
                 (source, Some(file.clone()))
@@ -34809,7 +34889,7 @@ impl Engine<'_> {
             Ok(tokens) => tokens,
             Err((said, row, col)) => {
                 let said = self.text_syntax(0, said, filename, row, col, None, &source);
-                return Err(self.carried.take().unwrap_or_else(|| said.into()));
+                return Err(self.thread.carried.take().unwrap_or_else(|| said.into()));
             }
         };
         let prepared_at = self.prepared_hint.take();
@@ -34835,7 +34915,7 @@ impl Engine<'_> {
             Ok(program) => program,
             Err(said) => {
                 let said = self.text_syntax(0, said, filename, local.stopped_at, local.stopped_column, Some((local.stopped_end_row, local.stopped_end)), &source);
-                return Err(self.carried.take().unwrap_or_else(|| said.into()));
+                return Err(self.thread.carried.take().unwrap_or_else(|| said.into()));
             }
         };
         let names = std::mem::take(&mut local.idents);
@@ -35469,7 +35549,13 @@ impl Engine<'_> {
     /// The dictionary a global slot's value is kept in, if it is kept
     /// in one: a slot text was given, or any the program may name once
     /// the outermost dictionary has been handed out.
-    fn book_of(&self, far: usize) -> Option<Kept> {
+    fn supplied_globals(&self, name: &str) -> bool {
+        self.lang.compile_kind.is_some() && Self::public_name(name) && self.outer_book.is_some()
+            && self.running_routine.as_ref().is_some_and(|body| !body.reads_annotation && body.code_flags & 1 != 0 && Self::function_book(body).is_some())
+    }
+
+    fn book_of(&self, far: usize, name: &str) -> Option<Kept> {
+        if self.supplied_globals(name) { return Some(Kept::Outer); }
         if self.annotation_scope().is_some() && self.outer_book.is_some() {
             if self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_some()) {
                 return Some(Kept::Outer);
@@ -35550,7 +35636,7 @@ impl Engine<'_> {
             Kept::Outer => {
                 if self.running_routine.as_ref().is_some_and(|routine| routine.code_flags & 1 != 0 && Self::function_book(routine).is_some()) {
                     return Some(self.function_name(name).map_err(|fault| {
-                        match fault { Fault::Note(words) => words, other => { self.carried = Some(other); self.special_fault() } }
+                        match fault { Fault::Note(words) => words, other => { self.thread.carried = Some(other); self.special_fault() } }
                     }));
                 }
                 let book = self.outer_book.clone()?;
@@ -35562,7 +35648,7 @@ impl Engine<'_> {
                     && self.our_native_dict(&book_entry(&book, name).unwrap_or(Value::Null)) {
                     return Some(match self.builtins_view() {
                         Ok(held) => Ok(held),
-                        Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
+                        Err(fled) => { self.thread.carried = Some(fled); Err(self.special_fault()) }
                     });
                 }
                 if let Some(held) = compiled_book_entry(&book, name, Some(far)) { return Some(Ok(held)); }
@@ -35588,7 +35674,7 @@ impl Engine<'_> {
                 match self.book_get(&near, name) {
                     Ok(Some(held)) => return Some(Ok(held)),
                     Ok(None) => {}
-                    Err(fled) => { self.carried = Some(fled); return Some(Err(self.special_fault())); }
+                    Err(fled) => { self.thread.carried = Some(fled); return Some(Err(self.special_fault())); }
                 }
                 if let Some(outer) = &outer {
                     let globals = outer.borrow().clone();
@@ -35596,7 +35682,7 @@ impl Engine<'_> {
                     match self.dyn_lookup(&storage.contents(), name) {
                         Ok(Some(held)) => return Some(Ok(held)),
                         Ok(None) => {}
-                        Err(fled) => { self.carried = Some(fled); return Some(Err(self.special_fault())); }
+                        Err(fled) => { self.thread.carried = Some(fled); return Some(Err(self.special_fault())); }
                     }
                 }
                 // What neither holds may be a builtin, read through the
@@ -35626,7 +35712,7 @@ impl Engine<'_> {
                             .and_then(|dictionary| self.dyn_lookup(&dictionary, name));
                         match found {
                             Ok(value) => value,
-                            Err(failure) => { self.carried = Some(failure); return Some(Err(self.special_fault())); }
+                            Err(failure) => { self.thread.carried = Some(failure); return Some(Err(self.special_fault())); }
                         }
                     },
                     // A dictionary the module does not truly keep, named
@@ -35651,11 +35737,12 @@ impl Engine<'_> {
 
     /// Write a name into the dictionary it is kept in, or take it out.
     fn write_booked(&mut self, kept: Kept, name: &str, value: Option<Value>, binding: Option<usize>) {
+        let binding = if binding.is_some() && self.supplied_globals(name) { None } else { binding };
         match kept {
             Kept::Module(at) => if Self::public_name(name) { compiled_book_write(&self.module_books[at].1, name, value, binding) },
             Kept::Outer => if let Some(book) = self.outer_book.clone() {
                 if matches!(&*book.borrow(), Value::Fields(_)) {
-                    if let Err(fault) = self.book_put(&book, name, value) { self.carried = Some(fault); }
+                    if let Err(fault) = self.book_put(&book, name, value) { self.thread.carried = Some(fault); }
                 } else { compiled_book_write(&book, name, value, binding); }
             },
             Kept::Text(at) => {
@@ -35675,7 +35762,7 @@ impl Engine<'_> {
                     // DELETE_NAME reports a missing binding when its
                     // locals mapping refuses deletion; explicit global
                     // and subscript operations keep their own errors.
-                    self.carried = Some(if deleting_local {
+                    self.thread.carried = Some(if deleting_local {
                         Fault::Note(format!("Undefined variable: {name}"))
                     } else { fled });
                 }
@@ -35864,7 +35951,7 @@ impl Engine<'_> {
             // What the factory's own code raised is raised again as
             // itself, not as the words the giving-way stood in for.
             let made = self.call_held(factory, given);
-            if let Some(fled) = self.carried.take() { return Err(fled); }
+            if let Some(fled) = self.thread.carried.take() { return Err(fled); }
             made?
         } else {
             let Value::Map(entries) = namespace.contents() else { return Err("TypeError: class namespace must be a mapping".into()); };
@@ -36055,16 +36142,16 @@ impl Engine<'_> {
             if let Some(word) = self.lang.module_builtins.first().cloned() {
                 let held = match self.book_get(&book, &word) {
                     Ok(v) => v,
-                    Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
+                    Err(fled) => { self.thread.carried = Some(fled); return Err(self.special_fault()); }
                 };
                 if let Some(held) = held {
                     if !self.our_native_dict(&held) {
                         let dictionary = match self.as_builtins_dictionary(held) {
                             Ok(v) => v,
-                            Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
+                            Err(fled) => { self.thread.carried = Some(fled); return Err(self.special_fault()); }
                         };
                         return self.dyn_lookup(&dictionary, name)
-                            .map_err(|fled| { self.carried = Some(fled); self.special_fault() });
+                            .map_err(|fled| { self.thread.carried = Some(fled); self.special_fault() });
                     }
                 }
             }
@@ -36094,7 +36181,7 @@ impl Engine<'_> {
                 match self.class_get(module, &namespace, false) {
                     Ok(book) => book.contents(),
                     Err(Fault::Note(words)) => return Err(words),
-                    Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
+                    Err(escape) => { self.thread.carried = Some(escape); return Err(self.special_fault()); }
                 }
             }
             None => self.native_dict(),
@@ -36102,7 +36189,7 @@ impl Engine<'_> {
         match self.special_dyad(&Action::At, &dictionary, &Value::text(name)) {
             Ok(held) => Ok(Some(held.contents())),
             Err(words) => {
-                let fled = match self.carried.take() {
+                let fled = match self.thread.carried.take() {
                     Some(fled) => fled,
                     None => match self.as_fault(&words) {
                         Some(value) => Fault::Thrown(value),
@@ -36110,7 +36197,7 @@ impl Engine<'_> {
                     },
                 };
                 if self.fault_names(&fled, "KeyError") { return Ok(None); }
-                self.carried = Some(fled);
+                self.thread.carried = Some(fled);
                 Err(self.special_fault())
             }
         }
@@ -36742,7 +36829,7 @@ impl Engine<'_> {
                     // stands for; a plain reading through a subscript
                     // never asks, so it is asked here instead, the very
                     // way a catch clause matching `KeyError` asks it.
-                    let fled = match self.carried.take() {
+                    let fled = match self.thread.carried.take() {
                         Some(fled) => fled,
                         None => match self.as_fault(&words) {
                             Some(value) => Fault::Thrown(value),
@@ -36767,7 +36854,7 @@ impl Engine<'_> {
         let key = Value::text(name);
         if given.is_none() && self.special_method(held, 13).is_some() {
             let result = self.special_call(held, 13, vec![key]);
-            return result.map(|_| ()).map_err(|words| self.carried.take().unwrap_or_else(|| Fault::Note(words)));
+            return result.map(|_| ()).map_err(|words| self.thread.carried.take().unwrap_or_else(|| Fault::Note(words)));
         }
         let result = match given {
             Some(value) => self.special_builtin(Builtin::Replace, &[key, value, held.clone()]),
@@ -36779,7 +36866,7 @@ impl Engine<'_> {
                 let kind = match held { Value::Object(o) => o.class_now().name.clone(), other => other.core_kind() };
                 Err(self.core_fault("core.immutable", &kind).into())
             }
-            Err(words) => Err(self.carried.take().unwrap_or_else(|| Fault::Note(words))),
+            Err(words) => Err(self.thread.carried.take().unwrap_or_else(|| Fault::Note(words))),
         }
     }
 
@@ -36843,20 +36930,20 @@ impl Engine<'_> {
         if let Some(Value::Class(class)) = self.native_exceptions.get(kind).cloned() {
             if message == "source code string cannot contain null bytes" {
                 let raised = self.exception_instance(class, vec![Value::text(message)], Value::Null);
-                self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
+                self.chain_context(&raised); self.thread.carried = Some(Fault::Thrown(raised));
                 return String::new();
             }
             if row == 0 && mode != 0 && source.is_empty() {
                 let positions = vec![Value::text(file), Value::Small(0), Value::Small(0), Value::text(""), Value::Small(0), Value::Small(0)];
                 let raised = self.exception_instance(class, vec![Value::text(message), Value::tuple(positions)], Value::Null);
-                self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
+                self.chain_context(&raised); self.thread.carried = Some(Fault::Thrown(raised));
                 return String::new();
             }
             if row == 0 {
                 let bom_conflict = message.starts_with("encoding problem:") && message.ends_with(" with BOM");
                 let details = Value::tuple(vec![Value::text(file), Value::Small(if bom_conflict { 1 } else { 0 }), Value::Small(if bom_conflict { 0 } else { -1 }), Value::Null]);
                 let raised = self.exception_instance(class, vec![Value::text(message), details], Value::Null);
-                self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
+                self.chain_context(&raised); self.thread.carried = Some(Fault::Thrown(raised));
                 return String::new();
             }
             let row = row.max(1);
@@ -36928,7 +37015,7 @@ impl Engine<'_> {
             let details = vec![Value::text(file), Value::Small(row as i64), Value::Small(col), line_text, Value::Small(end_row as i64), Value::Small(finish)];
             let raised = self.exception_instance(class, vec![Value::text(&message), Value::tuple(details)], Value::Null);
             self.chain_context(&raised);
-            self.carried = Some(Fault::Thrown(raised));
+            self.thread.carried = Some(Fault::Thrown(raised));
             return String::new();
         }
         said
@@ -37030,7 +37117,7 @@ impl Engine<'_> {
                 } else { 0 };
                 let answer = self.summon_module(&args, level);
                 if answer.is_err() {
-                    if let Some(Fault::Thrown(raised)) = &self.carried { self.trim_import_trace(raised); }
+                    if let Some(Fault::Thrown(raised)) = &self.thread.carried { self.trim_import_trace(raised); }
                 }
                 answer
             }
@@ -37046,10 +37133,10 @@ impl Engine<'_> {
             let base=Self::worth_of(given).unwrap_or_else(||given.contents());
             if matches!(&base,Value::Codepoints(_)) {
                 if let Some(system)=self.modules.get("sys").cloned() {
-                    let cache=self.class_get(system,"modules",false).map_err(|fault|{self.carried=Some(fault);self.special_fault()})?;
+                    let cache=self.class_get(system,"modules",false).map_err(|fault|{self.thread.carried=Some(fault);self.special_fault()})?;
                     if let Value::Map(entries)=cache.contents() {if let Some((_,module))=entries.iter().find(|(key,_)|key.equals(&base)){return Ok(module.clone())}}
                 }
-                self.type_utf8(&base).map_err(|fault|{self.carried=Some(fault);self.special_fault()})?;
+                self.type_utf8(&base).map_err(|fault|{self.thread.carried=Some(fault);self.special_fault()})?;
             }
         }
         let name = match args.first().map(Value::contents) {
@@ -37076,7 +37163,7 @@ impl Engine<'_> {
                 Some(Value::Text(named)) => {
                     // A spec naming another parent makes __package__ stale: the reference warns and keeps __package__.
                     if let Some(spec) = asked("__spec__").filter(|spec| !matches!(spec, Value::Null)) {
-                        let parent = self.class_get(spec, "parent", false).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                        let parent = self.class_get(spec, "parent", false).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?;
                         let agree = matches!(Self::worth_of(&parent).unwrap_or_else(|| parent.contents()), Value::Text(word) if word.as_ref() == named.as_ref());
                         if !agree { self.warn_like(26, "__package__ != __spec__.parent")?; }
                     }
@@ -37085,7 +37172,7 @@ impl Engine<'_> {
                 Some(other) if !matches!(other, Value::Null) => return Err("TypeError: package must be a string".into()),
                 _ => match asked("__spec__") {
                     Some(found) if !matches!(found, Value::Null) => {
-                        let parent = self.class_get(found, "parent", false).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                        let parent = self.class_get(found, "parent", false).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?;
                         let Value::Text(parent) = Self::worth_of(&parent).unwrap_or_else(|| parent.contents()) else { return Err("TypeError: __spec__.parent must be a string".into()) };
                         parent.to_string()
                     },
@@ -37125,7 +37212,7 @@ impl Engine<'_> {
         match loaded {
             Ok(module) => Ok(module),
             Err(Fault::Note(told)) => Err(told),
-            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+            Err(fled) => { self.thread.carried = Some(fled); Err(String::new()) }
         }
     }
 
@@ -37384,8 +37471,8 @@ impl Engine<'_> {
             let mut arguments = vec![Value::text(&message), category.clone(), Value::text(file), Value::Small(line as i64)];
             if let Some(owner) = module_hint { arguments.push(Value::text(owner)); }
             if let Err(words) = self.call_held(handler.clone(), arguments) {
-                if matches!(&self.carried, Some(Fault::Thrown(Value::Object(error))) if error.class_now().name == route[2]) {
-                    self.carried = None;
+                if matches!(&self.thread.carried, Some(Fault::Thrown(Value::Object(error))) if error.class_now().name == route[2]) {
+                    self.thread.carried = None;
                     let short = message.replace("Such sequences will not work in the future. ", "");
                     return Err(self.text_syntax(0, format!("SyntaxError: {short}"), file, line, 1, None, source));
                 }
@@ -37419,7 +37506,7 @@ impl Engine<'_> {
         let details = vec![Value::text(file), Value::Small(row as i64), Value::Small(column as i64), Value::text(&text), Value::Small(end_row as i64), Value::Small(end_column)];
         let raised = self.exception_instance(class, vec![Value::text(message), Value::tuple(details)], Value::Null);
         self.chain_context(&raised);
-        self.carried = Some(Fault::Thrown(raised));
+        self.thread.carried = Some(Fault::Thrown(raised));
         Some(String::new())
     }
 
@@ -37435,7 +37522,7 @@ impl Engine<'_> {
         let details = vec![Value::text(file), Value::Small(row as i64), Value::Small(0), Value::text(&text), Value::Small(row as i64), Value::Small(0)];
         let raised = self.exception_instance(class, vec![Value::text("invalid syntax"), Value::tuple(details)], Value::Null);
         self.chain_context(&raised);
-        self.carried = Some(Fault::Thrown(raised));
+        self.thread.carried = Some(Fault::Thrown(raised));
         String::new()
     }
 
@@ -37876,7 +37963,7 @@ impl Engine<'_> {
                     let end = row[start..].iter().take_while(|point| (0xd800..=0xdfff).contains(*point)).count() + start;
                     if let Some(Value::Class(class)) = self.native_exceptions.get("UnicodeEncodeError").cloned() {
                         let raised = self.exception_instance(class, vec![Value::text("utf-8"), args[0].contents(), Value::Small(start as i64), Value::Small(end as i64), Value::text("surrogates not allowed")], Value::Null);
-                        self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
+                        self.chain_context(&raised); self.thread.carried = Some(Fault::Thrown(raised));
                         return Err(String::new());
                     }
                 }
@@ -37983,9 +38070,10 @@ impl Engine<'_> {
         metadata.declared_on = 1;
         metadata.code_flags = bits;
         trial.compiled_wide_globals = crate::compile::text_wide_globals(&tokens, self.lang);
+        let trial_future_bits = trial.future_bits;
         Rc::make_mut(&mut checked).compiled_registry = Some(Rc::new(trial));
         let (imports, stores) = crate::compile::code_imports_stores(&checked.instrs, &checked.local_names);
-        let fields = vec![("co_consts".to_string(), constants), ("\0native_code".to_string(), self.routine_code(&Rc::new(metadata))), ("co_name".into(), Value::text(module_name)), ("co_qualname".into(), Value::text(module_name)),
+        let fields = vec![("\0initial_constants".to_string(), constants.clone()), ("\0compile_features".to_string(), Value::Small(trial_future_bits | if allow_top_await { 8192 } else { 0 })), ("co_consts".to_string(), constants), ("\0native_code".to_string(), self.routine_code(&Rc::new(metadata))), ("co_name".into(), Value::text(module_name)), ("co_qualname".into(), Value::text(module_name)),
             ("co_filename".into(), Value::Text(file.clone())),
             ("\0optimization".into(), Value::Small(optimization as i64)),
             ("\0compiled_program".into(), Value::Routine(checked))];
@@ -38011,12 +38099,12 @@ impl Engine<'_> {
         let module = match self.import_module(&notice[0]) {
             Ok(module) => module,
             Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
+            Err(fled) => { self.thread.carried = Some(fled); return Err(self.special_fault()); }
         };
         let warn = match self.import_member(&module, &notice[0], &notice[1]) {
             Ok(warn) => warn,
             Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
+            Err(fled) => { self.thread.carried = Some(fled); return Err(self.special_fault()); }
         };
         let Some(category) = self.native_exceptions.get(&notice[2]).cloned() else { return Ok(()); };
         let file = Value::text(&self.source);
@@ -38024,7 +38112,7 @@ impl Engine<'_> {
         match self.class_apply(warn, vec![Value::text(message), category, file, line]) {
             Ok(_) => Ok(()),
             Err(Fault::Note(told)) => Err(told),
-            Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
+            Err(fled) => { self.thread.carried = Some(fled); Err(self.special_fault()) }
         }
     }
 
@@ -38040,13 +38128,13 @@ impl Engine<'_> {
         let module = match self.import_module(&module_name) {
             Ok(module) => module,
             Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+            Err(fled) => { self.thread.carried = Some(fled); return Err(String::new()); }
         };
         // A module carries its names in cells; the function is what the cell holds.
         let teller = match self.class_get(module, &teller_name, false) {
             Ok(teller) => teller.contents(),
             Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+            Err(fled) => { self.thread.carried = Some(fled); return Err(String::new()); }
         };
         // The module the warning belongs to is the one the text runs
         // under where that is named, else the one its file spells.
@@ -38058,7 +38146,7 @@ impl Engine<'_> {
                 Err(self.text_syntax(mode, format!("SyntaxError: {message}"), file, row, column, None, source))
             }
             Err(Fault::Note(told)) => Err(told),
-            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+            Err(fled) => { self.thread.carried = Some(fled); Err(String::new()) }
         }
     }
 
@@ -38074,13 +38162,13 @@ impl Engine<'_> {
         let module = match self.import_module(&module_name) {
             Ok(module) => module,
             Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+            Err(fled) => { self.thread.carried = Some(fled); return Err(String::new()); }
         };
         // A module carries its names in cells; the function is what the cell holds.
         let teller = match self.class_get(module, &teller_name, false) {
             Ok(teller) => teller.contents(),
             Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+            Err(fled) => { self.thread.carried = Some(fled); return Err(String::new()); }
         };
         let file = Value::text(&self.source);
         let line = Value::Small(self.line as i64);
@@ -38088,7 +38176,7 @@ impl Engine<'_> {
         match self.class_apply(teller, handed) {
             Ok(_) => Ok(()),
             Err(Fault::Note(told)) => Err(told),
-            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+            Err(fled) => { self.thread.carried = Some(fled); Err(String::new()) }
         }
     }
 
@@ -38202,7 +38290,7 @@ impl Engine<'_> {
         // reference reads them from the calling frame's code.
         let caller_future = self.running_routine.as_ref().map_or(0, |body| body.future_bits);
         let held_future = match &first {
-            Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class_now().name.as_str()) => code.fields.borrow().iter().find_map(|(name, value)| if name == "co_flags" { match value.contents() { Value::Small(bits) => Some(bits & 0x1FE0010), _ => None } } else { None }).unwrap_or(0),
+            Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class_now().name.as_str()) => code.fields.borrow().iter().find_map(|(name, value)| if name == "\0compile_features" { match value.contents() { Value::Small(bits) => Some(bits & 0x1FE0010), _ => None } } else { None }).unwrap_or(0),
             _ => caller_future,
         };
         let optimization = match &first {
@@ -38218,7 +38306,7 @@ impl Engine<'_> {
             Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class_now().name.as_str()) => {
                 let fields = code.fields.borrow();
                 let mode = match fields.get(2).map(|(_, held)| held) { Some(Value::Small(n)) => *n as usize, _ => 0 };
-                let asynchronous = fields.iter().any(|(name, value)| name == "co_flags" && matches!(value, Value::Small(bits) if bits & 128 != 0));
+                let asynchronous = fields.iter().any(|(name, value)| name == "\0compile_features" && matches!(value, Value::Small(bits) if bits & 8192 != 0));
                 let level = fields.iter().find(|(name, _)| name == "co_optimize").and_then(|(_, value)| match value { Value::Small(n) => Some(*n), _ => None }).unwrap_or(0);
                 (fields[0].1.plain(), Some(fields[1].1.plain()), mode, asynchronous, level)
             }
@@ -38274,7 +38362,7 @@ impl Engine<'_> {
                 let body = self.running_routine.clone().expect("the caller routine");
                 let frame = &within.as_ref().expect("the caller locals").1;
                 let locals = self.names_about(&body, frame, Builtin::NearNames)
-                    .map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                    .map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?;
                 let near = match locals {
                     Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell,
                     other => Rc::new(RefCell::new(other)),
@@ -38297,7 +38385,7 @@ impl Engine<'_> {
         if let Some(word) = self.lang.module_builtins.first().filter(|_| self.compiled_builtins.is_none()) {
             let existing = match self.book_builtins(&outer, word) {
                 Ok(v) => v,
-                Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
+                Err(fled) => { self.thread.carried = Some(fled); return Err(self.special_fault()); }
             };
             if let Some(held) = &existing {
                 let kept = held.contents();
@@ -38306,7 +38394,7 @@ impl Engine<'_> {
                 }
             }
             if existing.is_none() {
-                let natives = self.source_builtin_dict().map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                let natives = self.source_builtin_dict().map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?;
                 let owner = outer.borrow().clone();
                 if matches!(&owner, Value::Object(_)) && self.special_value(&owner, 12).is_none() && Self::worth_of(&owner).is_none() {
                     let kind = match &owner { Value::Object(o) => o.class_now().name.clone(), other => other.core_kind() };
@@ -38317,7 +38405,7 @@ impl Engine<'_> {
                     _ => outer.clone(),
                 };
                 if let Err(failure) = self.book_put(&target, word, Some(natives)) {
-                    self.carried = Some(failure);
+                    self.thread.carried = Some(failure);
                     return Err(self.special_fault());
                 }
             }
@@ -38338,9 +38426,9 @@ impl Engine<'_> {
         if let Some(Value::Object(module)) = self.module_slots.get(&self.source).filter(|(_, name)| name != &self.class_word("main")).and_then(|(_, name)| self.modules.get(name)).cloned() {
             let globals = Rc::new(RefCell::new(Value::Fields(module)));
             if let Some(word) = self.lang.module_builtins.first().cloned() {
-                if self.book_builtins(&globals, &word).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?.is_none() {
-                    let builtins = self.source_builtin_dict().map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
-                    self.book_put(&globals, &word, Some(builtins)).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                if self.book_builtins(&globals, &word).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?.is_none() {
+                    let builtins = self.source_builtin_dict().map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?;
+                    self.book_put(&globals, &word, Some(builtins)).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?;
                 }
             }
             return self.run_text_booked(source, file, mode, globals, None, top_await, replacements, optimization, positions);
@@ -38351,7 +38439,7 @@ impl Engine<'_> {
         self.registry.optimize = optimization;
         let previous = self.registry.born.clone();
         if !self.lang.module_builtins.is_empty() {
-            let builtins = self.source_builtin_dict().map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+            let builtins = self.source_builtin_dict().map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?;
             self.registry.born = Some(builtins);
         }
         if replacements.is_none() && !self.registry.program_bound.iter().any(|k| self.lang.builtins.contains_key(k)) {
@@ -38376,7 +38464,7 @@ impl Engine<'_> {
         self.registry.optimize = optimization;
         let previous = self.registry.born.clone();
         if !self.lang.module_builtins.is_empty() {
-            let builtins = self.source_builtin_dict().map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+            let builtins = self.source_builtin_dict().map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?;
             self.registry.born = Some(builtins);
         }
         let compiled = self.text_program(source, &tokens, &file, mode, None, top_await, None, positions);
@@ -38448,7 +38536,7 @@ impl Engine<'_> {
         match ran {
             Ok(()) => {}
             Err(Fault::Note(told)) => { self.data.truncate(base); return Err(told); }
-            Err(fled) => { self.data.truncate(base); self.carried = Some(fled); return Err(String::new()); }
+            Err(fled) => { self.data.truncate(base); self.thread.carried = Some(fled); return Err(String::new()); }
         }
         let answer = if mode == 1 && self.data.len() > base { self.drop_top()? } else { Value::Null };
         self.data.truncate(base);
@@ -38492,7 +38580,7 @@ impl Engine<'_> {
                 },
             };
             let born = if self.our_native_dict(&born) {
-                self.canonical_builtin_dict().map_err(|fault| { self.carried = Some(fault); self.special_fault() })?
+                self.canonical_builtin_dict().map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?
             } else { born };
             local.globe = Some(globe);
             local.born = Some(born);
@@ -38609,7 +38697,7 @@ impl Engine<'_> {
         match ran {
             Ok(()) => {}
             Err(Fault::Note(told)) => { self.data.truncate(base); return Err(told); }
-            Err(fled) => { self.data.truncate(base); self.carried = Some(fled); return Err(String::new()); }
+            Err(fled) => { self.data.truncate(base); self.thread.carried = Some(fled); return Err(String::new()); }
         }
         let answer = if self.data.len() > base { self.drop_top()? } else { Value::Null };
         self.data.truncate(base);
@@ -38617,7 +38705,7 @@ impl Engine<'_> {
             match self.display_interactive(answer.contents()) {
                 Ok(()) => return Ok(Value::Null),
                 Err(Fault::Note(told)) => return Err(told),
-                Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+                Err(fled) => { self.thread.carried = Some(fled); return Err(String::new()); }
             }
         }
         Ok(answer)
@@ -38759,10 +38847,14 @@ impl Engine<'_> {
             if let Value::Adapter(parts) = given[0].contents() {
                 if parts.0 != 7 { return Err("TypeError: expected a code object".into()); }
                 let Some(Value::Routine(body)) = parts.1.first() else { return Err("TypeError: expected a code object".into()); };
-                let (graph, origins, routines) = crate::cache::encoded(body)?;
-                let packet = serde_json::json!({"abi": crate::PYTHON_CACHE_ABI, "file": body.written_in.as_deref().unwrap_or("<string>"),
-                    "mode": 0, "function": true, "program": graph, "bindings": self.registry, "origins": origins, "routines": routines});
-                let bytes = crate::cache::pack_json(&packet)?;
+                if let Some(initial) = &body.initial_constants {
+                    if body.code_constants.iter().enumerate().any(|(at, value)| matches!(value, Value::Class(_) | Value::Native(..) | Value::ByteKind(..) | Value::SortOf(_))
+                        && !initial.get(at).is_some_and(|old| old.same_value(value))) {
+                        return Err("ValueError: code cache cannot store a replaced type constant".into());
+                    }
+                }
+                let (graph, origins, routines, sources) = crate::cache::encoded(body)?;
+                let bytes = crate::cache::pack_packet(body.written_in.as_deref().unwrap_or("<string>"), 0, true, &graph, &self.registry, &origins, &routines, &sources)?;
                 return Ok(Value::Bytes(Rc::new(RefCell::new(bytes)), false, Rc::from("b")));
             }
             let Value::Object(code) = given[0].contents() else { return Err("TypeError: expected a code object".into()); };
@@ -38798,11 +38890,9 @@ impl Engine<'_> {
                 Rc::new(program.replacing_constants(&relocated)?)
             } else { program.clone() };
             let bindings = serde_json::to_value(scope).map_err(|e| format!("ValueError: {e}"))?;
-            let (graph, origins, routines) = crate::cache::encoded(&program)?;
+            let (graph, origins, routines, sources) = crate::cache::encoded(&program)?;
             let mode = match fields[2].1 { Value::Small(n) => n, _ => return Err("ValueError: invalid code mode".into()) };
-            let packet = serde_json::json!({"abi": crate::PYTHON_CACHE_ABI, "file": fields[1].1.plain(),
-                "mode": mode, "program": graph, "bindings": bindings, "origins": origins, "routines": routines});
-            let bytes = crate::cache::pack_json(&packet)?;
+            let bytes = crate::cache::pack_packet(&fields[1].1.plain(), mode, false, &graph, &bindings, &origins, &routines, &sources)?;
             return Ok(Value::Bytes(Rc::new(RefCell::new(bytes)), false, Rc::from("b")));
         }
         let Value::Bytes(bytes, ..) = given[0].contents() else { return Err("TypeError: expected cache bytes".into()); };
@@ -38819,14 +38909,22 @@ impl Engine<'_> {
             Value::Routine(body) => self.routine_code(body), other => other.clone(),
         }).collect());
         let words = self.lang.compile_parameters.clone();
-        let fields = vec![(words[0].clone(), Value::text("")), (words[1].clone(), Value::text(&file)),
-            (words[2].clone(), Value::Small(mode as i64)), ("co_flags".into(), Value::Small(program.code_flags)),
-            ("co_firstlineno".into(), Value::Small(program.declared_on as i64)), ("co_consts".into(), constants),
+        let fields = vec![
+            (words[0].clone(), Value::Text(program.live_source.clone())),
+            (words[1].clone(), Value::text(&file)),
+            (words[2].clone(), Value::Small(mode as i64)),
+            ("co_flags".into(), Value::Small(program.code_flags)),
+            ("co_firstlineno".into(), Value::Small(program.declared_on.max(1) as i64)),
+            ("co_optimize".into(), Value::Small(program.compiled_optimize)),
+            ("\0initial_constants".into(), constants.clone()),
+            ("\0compile_features".into(), Value::Small(program.future_bits | if program.image_origin.2 & 4 != 0 { 8192 } else { 0 })),
+            ("co_consts".into(), constants),
             ("co_filename".into(), Value::text(&file)),
             ("\0native_code".into(), self.routine_code(&program)),
             ("\0compiled_program".into(), Value::Routine(program)),
             ("\0compiled_bindings".into(), Value::text(&bindings)),
-            ("\0code_archive".into(), archive)];
+            ("\0code_archive".into(), archive),
+        ];
         self.made += 1;
         let class = self.code_class();
         Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made })))
@@ -39288,7 +39386,8 @@ fn civil_picture(args: &[Value]) -> Result<Value, String> {
 mod capsule_native_checks {
     use crate::capsule::NativeCapsule;
     use std::ffi::{c_void, CString};
-    use std::{cell::Cell, rc::Rc};
+    use std::{cell::Cell};
+    use crate::value::Rc;
     struct Payload(Rc<Cell<usize>>);
     impl Drop for Payload { fn drop(&mut self) { self.0.set(self.0.get() + 1); } }
     unsafe extern "C" fn release(pointer: *mut c_void) { drop(unsafe { Box::from_raw(pointer.cast::<Payload>()) }); }

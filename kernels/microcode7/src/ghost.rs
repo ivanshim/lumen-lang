@@ -14,7 +14,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
-use std::rc::{Rc, Weak};
+use crate::data::{Rc, Weak};
 
 use crate::data::{Adornment, Blueprint, Env, Hold, IteratorKind, SetStore, Thing, Value};
 use crate::exec::Suspension;

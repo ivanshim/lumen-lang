@@ -42,6 +42,12 @@ def encode(obj, encoding='utf-8', errors=_runtime._default_errors):
 def decode(obj, encoding='utf-8', errors=_runtime._default_errors):
     return _runtime.decode(obj, encoding, errors)
 
+# These are this module's own entry points, as their reference counterparts
+# are: a pickle that names one must find it again under '_codecs'.
+for _entry in (register, unregister, lookup, register_error, lookup_error, encode, decode):
+    _entry.__module__ = __name__
+del _entry
+
 # Preserve C-function attribute behavior when codecs attach helpers to classes.
 class _CodecCall(staticmethod):
     # A static method stands in a class body without binding, as a C codec

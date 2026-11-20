@@ -5,7 +5,7 @@ use crate::data::{Names, Value};
 use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{Signed, ToPrimitive, Zero};
-use std::rc::Rc;
+use crate::data::Rc;
 
 type ResultValue = Result<Value, String>;
 

@@ -1,5 +1,6 @@
 //! The Python heap accelerator writes directly through a list's shared holder.
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell};
+use crate::data::Rc;
 use super::{Machine, Prim, Value};
 
 type HeapResult<T> = Result<T, String>;

@@ -2,7 +2,7 @@
 use crate::data::{Value, worth_of_binary, nearest_binary};
 use num_bigint::BigInt;
 use num_traits::{Zero, ToPrimitive, Signed};
-use std::rc::Rc;
+use crate::data::Rc;
 use std::cell::RefCell;
 
 fn invalid(why: impl std::fmt::Display) -> String { format!("ValueError: {why}") }
@@ -162,14 +162,21 @@ pub fn perform(given: &[Value]) -> Result<Value,String> {
         return Ok(Value::tuple(vec![Value::Small(size as i64),Value::tuple(descriptions)]));
     }
     let payload=given.get(2).ok_or_else(|| invalid("missing struct data"))?.settled();
-    // Exact integer/bytes fields can be packed without Python normalization.
+    // Exact integer/bytes fields, and a format of only real fields handed
+    // real numbers, can be packed without Python normalization. A big
+    // integer or a mixed format still needs float() / __index__.
     if matches!(task, Value::Small(10)) {
-        let simple = match &payload {
-            Value::Tuple(items) => items.iter().all(|item| matches!(item.settled(), Value::Flag(_) | Value::Huge(_) | Value::Small(_) | Value::Octets { changeable: false, .. })),
-            _ => false,
+        let Value::Tuple(items) = &payload else { return Ok(Value::Nil); };
+        let float_only = pieces.iter().any(|Piece(code, ..)| !matches!(code, b'x'))
+            && pieces.iter().all(|Piece(code, ..)| matches!(code, b'e' | b'f' | b'd' | b'x'));
+        let ok = if float_only {
+            items.iter().all(|item| matches!(item.settled(), Value::Frac(_) | Value::Small(_)))
+        } else if pieces.iter().any(|Piece(code, ..)| matches!(code, b'e' | b'f' | b'd' | b'F' | b'D')) {
+            false
+        } else {
+            items.iter().all(|item| matches!(item.settled(), Value::Flag(_) | Value::Huge(_) | Value::Small(_) | Value::Octets { changeable: false, .. }))
         };
-        let converts = pieces.iter().any(|Piece(code, ..)| matches!(code, b'e' | b'f' | b'd' | b'F' | b'D'));
-        if !simple || converts { return Ok(Value::Nil); }
+        if !ok { return Ok(Value::Nil); }
         task = Value::Small(1);
     }
     if matches!(task,Value::Small(6)) {

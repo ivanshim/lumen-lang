@@ -1,7 +1,7 @@
 // Operations upon text, admitted only by their words in the definition.
 // Bounds count letters; byte places are used only after a bound is settled.
 
-use std::rc::Rc;
+use crate::value::Rc;
 use num_traits::ToPrimitive;
 use crate::lang::Lang;
 use crate::value::{Value, Wording};
@@ -855,6 +855,14 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
                     return Ok(items[0].clone());
                 }
             }
+            if items.iter().all(|item| matches!(item, Value::Text(_))) {
+                let mut text = String::new();
+                for (at, item) in items.iter().enumerate() {
+                    if at > 0 { text.push_str(s); }
+                    if let Value::Text(part) = item { text.push_str(part); }
+                }
+                return Ok(Value::text(&text));
+            }
             let separator: Vec<u32> = s.chars().map(u32::from).collect();
             let mut joined = Vec::new();
             for (i, item) in items.iter().enumerate() {
@@ -899,7 +907,7 @@ pub(crate) fn character_length(text: &Rc<str>) -> usize {
     if text.len() <= 64 { return text.chars().count(); }
     use std::cell::RefCell;
     use std::collections::HashMap;
-    use std::rc::Weak;
+    use crate::value::Weak;
     thread_local! {
         static LENGTHS: RefCell<HashMap<usize, (Weak<str>, usize)>> = RefCell::new(HashMap::new());
     }

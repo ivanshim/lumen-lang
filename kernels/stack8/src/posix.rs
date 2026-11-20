@@ -3,7 +3,7 @@
 use crate::value::Value;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
-use std::rc::Rc;
+use crate::value::Rc;
 use num_traits::ToPrimitive;
 
 struct Directory(*mut libc::DIR, bool);

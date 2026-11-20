@@ -1,5 +1,6 @@
 //! Accelerate the collections adapter's two-stack storage without Python callbacks.
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell};
+use crate::value::Rc;
 use super::{Engine, Res, Value};
 
 type Cell = Rc<RefCell<Value>>;

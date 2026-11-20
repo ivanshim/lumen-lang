@@ -1,7 +1,8 @@
 // CJK mapping lookups; data provenance and layout are in langs/lib_python/data/multibyte/README.md.
 use crate::value::Value;
 use num_traits::ToPrimitive;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell};
+use crate::value::Rc;
 fn word(data: &[u8], at: usize) -> u32 { u32::from_le_bytes(data[at..at+4].try_into().unwrap()) }
 fn wide(data: &[u8], at: usize) -> u64 { u64::from_le_bytes(data[at..at+8].try_into().unwrap()) }
 // Build-owned compressed tables are expanded once, retaining their original layout.

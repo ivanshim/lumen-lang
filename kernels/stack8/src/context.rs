@@ -3,7 +3,7 @@
 // belong to this interpreter; Python protocol objects keep them private.
 use crate::value::Value;
 use std::collections::HashMap;
-use std::rc::Rc;
+use crate::value::Rc;
 
 struct Saved {
     context: usize,

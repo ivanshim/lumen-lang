@@ -2,7 +2,7 @@
 // A context owns a row of bindings. Copying the row retains the same values;
 // replacing a binding never changes another context's row.
 use crate::data::Value;
-use std::rc::Rc;
+use crate::data::Rc;
 
 type Row = Vec<(usize, Value)>;
 struct ResetPoint { owner: usize, key: usize, value: Option<Value>, consumed: bool }

@@ -208,6 +208,7 @@ impl Value {
             Self::Wrapped(62, parts) => if matches!(parts.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             // The entry __slots__ lays down for a name reads as a
             // member descriptor, the same word type() gives that accessor.
+            Self::Wrapped(32, fields) if matches!(fields.get(2), Some(Self::Small(-3))) => "getset_descriptor",
             Self::Wrapped(32, parts) if matches!(parts.as_slice(), [Value::Text(name), Value::Blueprint(_)] if name.as_ref() != "__weakref__") => "member_descriptor",
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => "method",
             Self::Wrapped(3, parts) if parts.first().is_some_and(|entry| matches!(entry, Self::Intrinsic(..))) => {
@@ -289,7 +290,7 @@ impl Value {
     /// one like it: a small number by what it stands for, and anything
     /// held behind a pointer by that pointer.
     pub fn one_and_same(&self, other: &Self) -> bool {
-        use std::rc::Rc;
+        use crate::data::Rc;
         match (self, other) {
             (Self::Blueprint(left), Self::Blueprint(right)) => Rc::ptr_eq(left, right),
             (Self::Intrinsic(p, one), Self::Intrinsic(q, two)) => p == q && one == two,
@@ -316,11 +317,11 @@ impl Value {
     fn bound_owner_hash(value: &Self) -> Option<i64> {
         let pointer = match value {
             Self::Thing(object) => crate::data::Hold::as_ptr(object) as usize,
-            Self::Shared(slot) | Self::Mutable(slot, _) => std::rc::Rc::as_ptr(slot) as usize,
-            Self::Vector(items) => std::rc::Rc::as_ptr(items) as usize,
-            Self::Dict(items) => std::rc::Rc::as_ptr(items) as usize,
-            Self::Set(items) => std::rc::Rc::as_ptr(items) as usize,
-            Self::Octets { cell, .. } => std::rc::Rc::as_ptr(cell) as usize,
+            Self::Shared(slot) | Self::Mutable(slot, _) => crate::data::Rc::as_ptr(slot) as usize,
+            Self::Vector(items) => crate::data::Rc::as_ptr(items) as usize,
+            Self::Dict(items) => crate::data::Rc::as_ptr(items) as usize,
+            Self::Set(items) => crate::data::Rc::as_ptr(items) as usize,
+            Self::Octets { cell, .. } => crate::data::Rc::as_ptr(cell) as usize,
             other => return other.hash_number(),
         };
         Some((pointer / 16) as i64)
@@ -328,23 +329,23 @@ impl Value {
 
     pub fn hash_number(&self) -> Option<i64> {
         let raw = match self {
-            Self::Opaque(capsule) => (std::rc::Rc::as_ptr(capsule) as usize >> 4) as i64,
+            Self::Opaque(capsule) => (crate::data::Rc::as_ptr(capsule) as usize >> 4) as i64,
             Self::Wrapped(185, contents) => {
                 match (contents.first(), contents.last()) {
                     (Some(Self::Blueprint(class)), Some(Self::Thing(instance))) => {
-                        let initial = std::rc::Rc::as_ptr(class) as usize / 16;
+                        let initial = crate::data::Rc::as_ptr(class) as usize / 16;
                         let called = match contents.get(1) { Some(Self::Text(word)) => word.as_ref(), _ => "__init__" };
                         let signature = called.bytes().fold(initial, |part, byte| part.rotate_left(5) ^ usize::from(byte));
                         (signature ^ (crate::data::Hold::as_ptr(instance) as usize / 16)) as i64
                     }
-                    _ => (std::rc::Rc::as_ptr(contents) as usize / 16) as i64,
+                    _ => (crate::data::Rc::as_ptr(contents) as usize / 16) as i64,
                 }
             }
             // A binding's cell is no thing of its own: what is kept in
             // it hashes as the kept value hashes.
             Self::Shared(cell) | Self::Mutable(cell, _) => return cell.borrow().hash_number(),
             Self::Complex(pair) => {
-                if pair.0.is_nan() || pair.1.is_nan() { return Some((std::rc::Rc::as_ptr(pair) as usize / 16) as i64); }
+                if pair.0.is_nan() || pair.1.is_nan() { return Some((crate::data::Rc::as_ptr(pair) as usize / 16) as i64); }
                 let real = crate::complex::decimal_value(pair.0).hash_number()?;
                 let imaginary = crate::complex::decimal_value(pair.1).hash_number()?;
                 real.wrapping_add(1_000_003i64.wrapping_mul(imaginary))
@@ -355,45 +356,45 @@ impl Value {
             Self::Octets { cell, changeable: false, .. } => return Some(py_digest_octets(&cell.borrow())),
             Self::Member(owner, operation) => {
                 let identity = match owner.as_ref() {
-                    Self::Shared(place) | Self::Mutable(place, _) => std::rc::Rc::as_ptr(place) as usize / 16,
-                    Self::Vector(row) => std::rc::Rc::as_ptr(row) as usize / 16,
-                    Self::Dict(pairs) => std::rc::Rc::as_ptr(pairs) as usize / 16,
-                    Self::Set(group) => std::rc::Rc::as_ptr(group) as usize / 16,
+                    Self::Shared(place) | Self::Mutable(place, _) => crate::data::Rc::as_ptr(place) as usize / 16,
+                    Self::Vector(row) => crate::data::Rc::as_ptr(row) as usize / 16,
+                    Self::Dict(pairs) => crate::data::Rc::as_ptr(pairs) as usize / 16,
+                    Self::Set(group) => crate::data::Rc::as_ptr(group) as usize / 16,
                     Self::Thing(thing) => crate::data::Hold::as_ptr(thing) as usize / 16,
-                    Self::Octets { cell, .. } => std::rc::Rc::as_ptr(cell) as usize / 16,
+                    Self::Octets { cell, .. } => crate::data::Rc::as_ptr(cell) as usize / 16,
                     value => value.hash_number()? as usize,
                 };
                 identity as i64 ^ Self::text(operation).hash_number()?
             }
             Self::Intrinsic(_, spelling) => return Self::text(spelling).hash_number(),
             Self::OctetKind { changeable, .. } => return Self::text(match changeable { true => "bytearray", false => "bytes" }).hash_number(),
-            Self::Blueprint(class) => (std::rc::Rc::as_ptr(class) as usize / 16) as i64,
-            Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
+            Self::Blueprint(class) => (crate::data::Rc::as_ptr(class) as usize / 16) as i64,
+            Self::Routine(program) => (crate::data::Rc::as_ptr(program) as usize / 16) as i64,
             Self::Wrapped(tag, contents) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60 | 152..=158) => {
                 let mut total = i64::from(*tag);
                 for entry in contents.iter() { total = total.wrapping_mul(1_000_003) ^ entry.hash_number()?; }
                 total
             }
             Self::Wrapped(7, _) => return Self::code_worth_hash(self),
-            Self::Wrapped(4..=6 | 134, contents) => (std::rc::Rc::as_ptr(contents) as usize / 16) as i64,
-            Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,
-            Self::Method(program, receiver, _) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (crate::data::Hold::as_ptr(receiver) as usize / 16)) as i64,
+            Self::Wrapped(4..=6 | 134, contents) => (crate::data::Rc::as_ptr(contents) as usize / 16) as i64,
+            Self::Bound(program, frame) => ((crate::data::Rc::as_ptr(program) as usize / 16) ^ (crate::data::Rc::as_ptr(frame) as usize / 16)) as i64,
+            Self::Method(program, receiver, _) => ((crate::data::Rc::as_ptr(program) as usize / 16) ^ (crate::data::Hold::as_ptr(receiver) as usize / 16)) as i64,
             // A routine bound to a value hashes by the routine and by
             // where the value lies, never by asking the value itself.
             Self::Wrapped(3, contents) if matches!(contents.first(), Some(Self::Wrapped(60, _) | Self::Intrinsic(..))) => Self::bound_owner_hash(contents.get(1)?)? ^ contents[0].hash_number()?,
             Self::Wrapped(3, parts) if parts.len() == 2 => {
                 let receiver = match &parts[1] {
                     Self::Thing(thing) => crate::data::Hold::as_ptr(thing) as usize / 16,
-                    Self::Mutable(cell, _) | Self::Shared(cell) => std::rc::Rc::as_ptr(cell) as usize / 16,
-                    Self::Vector(values) => std::rc::Rc::as_ptr(values) as usize / 16,
-                    Self::Dict(values) => std::rc::Rc::as_ptr(values) as usize / 16,
-                    Self::Set(values) => std::rc::Rc::as_ptr(values) as usize / 16,
-                    Self::Octets { cell, .. } => std::rc::Rc::as_ptr(cell) as usize / 16,
+                    Self::Mutable(cell, _) | Self::Shared(cell) => crate::data::Rc::as_ptr(cell) as usize / 16,
+                    Self::Vector(values) => crate::data::Rc::as_ptr(values) as usize / 16,
+                    Self::Dict(values) => crate::data::Rc::as_ptr(values) as usize / 16,
+                    Self::Set(values) => crate::data::Rc::as_ptr(values) as usize / 16,
+                    Self::Octets { cell, .. } => crate::data::Rc::as_ptr(cell) as usize / 16,
                     value => value.hash_number()? as usize,
                 };
                 parts[0].hash_number()? ^ receiver as i64
             }
-            Self::Wrapped(9, kept) => (std::rc::Rc::as_ptr(kept) as usize / 16) as i64,
+            Self::Wrapped(9, kept) => (crate::data::Rc::as_ptr(kept) as usize / 16) as i64,
             Self::Nil => 0x9e3779b9,
             Self::Ellipsis => 0x9e3779ba,
             Self::Wrapped(8, names) => return names.first().and_then(|word| word.hash_number()),
@@ -411,7 +412,7 @@ impl Value {
             }
             Self::Frac(parts) if parts.places.is_some() => {
                 if parts.beneath == BigInt::from(0) {
-                    return Some(if parts.above == BigInt::from(0) { (std::rc::Rc::as_ptr(parts) as usize / 16) as i64 } else if parts.above.is_negative() { -314159 } else { 314159 });
+                    return Some(if parts.above == BigInt::from(0) { (crate::data::Rc::as_ptr(parts) as usize / 16) as i64 } else if parts.above.is_negative() { -314159 } else { 314159 });
                 }
                 let prime = BigInt::from(2_305_843_009_213_693_951u64);
                 let bottom = &parts.beneath % &prime;
@@ -484,7 +485,7 @@ impl Value {
             // An iterator is known by where it lies, as the reference
             // hashes one by its place, so two names for the same walk
             // give back the same number.
-            Self::Iterator(cell) => (std::rc::Rc::as_ptr(cell) as usize / 16) as i64,
+            Self::Iterator(cell) => (crate::data::Rc::as_ptr(cell) as usize / 16) as i64,
             _ => return None,
         };
         Some(if raw == -1 { -2 } else { raw })

@@ -85,8 +85,43 @@ skip_on_newlib = _identity
 # already has it and runs unchanged.
 force_not_colorized_test_class = _identity
 
+# Resources are enabled the way regrtest's -u option does it: none
+# unless the runner names them, as LUMEN_TEST_RESOURCES=xpickle=3.12,network.
+def _resources_named():
+    import os
+    named = {}
+    for item in os.environ.get('LUMEN_TEST_RESOURCES', '').split(','):
+        name, _, value = item.partition('=')
+        if name:
+            named[name] = value or None
+    return named
+
+use_resources = _resources_named()
+
+class ResourceDenied(unittest.SkipTest):
+    """Test skipped because it requested a disallowed resource.
+
+    This is raised when a test calls requires() for a resource that
+    has not be enabled.  It is used to distinguish between expected
+    and unexpected skips.
+    """
+
 def is_resource_enabled(resource):
-    return False
+    return use_resources is None or resource in use_resources
+
+def get_resource_value(resource):
+    if use_resources is None:
+        return None
+    return use_resources.get(resource)
+
+def requires(resource, msg=None):
+    """Raise ResourceDenied if the specified resource is not available."""
+    if not is_resource_enabled(resource):
+        if msg is None:
+            msg = "Use of the %r resource not enabled" % resource
+        raise ResourceDenied(msg)
+    if resource in {"network", "urlfetch"} and not has_socket_support:
+        raise ResourceDenied("No socket support")
 
 def requires_resource(resource):
     return unittest.skipUnless(is_resource_enabled(resource), 'resource ' + resource + ' is not enabled')

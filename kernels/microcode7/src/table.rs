@@ -230,7 +230,7 @@ pub struct Table {
     pub quoted_terminators: Vec<Vec<char>>,
     /// The text under way, where the caller handed it over: the
     /// words an annotation was written with are read back out of it.
-    pub source: std::cell::RefCell<Option<std::rc::Rc<str>>>,
+    pub source: std::cell::RefCell<Option<crate::data::Rc<str>>>,
 }
 
 // Label shapes: L list of words, B boolean, N count or null, W word, O word or null, T tiers.

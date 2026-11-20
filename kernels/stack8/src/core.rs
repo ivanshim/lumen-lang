@@ -175,7 +175,7 @@ impl Value {
             // reckoning the repr gives it.
             // The native module dictionary is a get/set descriptor, not a slot.
             Value::Adapter(w) if w.0 == 16 && w.1.get(2).is_some_and(|part| part.plain() == "\0module-namespace") => "member_descriptor",
-            Value::Adapter(w) if w.0 == 16 && w.1.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") => "getset_descriptor",
+            Value::Adapter(w) if w.0 == 16 && w.1.get(2).is_some_and(|part| matches!(part.plain().as_str(), "\0instance-namespace" | "\0object-class")) => "getset_descriptor",
             Value::Adapter(w) if w.0 == 29 && w.1.len() == 3 => "classmethod_descriptor",
             Value::Adapter(w) if w.0 == 29 => return match w.1.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => Self::loose_member_descriptor(kind, word).map_or("method_descriptor", |(_, ty)| ty).to_string(),
@@ -280,16 +280,16 @@ impl Value {
     pub fn core_hash(&self) -> Option<i64> {
         let finish = |n| if n == -1 { -2 } else { n };
         match self {
-            Value::Capsule(held) => Some(finish((std::rc::Rc::as_ptr(held) as usize >> 4) as i64)),
+            Value::Capsule(held) => Some(finish((crate::value::Rc::as_ptr(held) as usize >> 4) as i64)),
             Value::Adapter(slot) if slot.0 == 183 => {
                 let hashed = match (slot.1.first(), slot.1.last()) {
                     (Some(Value::Class(owner)), Some(Value::Object(receiver))) => {
-                        let mut descriptor = std::rc::Rc::as_ptr(owner) as usize >> 4;
+                        let mut descriptor = crate::value::Rc::as_ptr(owner) as usize >> 4;
                         let word = match slot.1.get(1) { Some(Value::Text(word)) => word.as_ref(), _ => "__init__" };
                         for byte in word.bytes() { descriptor = descriptor.rotate_left(5) ^ usize::from(byte); }
                         descriptor ^ (crate::value::Keep::as_ptr(receiver) as usize >> 4)
                     }
-                    _ => std::rc::Rc::as_ptr(slot) as usize >> 4,
+                    _ => crate::value::Rc::as_ptr(slot) as usize >> 4,
                 };
                 Some(finish(hashed as i64))
             }
@@ -298,7 +298,7 @@ impl Value {
             // the reference's own accounts.
             Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell.borrow().core_hash(),
             Value::Complex(z) => {
-                if z.real.is_nan() || z.imag.is_nan() { return Some((std::rc::Rc::as_ptr(z) as usize >> 4) as i64); }
+                if z.real.is_nan() || z.imag.is_nan() { return Some((crate::value::Rc::as_ptr(z) as usize >> 4) as i64); }
                 let a = crate::complex::real(z.real).core_hash()?;
                 let b = crate::complex::real(z.imag).core_hash()?;
                 Some(finish(a.wrapping_add(b.wrapping_mul(1_000_003))))
@@ -315,33 +315,33 @@ impl Value {
             Value::Bytes(bytes, false, _) => Some(py_hash_bytes(&bytes.borrow())),
             Value::ValueMethod(bound) => {
                 let receiver = match &bound.0 {
-                    Value::Binding(cell) | Value::Bond(cell) => (std::rc::Rc::as_ptr(cell) as usize >> 4) as i64,
-                    Value::Collection(cell, _) => (std::rc::Rc::as_ptr(cell) as usize >> 4) as i64,
-                    Value::Array(items) => (std::rc::Rc::as_ptr(items) as usize >> 4) as i64,
-                    Value::Map(items) => (std::rc::Rc::as_ptr(items) as usize >> 4) as i64,
-                    Value::Set(items) => (std::rc::Rc::as_ptr(items) as usize >> 4) as i64,
+                    Value::Binding(cell) | Value::Bond(cell) => (crate::value::Rc::as_ptr(cell) as usize >> 4) as i64,
+                    Value::Collection(cell, _) => (crate::value::Rc::as_ptr(cell) as usize >> 4) as i64,
+                    Value::Array(items) => (crate::value::Rc::as_ptr(items) as usize >> 4) as i64,
+                    Value::Map(items) => (crate::value::Rc::as_ptr(items) as usize >> 4) as i64,
+                    Value::Set(items) => (crate::value::Rc::as_ptr(items) as usize >> 4) as i64,
                     Value::Object(object) => (crate::value::Keep::as_ptr(object) as usize >> 4) as i64,
-                    Value::Bytes(cell, ..) => (std::rc::Rc::as_ptr(cell) as usize >> 4) as i64,
+                    Value::Bytes(cell, ..) => (crate::value::Rc::as_ptr(cell) as usize >> 4) as i64,
                     other => other.core_hash()?,
                 };
                 Some(finish(receiver ^ Value::text(&bound.1).core_hash()?))
             }
             Value::Native(_, name) => Value::Text(name.clone()).core_hash(),
             Value::ByteKind(mutable, _) => Value::text(if *mutable { "bytearray" } else { "bytes" }).core_hash(),
-            Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
-            Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
+            Value::Class(kind) => Some((crate::value::Rc::as_ptr(kind) as usize >> 4) as i64),
+            Value::Routine(code) => Some((crate::value::Rc::as_ptr(code) as usize >> 4) as i64),
             Value::Adapter(parts) if parts.0 == 7 => Self::code_field_hash(self),
-            Value::Adapter(held) if held.0 == 64 => Some(finish((std::rc::Rc::as_ptr(held) as usize >> 4) as i64)),
-            Value::Method(owner, code, _) => Some(((crate::value::Keep::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),
+            Value::Adapter(held) if held.0 == 64 => Some(finish((crate::value::Rc::as_ptr(held) as usize >> 4) as i64)),
+            Value::Method(owner, code, _) => Some(((crate::value::Keep::as_ptr(owner) as usize ^ crate::value::Rc::as_ptr(code) as usize) >> 4) as i64),
 
             Value::Adapter(bound) if bound.0 == 3 && matches!(bound.1.first(), Some(Value::Adapter(method)) if method.0 == 29) || bound.0 == 3 && matches!(bound.1.first(), Some(Value::Native(..))) => {
                 let owner = match bound.1.get(1)? {
                     Value::Object(object) => (crate::value::Keep::as_ptr(object) as usize >> 4) as i64,
-                    Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) => (std::rc::Rc::as_ptr(cell) as usize >> 4) as i64,
-                    Value::Array(row) => (std::rc::Rc::as_ptr(row) as usize >> 4) as i64,
-                    Value::Map(pairs) => (std::rc::Rc::as_ptr(pairs) as usize >> 4) as i64,
-                    Value::Set(set) => (std::rc::Rc::as_ptr(set) as usize >> 4) as i64,
-                    Value::Bytes(buffer, _, _) => (std::rc::Rc::as_ptr(buffer) as usize >> 4) as i64,
+                    Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) => (crate::value::Rc::as_ptr(cell) as usize >> 4) as i64,
+                    Value::Array(row) => (crate::value::Rc::as_ptr(row) as usize >> 4) as i64,
+                    Value::Map(pairs) => (crate::value::Rc::as_ptr(pairs) as usize >> 4) as i64,
+                    Value::Set(set) => (crate::value::Rc::as_ptr(set) as usize >> 4) as i64,
+                    Value::Bytes(buffer, _, _) => (crate::value::Rc::as_ptr(buffer) as usize >> 4) as i64,
                     value => value.core_hash()?,
                 };
                 Some(finish(owner ^ bound.1[0].core_hash()?))
@@ -359,7 +359,7 @@ impl Value {
                 Some(if h == u64::MAX { 1546275796 } else { h as i64 })
             }
             Value::Real(r) => {
-                if r.q == BigInt::from(0) { return if r.p == BigInt::from(0) { Some((std::rc::Rc::as_ptr(r) as usize >> 4) as i64) } else { Some(if r.p.is_negative() { -314159 } else { 314159 }) }; }
+                if r.q == BigInt::from(0) { return if r.p == BigInt::from(0) { Some((crate::value::Rc::as_ptr(r) as usize >> 4) as i64) } else { Some(if r.p.is_negative() { -314159 } else { 314159 }) }; }
                 let modulus = BigInt::from((1u64 << 61)-1);
                 let denom = &r.q % &modulus;
                 if denom == BigInt::from(0) { return Some(if r.p.is_negative() { -314159 } else { 314159 }); }
@@ -422,11 +422,11 @@ impl Value {
                 let owner = &bound.1[1];
                 let identity = match owner {
                     Value::Object(object) => (crate::value::Keep::as_ptr(object) as usize >> 4) as i64,
-                    Value::Bond(place) | Value::Binding(place) | Value::Collection(place, _) => (std::rc::Rc::as_ptr(place) as usize >> 4) as i64,
-                    Value::Array(row) => (std::rc::Rc::as_ptr(row) as usize >> 4) as i64,
-                    Value::Map(book) => (std::rc::Rc::as_ptr(book) as usize >> 4) as i64,
-                    Value::Set(group) => (std::rc::Rc::as_ptr(group) as usize >> 4) as i64,
-                    Value::Bytes(row, ..) => (std::rc::Rc::as_ptr(row) as usize >> 4) as i64,
+                    Value::Bond(place) | Value::Binding(place) | Value::Collection(place, _) => (crate::value::Rc::as_ptr(place) as usize >> 4) as i64,
+                    Value::Array(row) => (crate::value::Rc::as_ptr(row) as usize >> 4) as i64,
+                    Value::Map(book) => (crate::value::Rc::as_ptr(book) as usize >> 4) as i64,
+                    Value::Set(group) => (crate::value::Rc::as_ptr(group) as usize >> 4) as i64,
+                    Value::Bytes(row, ..) => (crate::value::Rc::as_ptr(row) as usize >> 4) as i64,
                     _ => owner.core_hash()?,
                 };
                 Some(finish(bound.1[0].core_hash()? ^ identity))
@@ -442,7 +442,7 @@ impl Value {
             // A cursor walks a row, a span or a walk of the kernel's
             // own; it hashes by where it lies, as the reference hashes
             // an iterator by its place, so two names for one walk agree.
-            Value::Cursor(state) => Some((std::rc::Rc::as_ptr(state) as usize >> 4) as i64),
+            Value::Cursor(state) => Some((crate::value::Rc::as_ptr(state) as usize >> 4) as i64),
             _ => None,
         }
     }

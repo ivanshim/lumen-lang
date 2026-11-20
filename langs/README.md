@@ -6324,6 +6324,8 @@ routine's frame is absent: the frame walk in `sys._getframe` and along
 `f_back` passes over it, so a warning raised through a wrapper like
 `functools.partial` is charged to the caller that the reference names.
 
+Operations 13 and 14 provide fresh integer allocations and immutable compilation
+input with body boundaries for private marshal code records.
 
 `ext.builtin.static_namespace` reads stored namespaces and class linearizations
 without invoking attribute hooks, metaclass properties, or other descriptors.

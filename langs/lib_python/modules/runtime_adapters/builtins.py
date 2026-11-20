@@ -59,7 +59,13 @@ def anext(iterator, default=_async_next_missing, /):
     awaitable = method()
     if default is _async_next_missing:
         return awaitable
-    return _AsyncNextAwaitable(awaitable, default)
+    return _awaiting_next(awaitable, default)
+
+
+# Not a name of the reference's builtins either: reached by its maker only.
+def _awaiting_next(awaitable, default, _kind=_AsyncNextAwaitable):
+    return _kind(awaitable, default)
+del _AsyncNextAwaitable
 
 
 def aiter(iterable, /):

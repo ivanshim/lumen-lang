@@ -62,15 +62,17 @@ def _text_of(data, encoding, errors):
 
 class _Readable:
     # Buffer a borrowed child descriptor with the ordinary file implementation.
-    def __init__(self, handle, which, text=False, encoding='utf-8', errors=None):
+    def __init__(self, handle, which, text=False, encoding='utf-8', errors=None, buffered=True):
         import io
         self._handle = handle
         self._which = which
+        self._buffered = buffered
         self._text = text
         self.encoding = encoding if text else None
         self.errors = errors if text else None
         fd = _subprocess(8, handle, which)
         self._stream = io.open(fd, 'r' if text else 'rb', closefd=False,
+                               buffering=-1 if text or buffered else 0,
                                encoding=encoding if text else None,
                                errors=errors if text else None)
         self.closed = False
@@ -95,10 +97,12 @@ class _Readable:
                     self._stream._snapshot = None
                 else:
                     self._pending = self._stream._get_decoded_chars() + _text_of(data, self.encoding, self.errors)
-            else:
+            elif self._buffered:
                 buffered = self._stream._read_buf[self._stream._read_pos:]
                 self._stream._reset_read_buf()
                 self._pending = buffered + result
+            else:
+                self._pending = result
 
     # Honor the requested size instead of waiting for end-of-file.
     def read(self, size=-1):
@@ -235,8 +239,8 @@ class Popen:
         self.args = args
         self.returncode = None
         self.stdin = _Writable(handle, self._text, self._encoding, self._errors) if in_mode == 1 else None
-        self.stdout = _Readable(handle, 0, self._text, self._encoding, self._errors) if out_mode == 1 else None
-        self.stderr = None if self._stderr_to_stdout else (_Readable(handle, 1, self._text, self._encoding, self._errors) if err_mode in (1, 3) else None)
+        self.stdout = _Readable(handle, 0, self._text, self._encoding, self._errors, bufsize != 0) if out_mode == 1 else None
+        self.stderr = None if self._stderr_to_stdout else (_Readable(handle, 1, self._text, self._encoding, self._errors, bufsize != 0) if err_mode in (1, 3) else None)
 
     def poll(self):
         if self.returncode is not None:
@@ -297,15 +301,16 @@ class Popen:
         if timeout is not None:
             import time
             deadline = time.monotonic() + timeout
-            while True:
-                code = _subprocess(5, self._handle)
-                if code is not None and code is not False:
-                    self.returncode = code
-                    break
-                if time.monotonic() >= deadline:
-                    self.kill()
-                    raise TimeoutExpired(self.args, timeout)
-                _wait(10000)
+        else:
+            deadline = None
+        while True:
+            code = self.poll()
+            if code is not None and _subprocess(9, self._handle):
+                break
+            if deadline is not None and time.monotonic() >= deadline:
+                self.kill()
+                raise TimeoutExpired(self.args, timeout)
+            _wait(10000)
         empty = '' if self.text_mode else b''
         out = (empty if self.stdout.closed else self.stdout.read()) if self.stdout is not None else None
         if self._stderr_to_stdout:
@@ -324,8 +329,9 @@ class Popen:
         return (out, err)
 
     def kill(self):
-        _subprocess(6, self._handle)
-        self.returncode = -9
+        if self.poll() is None:
+            _subprocess(6, self._handle)
+            self.returncode = -9
 
     # Deliver termination using its documented signal rather than SIGKILL.
     def terminate(self):

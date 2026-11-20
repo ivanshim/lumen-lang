@@ -7,7 +7,7 @@ impl Machine<'_> {
         match self.apply_held(callable, input) {
             Ok(answer) => Ok(answer),
             Err(Escape::Error(message)) => Err(message),
-            Err(raised) => { self.got_away = Some(raised); Err(self.bad_answer()) }
+            Err(raised) => { self.act.got_away = Some(raised); Err(self.bad_answer()) }
         }
     }
     fn warning_send(&mut self, receiver: Value, word: &str, input: Vec<Value>) -> Result<Value, String> {
@@ -212,7 +212,7 @@ impl Machine<'_> {
         if !matches!(action.settled(), Value::Text(_)) { return Err(format!("TypeError: warnings.defaultaction must be a string, not '{}'", action.kind_word())); }
         let word = action.bare();
         if word == "ignore" { return Ok(Value::Nil); }
-        if word == "error" { self.got_away = Some(Escape::Thrown(message)); return Err(self.bad_answer()); }
+        if word == "error" { self.act.got_away = Some(Escape::Thrown(message)); return Err(self.bad_answer()); }
         if word != "always" && word != "all" {
             if local { self.warning_send(registry.clone(), "__setitem__", vec![key, Value::Flag(true)])?; }
             match word.as_str() {
@@ -263,7 +263,7 @@ impl Machine<'_> {
         }
         if let Some(system) = self.imported.get("sys").cloned() {
             if let Some(destination) = self.attribute(&system, "stderr") {
-                if !matches!(destination.settled(), Value::Nil) { let _ = self.warning_send(destination, "write", vec![Value::text(&written)]); self.got_away = None; }
+                if !matches!(destination.settled(), Value::Nil) { let _ = self.warning_send(destination, "write", vec![Value::text(&written)]); self.act.got_away = None; }
             }
         }
         Ok(Value::Nil)
@@ -285,7 +285,7 @@ impl Machine<'_> {
         if matches!(name, Value::Nil) { return Ok(Value::Nil); }
         let code = match self.warning_apply(reader, vec![name]) {
             Ok(code) => code,
-            Err(message) if self.got_away.as_ref().map_or(message.starts_with("ImportError:"), |raised| self.escape_names(raised, "ImportError")) => { self.got_away = None; return Ok(Value::Nil); }
+            Err(message) if self.act.got_away.as_ref().map_or(message.starts_with("ImportError:"), |raised| self.escape_names(raised, "ImportError")) => { self.act.got_away = None; return Ok(Value::Nil); }
             Err(message) => return Err(message),
         };
         if matches!(code.settled(), Value::Nil) { return Ok(Value::Nil); }

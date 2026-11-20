@@ -2,7 +2,8 @@
 use crate::data::Value;
 use num_traits::ToPrimitive;
 use num_bigint::BigInt;
-use std::{cell::RefCell, ffi::{CString, CStr}, rc::Rc};
+use std::{cell::RefCell, ffi::{CString, CStr}};
+use crate::data::Rc;
 
 struct DirStream { pointer: *mut libc::DIR, reset: bool }
 impl Drop for DirStream {

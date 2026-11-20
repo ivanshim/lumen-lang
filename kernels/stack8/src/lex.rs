@@ -32,6 +32,9 @@ pub enum Shape {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Token {
+    /// Immutable input retained by the end marker for compiled-code records.
+    #[serde(default)]
+    pub source_text: Option<crate::value::Rc<str>>,
     pub shape: Shape,
     pub lexeme: String,
     /// The spelling as written, kept only when NFKC folding changed it.
@@ -255,23 +258,23 @@ fn heredoc_at(text: &str, lang: &Lang) -> Option<Heredoc> {
 // Only names continued by punctuation need the longest-builtin scan.
 // Index them by the identifier already consumed, once per cursor tree.
 
-fn symbol_groups(lang: &Lang) -> std::rc::Rc<std::collections::HashMap<char, Vec<&str>>> {
+fn symbol_groups(lang: &Lang) -> crate::value::Rc<std::collections::HashMap<char, Vec<&str>>> {
     let mut groups: std::collections::HashMap<char, Vec<&str>> = std::collections::HashMap::new();
     for spelling in &lang.symbols {
         if let Some(first) = spelling.chars().next() {
             groups.entry(first).or_default().push(spelling);
         }
     }
-    std::rc::Rc::new(groups)
+    crate::value::Rc::new(groups)
 }
 
-type NameLoader<'a> = std::rc::Rc<std::cell::RefCell<dyn FnMut() -> Result<(), String> + 'a>>;
+type NameLoader<'a> = crate::value::Rc<std::cell::RefCell<dyn FnMut() -> Result<(), String> + 'a>>;
 
 struct Cursor<'a> {
     names: Option<NameLoader<'a>>,
     lang: &'a Lang,
-    signs: std::rc::Rc<std::collections::HashMap<char, Vec<&'a str>>>,
-    continued: std::rc::Rc<std::collections::HashMap<String, Vec<String>>>,
+    signs: crate::value::Rc<std::collections::HashMap<char, Vec<&'a str>>>,
+    continued: crate::value::Rc<std::collections::HashMap<String, Vec<String>>>,
     text: Box<[char]>,
     at: usize,
     row: usize,
@@ -308,13 +311,13 @@ impl<'a> Cursor<'a> {
     }
 
     fn push(&mut self, shape: Shape, lexeme: String, width: usize, row: usize, column: usize) {
-        self.out.push(Token { byte_column: 0, byte_end_column: 0, end_row: self.row, end_column: self.column, shape, lexeme, raw: None, width, row, column });
+        self.out.push(Token { source_text: None, byte_column: 0, byte_end_column: 0, end_row: self.row, end_column: self.column, shape, lexeme, raw: None, width, row, column });
     }
 
     /// The same, keeping the spelling the text wrote where folding
     /// changed it, for the language's own words to be matched against.
     fn push_spelled(&mut self, shape: Shape, lexeme: String, raw: Option<String>, width: usize, row: usize, column: usize) {
-        self.out.push(Token { byte_column: 0, byte_end_column: 0, end_row: self.row, end_column: self.column, shape, lexeme, raw, width, row, column });
+        self.out.push(Token { source_text: None, byte_column: 0, byte_end_column: 0, end_row: self.row, end_column: self.column, shape, lexeme, raw, width, row, column });
     }
 
     /// The indentation of a line; a blank line is skipped whole. Returns
@@ -1689,7 +1692,8 @@ fn lex_notices<'a>(source: &str, lang: &'a Lang, names: Option<NameLoader<'a>>, 
     }
     let row = source.chars().filter(|c| *c == '\n').count() + 1;
     let column = source.rsplit('\n').next().unwrap_or("").chars().count() + 1;
-    out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Finish, lexeme: "EOF".to_string(), raw: None, width: 0, row, column });
+    out.push(Token { source_text: None, byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Finish, lexeme: "EOF".to_string(), raw: None, width: 0, row, column });
+    if let Some(end) = out.last_mut() { end.source_text = Some(crate::value::Rc::from(source)); }
     Ok(out)
 }
 
@@ -1795,9 +1799,9 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
         if text.is_empty() {
             return;
         }
-        out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), raw: None, width: 0, row: 1, column: 1 });
-        out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Quote, lexeme: text.to_string(), raw: None, width: 0, row: 1, column: 1 });
-        out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), raw: None, width: 0, row: 1, column: 1 });
+        out.push(Token { source_text: None, byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), raw: None, width: 0, row: 1, column: 1 });
+        out.push(Token { source_text: None, byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Quote, lexeme: text.to_string(), raw: None, width: 0, row: 1, column: 1 });
+        out.push(Token { source_text: None, byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), raw: None, width: 0, row: 1, column: 1 });
     };
     let mut rest = source;
     let mut row = 1;
@@ -1840,10 +1844,10 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
         }
         // A run of code stands as its own statement, however it ended.
         if writes {
-            out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), raw: None, width: 0, row, column: 1 });
+            out.push(Token { source_text: None, byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), raw: None, width: 0, row, column: 1 });
         }
         out.append(&mut cur.out);
-        out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), raw: None, width: 0, row: cur.row, column: 1 });
+        out.push(Token { source_text: None, byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), raw: None, width: 0, row: cur.row, column: 1 });
         row = cur.row;
         // One line end straight after the closing marker is PHP's to eat.
         // Eaten or not, the line it ended is a line of the page and is
@@ -1979,7 +1983,7 @@ pub(crate) fn image_tokens(image: &str) -> Result<Vec<Token>, String> {
         let number = |at: usize| a[at].as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(bad);
         let shape = *kinds.get(number(0)?).ok_or_else(bad)?;
         let raw = if a[2].is_null() { None } else { Some(a[2].as_str().ok_or_else(bad)?.to_string()) };
-        Ok(Token { shape, lexeme: a[1].as_str().ok_or_else(bad)?.to_string(), raw,
+        Ok(Token { source_text: None, shape, lexeme: a[1].as_str().ok_or_else(bad)?.to_string(), raw,
             width: number(3)?, row: number(4)?, byte_column: number(8)?, byte_end_column: number(9)?, column: number(5)?, end_column: number(6)?, end_row: number(7)? })
     }).collect::<Result<_, String>>()?;
     if decoded.last().is_none_or(|token| token.shape != Shape::Finish) { return Err(bad()); }

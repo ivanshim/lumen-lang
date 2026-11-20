@@ -2,7 +2,8 @@
 use crate::value::Value;
 use num_bigint::{BigInt, Sign};
 use num_traits::{ToPrimitive, Zero};
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell};
+use crate::value::Rc;
 
 #[derive(Clone)]
 struct Field { code: u8, at: usize, count: usize, width: usize }
@@ -118,8 +119,16 @@ pub fn apply(args: &[Value]) -> Result<Value,String> {
     // Decline inputs that need the Python adapter's conversion protocols.
     if action == 10 {
         let Value::Tuple(values) = &payload else { return Ok(Value::Null); };
-        if format.fields.iter().any(|field| b"efdFD".contains(&field.code))
-            || values.iter().any(|value| !matches!(value.contents(), Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Bytes(_, false, _))) {
+        let float_only = format.fields.iter().any(|field| field.code != b'x')
+            && format.fields.iter().all(|field| matches!(field.code, b'e' | b'f' | b'd' | b'x'));
+        let ok = if float_only {
+            values.iter().all(|value| matches!(value.contents(), Value::Real(_) | Value::Small(_)))
+        } else if format.fields.iter().any(|field| b"efdFD".contains(&field.code)) {
+            false
+        } else {
+            values.iter().all(|value| matches!(value.contents(), Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Bytes(_, false, _)))
+        };
+        if !ok {
             return Ok(Value::Null);
         }
         action = 1;

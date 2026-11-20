@@ -1,5 +1,5 @@
 use crate::data::{Thing, Value};
-use std::rc::Rc;
+use crate::data::Rc;
 use std::cell::RefCell;
 
 // Fetch a scanner record entry through its native storage.
