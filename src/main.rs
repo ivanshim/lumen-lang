@@ -220,13 +220,16 @@ struct Invocation {
 /// kernel is to run it.
 fn text_is_bytes(language: &Language) -> bool {
     let definition = match language {
-        Language::File { text, .. } => text.clone(),
+        Language::File { text, .. } => text.as_str(),
         Language::Named(name) => match lumen_microcode11::embedded(name) {
-            Ok(text) => text.to_string(),
+            Ok(text) => text,
             Err(_) => return false,
         },
     };
-    lumen_stack8::lang::Lang::parse(&definition).map_or(false, |lang| lang.text_is_bytes)
+    if !definition.contains("ext.system.text.bytes") {
+        return false;
+    }
+    lumen_stack8::lang::Lang::parse(definition).map_or(false, |lang| lang.text_is_bytes)
 }
 
 /// Whether a kernel gives the extension labels any meaning. The four
@@ -877,7 +880,8 @@ fn run_all(python_run: std::sync::mpsc::Sender<()>) {
     // What a web request carries, gathered once here so that a kernel
     // has only to bind it: the full kernels take it, the others do not
     // read the labels that name it.
-    let mut request = web::gathered(text_is_bytes(&inv.language) && honours_extensions(&inv.kernel));
+    let text_bytes = text_is_bytes(&inv.language) && honours_extensions(&inv.kernel);
+    let mut request = web::gathered(text_bytes);
     // Resolve the optional library location before the program can change directory.
     let overlay = inv.python.map_or(&[][..], |v| v.modules);
     for (name, source, file) in overlay.iter().chain(embedded_modules::MODULES.iter().filter(|(name, ..)| !overlay.iter().any(|(overlaid, ..)| overlaid == name))) {
@@ -900,6 +904,16 @@ fn run_all(python_run: std::sync::mpsc::Sender<()>) {
     // these, and only the full kernels read those labels.
     let whole = if inv.file == "-" { std::path::PathBuf::from("<stdin>") } else {
         std::fs::canonicalize(&inv.file).unwrap_or_else(|_| std::path::PathBuf::from(&inv.file))
+    };
+    // A script read from a ZIP is named by that archive entry. The path the
+    // run was started with stays the archive, so argv[0] is unchanged.
+    let whole = match zip_entry(&inv.file) {
+        Some((zip_path, inner)) if inv.module_source.is_some() && inv.module_name.as_deref() == Some("__main__") => {
+            let archive = std::fs::canonicalize(&zip_path).unwrap_or_else(|_| std::path::PathBuf::from(&zip_path));
+            let within = if inner.is_empty() { String::new() } else { format!("{inner}/") };
+            archive.join(format!("{within}__main__.py"))
+        }
+        _ => whole,
     };
     let held = whole.parent().map_or_else(|| ".".to_string(), |p| p.to_string_lossy().into_owned());
     request.push(("SELF".to_string(), "file".to_string(), whole.to_string_lossy().into_owned(), false));

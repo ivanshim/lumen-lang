@@ -76,3 +76,15 @@ class RLock:
         return False
 
 error = RuntimeError
+
+def interrupt_main(signum=2, /):
+    # An IntEnum unwraps through __index__. Finalizers cannot import,
+    # and the kernel checks the range before it schedules anything.
+    if type(signum) is not int:
+        convert = getattr(signum, '__index__', None)
+        if convert is None:
+            raise TypeError("'" + type(signum).__name__ + "' object cannot be interpreted as an integer")
+        signum = convert()
+        if type(signum) is not int:
+            raise TypeError("'" + type(signum).__name__ + "' object cannot be interpreted as an integer")
+    __signal(7, signum)

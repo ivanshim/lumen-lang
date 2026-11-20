@@ -44,6 +44,13 @@ pub fn stream_row(name: Vec<u8>, inode: u64, kind: u8) -> Value {
 fn octets(part: impl Into<Vec<u8>>) -> Value {
     Value::Octets { cell: Rc::new(RefCell::new(part.into())), changeable: false, lead: "b".into() }
 }
+
+fn path_value_from_bytes(raw: Vec<u8>) -> Value {
+    match String::from_utf8(raw) {
+        Ok(text) => Value::text(&text),
+        Err(err) => octets(err.into_bytes()),
+    }
+}
 fn errno() -> i32 { std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO) }
 fn checked(code: i64) -> Result<Value, i32> {
     match code { -1 => Err(errno()), n => Ok(Value::Small(n)) }
@@ -487,6 +494,29 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                     if count as usize != capacity { text.truncate(count as usize); break Ok(octets(text)); }
                     capacity *= 2;
                 }
+            }
+            "realpath" => {
+                let p = data_of(&params[0])?;
+                let mode = int(1)?;
+                return match lumen_posix::realpath_bytes(&p, mode)? {
+                    Ok(resolved) => Ok(Value::tuple(vec![Value::Small(0), path_value_from_bytes(resolved)])),
+                    Err((err, bad)) => Ok(Value::tuple(vec![Value::Small(err.into()), path_value_from_bytes(bad)])),
+                };
+            }
+            "makedirs" => {
+                let p = data_of(&params[0])?;
+                return match lumen_posix::makedirs_bytes(&p)? {
+                    Ok(()) => Ok(Value::tuple(vec![Value::Small(0), Value::Nil])),
+                    Err((err, bad)) => Ok(Value::tuple(vec![Value::Small(err.into()), path_value_from_bytes(bad)])),
+                };
+            }
+            "rmtree" => {
+                let p = data_of(&params[0])?;
+                let ignore_errors = matches!(params.get(1).map(|v| v.settled()), Some(Value::Flag(true)));
+                return match lumen_posix::rmtree_bytes(&p, ignore_errors)? {
+                    Ok(done) => Ok(Value::tuple(vec![Value::Small(0), Value::Flag(done)])),
+                    Err((err, bad)) => Ok(Value::tuple(vec![Value::Small(err.into()), path_value_from_bytes(bad)])),
+                };
             }
             "listdir" => {
                 use std::os::unix::ffi::OsStrExt as _;
