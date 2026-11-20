@@ -55,24 +55,26 @@ fn prepared_libraries(versions: &serde_json::Map<String, Value>) {
                 // Reference modules are inputs, not reusable startup libraries.
                 if name.starts_with("test.") && !name.starts_with("test.support") { continue; }
                 // shortcut: bound prepared library data to fit Lambda; include large IO/archive startup modules.
-                if source.len() > 16_384 && !name.starts_with("pathlib.") && !["__main__", "unittest", "_pyio", "tarfile", "pathlib", "_abc", "_codec_runtime", "_codecs", "_collections", "_collections_abc", "_colorize", "_io", "_json", "_operator", "_py_abc", "_pydatetime", "_runtime_import", "_sre", "_sre_validation", "_stat", "_thread", "_types", "_typing_runtime", "_weakref", "_weakrefset", "abc", "annotationlib", "argparse", "ast", "builtins", "codecs", "collections", "collections.abc", "copy", "copyreg", "dataclasses", "enum", "errno", "functools", "genericpath", "gettext", "inspect", "itertools", "json", "json.decoder", "json.encoder", "json.scanner", "json.tool", "keyword", "operator", "os", "os.path", "posix", "posixpath", "re", "re._casefix", "re._compiler", "re._constants", "re._parser", "reprlib", "runtime_adapters.native_test_support", "stat", "sys", "test.support", "test.support.script_helper", "threading", "types", "weakref", "tempfile", "shutil", "random", "logging", "contextlib", "textwrap", "sysconfig", "py_compile", "zipfile", "gzip", "bz2", "lzma", "ntpath", "test.support.os_helper", "test.support.import_helper", "locale", "importlib._bootstrap", "importlib._bootstrap_external", "_py_warnings"].contains(&name) { continue; }
+                if source.len() > 16_384 && !name.starts_with("pathlib.") && !["__main__", "unittest", "_pyio", "tarfile", "pathlib", "_abc", "_codec_runtime", "_codecs", "_collections", "_collections_abc", "_colorize", "_io", "_json", "_operator", "_py_abc", "_pydatetime", "_runtime_import", "_sre", "_sre_validation", "_stat", "_thread", "_types", "_typing_runtime", "_weakref", "_weakrefset", "abc", "annotationlib", "argparse", "ast", "builtins", "codecs", "collections", "collections.abc", "copy", "copyreg", "dataclasses", "enum", "errno", "functools", "genericpath", "gettext", "inspect", "itertools", "json", "json.decoder", "json.encoder", "json.scanner", "json.tool", "keyword", "marshal", "operator", "os", "os.path", "posix", "posixpath", "re", "re._casefix", "re._compiler", "re._constants", "re._parser", "reprlib", "runtime_adapters.native_test_support", "stat", "sys", "test.support", "test.support.script_helper", "threading", "time", "types", "weakref", "tempfile", "shutil", "random", "logging", "contextlib", "textwrap", "sysconfig", "py_compile", "zipfile", "zipimport", "gzip", "bz2", "lzma", "ntpath", "test.support.os_helper", "test.support.import_helper", "locale", "importlib._bootstrap", "importlib._bootstrap_external", "_py_warnings"].contains(&name) { continue; }
                 let prepared = std::panic::catch_unwind(|| match kernel {
                     "stack8" => lumen_stack8::compile::prepare_library(&definition, source),
                     _ => lumen_microcode7::build::prepare_library(&definition, source),
                 }).ok().flatten();
                 if let Some((key, proof, encoded)) = prepared {
-                    let packed = lumen_lzma::encode(&proof, 6, 4).expect("bundled token proof compression");
+                    let packed = lumen_zlib::compress(&proof).expect("bundled token proof compression");
                     let octets = packed.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
-                    let metadata = lumen_lzma::encode(encoded.as_bytes(), 6, 4).expect("bundled scope compression");
+                    let metadata = lumen_zlib::compress(&encoded).expect("bundled scope compression");
                     let metadata_bytes = metadata.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
                     records.push_str(&format!("({key}, b\"{octets}\", b\"{metadata_bytes}\"),\n"));
-                    let source_key = match kernel {
-                        "stack8" => lumen_stack8::compile::source_stamp(source),
-                        _ => lumen_microcode7::build::source_key(source),
-                    };
-                    let compressed_source = lumen_lzma::encode(source.as_bytes(), 6, 4).expect("bundled source compression");
-                    let source_bytes = compressed_source.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
-                    source_rows.push_str(&format!("({source_key}, b\"{source_bytes}\", {count}),\n"));
+                    if kernel == "stack8" {
+                        let source_key = lumen_stack8::compile::source_stamp(source);
+                        let source_extra = lumen_stack8::compile::source_digest(source);
+                        source_rows.push_str(&format!("({source_key}, {source_extra}, {}, {count}),\n", source.len()));
+                    } else {
+                        let source_key = lumen_microcode7::build::source_key(source);
+                        let source_extra = lumen_microcode7::build::source_checksum(source);
+                        source_rows.push_str(&format!("({}, {source_key}, {source_extra}, {count}),\n", source.len()));
+                    }
                     count += 1;
                 }
             }

@@ -1015,6 +1015,8 @@ pub struct Routine {
     pub globals_rebound: bool,
     #[serde(skip)]
     pub code_snapshot: std::cell::OnceCell<Rc<Routine>>,
+    #[serde(skip)]
+    pub compiled_registry: Option<Rc<crate::compile::Registry>>,
     pub postponed_annotation: bool,
     pub annotation_source: Option<String>,
     pub checks_annotation_format: bool,
@@ -1123,7 +1125,7 @@ pub struct Routine {
 
 /// What a class declaration comes to: everything about the class that is
 /// known while compiling. What it stands on is looked up when it runs.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Plan {
     pub name: String,
@@ -1238,6 +1240,128 @@ impl Routine {
         };
         result.revised = RefCell::new(None);
         Ok(result)
+    }
+
+    pub fn relocated(
+        self: &Rc<Self>,
+        places: &[usize],
+        globe: &Option<Value>,
+        born: &Option<Value>,
+        home: &Option<Option<Rc<str>>>,
+    ) -> Result<Rc<Self>, String> {
+        let mut seen: std::collections::HashMap<usize, Rc<Self>> = std::collections::HashMap::new();
+        self.relocate_into(places, globe, born, home, &mut seen)
+    }
+
+    fn relocate_into(
+        self: &Rc<Self>,
+        places: &[usize],
+        globe: &Option<Value>,
+        born: &Option<Value>,
+        home: &Option<Option<Rc<str>>>,
+        seen: &mut std::collections::HashMap<usize, Rc<Self>>,
+    ) -> Result<Rc<Self>, String> {
+        let key = Rc::as_ptr(self) as usize;
+        if let Some(done) = seen.get(&key) {
+            return Ok(done.clone());
+        }
+        let move_cell = |cell: &mut Cell| -> Result<(), String> {
+            if cell.near.is_empty() {
+                cell.far = *places.get(cell.far).ok_or("ValueError: invalid global address")?;
+            } else if let Some(&next) = places.get(cell.far) {
+                cell.far = next;
+            }
+            Ok(())
+        };
+        let mut next = (**self).clone();
+        next.code_snapshot = Default::default();
+        next.revised = RefCell::new(None);
+        next.compiled_registry = None;
+        next.globe = globe.clone();
+        next.born = born.clone();
+        next.home = home.clone();
+        if let Some(ann) = &self.annotation {
+            next.annotation = Some(ann.relocate_into(places, globe, born, home, seen)?);
+        }
+        for (_, cell) in &mut next.enclosing {
+            move_cell(cell)?;
+        }
+        fn move_value(
+            val: &mut Value,
+            places: &[usize],
+            globe: &Option<Value>,
+            born: &Option<Value>,
+            home: &Option<Option<Rc<str>>>,
+            seen: &mut std::collections::HashMap<usize, Rc<Routine>>,
+        ) -> Result<(), String> {
+            match val {
+                Value::Routine(body) => *body = body.relocate_into(places, globe, born, home, seen)?,
+                Value::Tuple(items) => {
+                    let mut out = items.to_vec();
+                    for item in &mut out { move_value(item, places, globe, born, home, seen)?; }
+                    *val = Value::tuple(out);
+                }
+                Value::Array(items) => {
+                    let mut out = items.to_vec();
+                    for item in &mut out { move_value(item, places, globe, born, home, seen)?; }
+                    *val = Value::array(out);
+                }
+                Value::Adapter(parts) => {
+                    let mut out = parts.1.clone();
+                    for item in &mut out { move_value(item, places, globe, born, home, seen)?; }
+                    *val = Value::Adapter(Rc::new((parts.0, out)));
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+        for c in &mut next.code_constants {
+            move_value(c, places, globe, born, home, seen)?;
+        }
+        let mut instrs = self.instrs.as_ref().clone();
+        for ins in &mut instrs {
+            match ins {
+                Instr::Const(val) => move_value(val, places, globe, born, home, seen)?,
+                Instr::Read(cell) | Instr::Write(cell) | Instr::Glance(cell) | Instr::Bond(cell)
+                | Instr::Fasten(cell) | Instr::BondItem(cell) | Instr::BondPlace(cell, _)
+                | Instr::Forget(cell) | Instr::DeleteName(cell) | Instr::SaveCallable(cell)
+                | Instr::PrepareBuiltin(cell, _) | Instr::PreparedAct(_, _, cell)
+                | Instr::Emptied(cell) | Instr::Ready(cell) => move_cell(cell)?,
+                Instr::Unwritten(slot) => {
+                    *slot = *places.get(*slot).ok_or("ValueError: invalid global address")?;
+                }
+                Instr::Act(Action::Forge(plan), _) => {
+                    let mut updated = (**plan).clone();
+                    for (_, method) in &mut updated.methods {
+                        *method = method.relocate_into(places, globe, born, home, seen)?;
+                    }
+                    *plan = Rc::new(updated);
+                }
+                Instr::Attempt(attempt) => {
+                    if let Some(cell) = &mut attempt.context { move_cell(cell)?; }
+                    for clause in &mut attempt.clauses {
+                        if let Some(cell) = &mut clause.held { move_cell(cell)?; }
+                    }
+                }
+                Instr::Dyad { a, b, .. } | Instr::SkipCmp { a, b, .. } => {
+                    for op in [a, b] {
+                        match op {
+                            Operand::Cell(cell) => move_cell(cell)?,
+                            Operand::Const(val) => move_value(val, places, globe, born, home, seen)?,
+                            Operand::Top => {}
+                        }
+                    }
+                }
+                Instr::Bump { slot, .. } => move_cell(slot)?,
+                Instr::Act(..) | Instr::Skip(_) | Instr::Missing(_) | Instr::Line(_)
+                | Instr::Location(..) | Instr::Hush(_) | Instr::Shed | Instr::Nothing
+                | Instr::Mute(_) | Instr::Guard(_) | Instr::Depart { .. } | Instr::Unguard => {}
+            }
+        }
+        next.instrs = Rc::new(instrs);
+        let built = Rc::new(next);
+        seen.insert(key, built.clone());
+        Ok(built)
     }
 }
 

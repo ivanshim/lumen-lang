@@ -20,7 +20,11 @@ def get_objects(generation=None):
     return __gc_objects()
 
 def collect(generation=2):
-    return __gc_collect()
+    # A static import is recorded for every module that imports gc.
+    generation = __import__("operator").index(generation)
+    if generation < 0 or generation > 2:
+        raise ValueError("invalid generation")
+    return __gc_collect(generation)
 
 def disable():
     global _enabled

@@ -3883,6 +3883,7 @@ impl<'a> Engine<'a> {
         let module = Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made }));
         self.modules.insert("_typing".into(), module.clone()); self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear();
         self.refresh_module_cache("_typing");
+        let _ = self.initialize_source_file_spec("_typing", &module, Some(""));
         module
     }
     fn no_type_default(&mut self) -> Value {
@@ -5420,7 +5421,7 @@ impl<'a> Engine<'a> {
                 if name == self.class_word("module") { return self.class_get(entry.1[1].clone(), name, plain); }
                 if self.lang.class_special.get(79).is_some_and(|word| word == name) { return Ok(Self::adapter(132, vec![entry.1[0].clone()])); }
             }
-            if matches!(entry.0, 63 | 64) && matches!(name, "__name__" | "__qualname__" | "__doc__") {
+            if matches!(entry.0, 63 | 64) && matches!(name, "__name__" | "__qualname__" | "__doc__" | "__wrapped__" | "__text_signature__") {
                 return self.class_get(entry.1[1].clone(), name, plain);
             }
         }
@@ -5568,7 +5569,7 @@ impl<'a> Engine<'a> {
             }
         }
         if name == self.class_word("allocate") && matches!(&subject, Value::Native(operation, _) if !Self::kind_builtin(operation)) { return Ok(self.root_allocator()); }
-        if name == "__reduce_ex__" && (matches!(&subject, Value::Native(operation, _) if !Self::kind_builtin(operation)) || (matches!(&subject, Value::ValueMethod(_) | Value::TextMethod(..) | Value::Method(..)) || matches!(&subject, Value::View(_)) || matches!(&subject, Value::Adapter(entry) if entry.0 == 3))) {
+        if name == "__reduce_ex__" && (matches!(&subject, Value::Native(operation, _) if !Self::kind_builtin(operation)) || (matches!(&subject, Value::ValueMethod(_) | Value::TextMethod(..) | Value::Method(..)) || matches!(&subject, Value::View(_)) || matches!(&subject, Value::Adapter(entry) if matches!(entry.0, 3 | 64)))) {
             return Ok(Value::ValueMethod(Rc::new((subject, String::from("callable_reduce_ex")))));
         }
         if matches!(&subject, Value::Adapter(parts) if parts.0 == 4 || parts.0 == 5 || parts.0 == 29 && parts.1.len() == 3) {
@@ -7998,7 +7999,7 @@ impl<'a> Engine<'a> {
                 if self.lang.module_builtins.iter().any(|word| word == name) {return Err(self.class_word("property.readonly").to_string().into());}
                 if name==self.class_word("defaults") || name==self.class_word("keywords") || name==self.class_word("code") {
                     let Value::Routine(f)=&subject else {return Err(self.class_refusal())};
-                    self.invalidate_code_watches(name == self.class_word("code"));
+                    self.invalidate_code_watches(&subject, name == self.class_word("code"));
                     if name==self.class_word("code") && Self::code_kind_differs(f, value.as_ref()) {
                         let told=self.lang.class_details.get("code.mismatch").and_then(|w| w.first()).cloned().unwrap_or_default();
                         self.warn_like(26,&told)?;

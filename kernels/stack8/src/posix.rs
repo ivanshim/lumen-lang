@@ -72,6 +72,13 @@ fn integer(value: &Value) -> Result<i64, String> {
     }
 }
 // Read the current operating-system error, with the existing fallback.
+
+fn path_value_from_bytes(raw: Vec<u8>) -> Value {
+    match String::from_utf8(raw) {
+        Ok(text) => Value::text(&text),
+        Err(err) => bytes(err.into_bytes()),
+    }
+}
 fn errno() -> i32 { std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO) }
 fn status(result: i64) -> Result<Value, i32> {
     if result < 0 { Err(errno()) }
@@ -468,6 +475,29 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
                 if (size as usize) < data.len() { data.truncate(size as usize); break Ok(bytes(data)); }
                 data.resize(data.len()*2, 0);
             }
+        },
+        "realpath" => {
+            let p = raw(&a[0])?;
+            let mode = number(1)?;
+            return match lumen_posix::realpath_bytes(&p, mode)? {
+                Ok(resolved) => Ok(Value::tuple(vec![Value::Small(0), path_value_from_bytes(resolved)])),
+                Err((err, bad)) => Ok(Value::tuple(vec![Value::Small(err.into()), path_value_from_bytes(bad)])),
+            };
+        },
+        "makedirs" => {
+            let p = raw(&a[0])?;
+            return match lumen_posix::makedirs_bytes(&p)? {
+                Ok(()) => Ok(Value::tuple(vec![Value::Small(0), Value::Null])),
+                Err((err, bad)) => Ok(Value::tuple(vec![Value::Small(err.into()), path_value_from_bytes(bad)])),
+            };
+        },
+        "rmtree" => {
+            let p = raw(&a[0])?;
+            let ignore_errors = matches!(a.get(1).map(|v| v.contents()), Some(Value::Flag(true)));
+            return match lumen_posix::rmtree_bytes(&p, ignore_errors)? {
+                Ok(done) => Ok(Value::tuple(vec![Value::Small(0), Value::Flag(done)])),
+                Err((err, bad)) => Ok(Value::tuple(vec![Value::Small(err.into()), path_value_from_bytes(bad)])),
+            };
         },
         "listdir" => {
             use std::os::unix::ffi::OsStrExt;
