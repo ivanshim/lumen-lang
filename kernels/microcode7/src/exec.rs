@@ -15954,10 +15954,6 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// Whether a routine takes the call's keyword mapping as it stands,
-    /// the way a native maker does, instead of having every key turned into
-    /// a word first. The standard adapter marks such a routine with an
-    /// attribute, read here off the routine's own book.
     /// The attribute holder of the first live member whose code is `program`.
     fn routine_member_holder(&self, program: &Routine) -> Option<&Hold> {
         let want = std::ptr::from_ref(program) as usize;
@@ -25072,7 +25068,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        if [Prim::Plus, Prim::Join].contains(&op) && v.len() == 2 && v.iter().any(|x| matches!(x, Value::Unpaired(_))) {
+        if matches!(op, Prim::Plus | Prim::Join) && v.len() == 2 && v.iter().any(|x| matches!(x, Value::Unpaired(_))) {
             if let (Some(first), Some(last)) = (v[0].character_numbers(), v[1].character_numbers()) {
                 if op == Prim::Plus && self.table.flag("ext.op.arithmetic.python_numbers") {
                     let original = if last.is_empty() { Some(&v[0]) } else if first.is_empty() { Some(&v[1]) } else { None };
@@ -39520,13 +39516,14 @@ impl<'a> Machine<'a> {
         });
         if let Some(path) = home {
             if let Some(Value::Thing(space)) = self.imported.get(&path).cloned() {
+                let known = crate::build::spots_of(&self.idents);
                 for (name, _) in space.holds.borrow().iter() {
                     // A spelling the routine about to read the text is
                     // already holding is the routine's own; above it the
                     // module's name of the same shape has no say.
                     if name.starts_with('\0') || names.iter().any(|local| local == name) { continue; }
                     let wanted = format!("\0import/{path}/{name}");
-                    if self.idents.iter().any(|word| word == &wanted) {
+                    if known.contains_key(&wanted) {
                         aliasing.push((name.clone(), wanted));
                     }
                 }
