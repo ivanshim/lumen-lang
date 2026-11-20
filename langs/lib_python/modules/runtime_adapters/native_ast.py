@@ -559,12 +559,11 @@ class AST:
         # _fields lives on the type. After it is deleted, the lookup has to
         # name the type object; an instance lookup reports a different error.
         cls = type(self)
-        try:
-            fields = cls._fields
-        except AttributeError:
+        fields = getattr(cls, '_fields', _MISSING)
+        if fields is _MISSING:
             # A deleted _fields is reported on the qualified type. An instance
             # lookup would name the instance, which is a different error.
-            raise AttributeError("type object '" + cls.__module__ + "." + cls.__name__ + "' has no attribute '_fields'") from None
+            raise AttributeError("type object '" + cls.__module__ + "." + cls.__name__ + "' has no attribute '_fields'")
         if not args:
             # Nothing to store: context markers such as Load() are empty.
             # A node with fields and no arguments keeps the warning walk.
@@ -584,9 +583,7 @@ class AST:
             if ready:
                 self.__dict__.update(kwargs)
                 return
-        cls = type(self)
         name = cls.__name__
-        fields = cls._fields
         if len(args) > len(fields):
             raise TypeError(name + ' constructor takes at most ' + str(len(fields)) + ' positional arguments')
         given = len(args)
@@ -2023,7 +2020,10 @@ def _check_single_line(source, q, after):
             _syntax('unterminated string literal')
         i += 1
 
+_nonascii_ident_seq = 0
+
 def _lex(source, start, end, row, col, for_field, comments=None):
+    global _nonascii_ident_seq
     # A spread list pays off only where a character outside ASCII costs a
     # walk from the start; ASCII text indexes natively.
     if not isinstance(source, _Chars) and not source.isascii():
@@ -2086,10 +2086,14 @@ def _lex(source, start, end, row, col, for_field, comments=None):
             col += width(i, j)
             i = j
             continue
-        if c == '_' or c.isalpha() or (not c.isascii() and c.isidentifier()):
+        if c == '_' or c.isalpha() or (not ascii_text and not c.isascii() and c.isidentifier()):
             j = i
-            while j < end and (chars[j] == '_' or chars[j].isalnum() or (not chars[j].isascii() and ('a' + chars[j]).isidentifier())):
-                j += 1
+            if ascii_text:
+                while j < end and (chars[j] == '_' or chars[j].isalnum()):
+                    j += 1
+            else:
+                while j < end and (chars[j] == '_' or chars[j].isalnum() or (not chars[j].isascii() and ('a' + chars[j]).isidentifier())):
+                    j += 1
             word = source[i:j]
             lowered = word.lower()
             if j < end and chars[j] in '\'"' and lowered in _STRING_PREFIXES:
@@ -2116,6 +2120,8 @@ def _lex(source, start, end, row, col, for_field, comments=None):
                 toks.append(tok)
                 i, row, col = after, erow, ecol
                 continue
+            if not ascii_text and not word.isascii():
+                _nonascii_ident_seq += 1
             toks.append(_Tok('name', word, srow, scol, srow, scol + width(i, j)))
             col += width(i, j)
             i = j
@@ -4506,18 +4512,20 @@ def _eval_leading_indent(source):
     return False
 
 
-def _remember(tree, source, mode='exec', type_comments=False, optimize=-1, fold_debug=False):
-    if not source.isascii():
+def _remember(tree, source, mode='exec', type_comments=False, optimize=-1, fold_debug=False, normalize_idents=True):
+    if normalize_idents and not source.isascii():
         import unicodedata
         for node in walk(tree):
             for field, typ in getattr(type(node), '_field_types', {}).items():
                 value = getattr(node, field, None)
                 if _is_ident_type(typ) and field not in _IDENT_SKIP and isinstance(value, str):
-                    value = unicodedata.normalize('NFKC', value)
-                    _check_ident(field, value)
-                    setattr(node, field, value)
+                    if not value.isascii():
+                        value = unicodedata.normalize('NFKC', value)
+                        _check_ident(field, value)
+                        setattr(node, field, value)
                 elif getattr(typ, '__origin__', None) is list and typ.__args__[0] is str:
-                    setattr(node, field, [unicodedata.normalize('NFKC', item) for item in value])
+                    if any(not item.isascii() for item in value):
+                        setattr(node, field, [item if item.isascii() else unicodedata.normalize('NFKC', item) for item in value])
     # optimize above zero folds constants and, at 2, drops docstrings.
     # fold_debug settles __debug__ even when the level is zero.
     if optimize > 0 or fold_debug:
@@ -4604,12 +4612,13 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
     if optimize not in (-1, 0, 1, 2):
         raise ValueError('compile(): invalid optimize value')
     source = source.replace('\r\n', '\n').replace('\r', '\n')
+    na_before = _nonascii_ident_seq
     if mode == 'func_type':
         toks = _lex(source, 0, len(source), 1, 0, False)
         parser = _Parser(source, toks, optimize, fold_debug, fv=feature_version)
         tree = parser.parse_func_type()
         _check_features(tree, feature_version)
-        return _remember(tree, source, mode, type_comments, optimize, fold_debug)
+        return _remember(tree, source, mode, type_comments, optimize, fold_debug, _nonascii_ident_seq != na_before)
     if mode == 'eval':
         # The lexer reports a later bad continuation as invalid syntax.
         # Eval mode rejects a leading indent first, which is the error
@@ -4629,7 +4638,7 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
             _syntax('invalid syntax')
         tree = Expression(body=node)
         _check_features(tree, feature_version)
-        return _remember(tree, source, mode, type_comments, optimize, fold_debug)
+        return _remember(tree, source, mode, type_comments, optimize, fold_debug, _nonascii_ident_seq != na_before)
     if mode not in ('exec', 'single'):
         raise ValueError("compile() mode must be 'exec', 'eval', 'single' or 'func_type'")
     if (mode == 'exec' and not type_comments and optimize < 0 and not fold_debug
@@ -4637,7 +4646,7 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         prefixed = _parse_plain_prefix(source, filename, feature_version)
         if prefixed is not None:
             _check_features(prefixed, feature_version)
-            return _remember(prefixed, source, mode, type_comments, optimize, fold_debug)
+            return _remember(prefixed, source, mode, type_comments, optimize, fold_debug, False)
     comments = []
     toks = _lex(source, 0, len(source), 1, 0, False, comments)
     if type_comments:
@@ -4655,7 +4664,7 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
             raise SyntaxError('invalid syntax')
         tree = Interactive(body=tree.body)
     _check_features(tree, feature_version)
-    return _remember(tree, source, mode, type_comments, optimize, fold_debug)
+    return _remember(tree, source, mode, type_comments, optimize, fold_debug, _nonascii_ident_seq != na_before)
 
 def _tree_for_compile(source, filename, mode, type_comments, optimize):
     # compile() reaches the reader with the flags already read: whether
