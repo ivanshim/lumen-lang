@@ -7,7 +7,7 @@ pub fn bits(letter: char) -> u16 {
 }
 
 pub fn change(letter: char, kind: usize) -> String {
-    lumen_unicode::case_of(letter, kind).map_or_else(|| letter.to_string(), str::to_string)
+    lumen_unicode::case_of(letter, kind).unwrap_or_else(|| letter.to_string())
 }
 
 /// Unicode 16.0 character names, aliases, and the
