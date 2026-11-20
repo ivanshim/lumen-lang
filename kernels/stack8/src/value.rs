@@ -1569,6 +1569,17 @@ impl Value {
             // and which of the two bytes kinds it is.
             Value::SortOf(sort) => Ok(format!("sortof:{}", sort.tag())),
             Value::Adapter(parts) if parts.0 == 9 => Ok(format!("parent-kind:{:p}", Rc::as_ptr(parts))),
+            Value::Adapter(binding) if matches!(binding.0, 3 | 131) && binding.1.len() == 2 => {
+                let owner = match &binding.1[1] {
+                    Value::Object(instance) => format!("at:{:p}", crate::value::Keep::as_ptr(instance)),
+                    Value::Array(items) => format!("at:{:p}", Rc::as_ptr(items)),
+                    Value::Map(entries) => format!("at:{:p}", Rc::as_ptr(entries)),
+                    Value::Set(entries) => format!("at:{:p}", Rc::as_ptr(entries)),
+                    Value::Bytes(data, ..) => format!("at:{:p}", Rc::as_ptr(data)),
+                    other => other.member_key()?,
+                };
+                Ok(format!("bound:{}:{owner}", binding.1[0].member_key()?))
+            }
             Value::Array(_) => Err("list"),
             Value::Map(_) => Err("dict"),
             // A set that cannot be changed is addressed by what it

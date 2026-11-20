@@ -225,3 +225,58 @@ def find_custom(name, parent_path):
             from importlib._bootstrap import _load_unlocked
             return False, _load_unlocked(spec)
     raise ModuleNotFoundError("No module named '" + name + "'")
+
+
+def _pyc_path(origin):
+    import sys
+    tag = getattr(sys.implementation, "cache_tag", None)
+    if not origin or not tag or origin.endswith("/"):
+        return None
+    slash = origin.rfind("/")
+    if slash < 0:
+        directory, leaf = "", origin
+    else:
+        directory, leaf = origin[:slash], origin[slash + 1:]
+    dot = leaf.rfind(".")
+    stem = leaf if dot < 0 else leaf[:dot]
+    cache_dir = directory + "/__pycache__" if directory else "__pycache__"
+    return cache_dir + "/" + stem + "." + tag + ".pyc"
+
+
+def run_as_main(mod_name):
+    # Importing runpy builds the pure-Python import system. A command-line
+    # child would pay that on every start, so a plain source module runs here.
+    # Packages and every other loader still go through runpy.
+    import sys
+    spec = None
+    if isinstance(mod_name, str) and _module_name_ok(mod_name):
+        for finder in list(sys.meta_path):
+            find_spec = getattr(finder, "find_spec", None)
+            if find_spec is None:
+                continue
+            found = find_spec(mod_name, None, None)
+            if found is not None:
+                spec = found
+                break
+    loader = getattr(spec, "loader", None) if spec is not None else None
+    if (spec is None or spec.submodule_search_locations is not None
+            or type(loader) is not SourceLoader):
+        import runpy
+        return runpy._run_module_as_main(mod_name)
+    code = loader.get_code(mod_name)
+    origin = spec.origin
+    cached = _pyc_path(origin)
+    spec.cached = cached
+    if origin:
+        sys.argv[0] = origin
+    main = sys.modules["__main__"].__dict__
+    main.update({
+        "__name__": "__main__",
+        "__file__": origin,
+        "__cached__": cached,
+        "__doc__": None,
+        "__loader__": loader,
+        "__package__": spec.parent,
+        "__spec__": spec,
+    })
+    exec(code, main)

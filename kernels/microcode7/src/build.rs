@@ -7265,7 +7265,7 @@ impl<'a> Builder<'a> {
             (false, _) => None,
         };
         self.need_sign(&close, "after the foreach names")?;
-        ahead.push(self.walk(source, key, item, shares, place)?);
+        ahead.push(self.walk(source, key, item, shares, place, None)?);
         Ok(sequence(ahead))
     }
 
@@ -7327,7 +7327,7 @@ impl<'a> Builder<'a> {
 
     /// The walk itself: a place counted to the extent, the key and the
     /// item read from it at the head of every pass.
-    fn walk(&mut self, source: Form, key: Option<String>, item: String, shares: Option<String>, place: Option<usize>) -> Res<Form> {
+    fn walk(&mut self, source: Form, key: Option<String>, item: String, shares: Option<String>, place: Option<usize>, header: Option<(u32, u32)>) -> Res<Form> {
         let bag = self.gensym("bag");
         let bag_name = bag.ident.to_string();
         // A walk over the copy takes the copy here; one handing out the
@@ -7478,7 +7478,9 @@ impl<'a> Builder<'a> {
                 };
                 let counted = r.write(&step_at, next);
                 let walking = r.read(&step_over);
-                Ok(sequence(vec![counted, prim_call(Prim::StepOn, vec![walking])]))
+                let pass_end = sequence(vec![counted, prim_call(Prim::StepOn, vec![walking])]);
+                // A loop written on one line has told its tracer of that line already.
+                Ok(match header { Some((row, written)) if r.tokens[r.pos.saturating_sub(1)].row != written => Form::OnLine(row, 0, Box::new(pass_end)), _ => pass_end })
             }),
         )?;
         // Once the walk is over it lets its last item go, so that the
@@ -8342,6 +8344,8 @@ impl<'a> Builder<'a> {
     fn for_stmt(&mut self) -> Res<Form> {
         let table = self.table;
         let asynchronous = std::mem::take(&mut self.asynchronous);
+        // A tracer hears of the loop's head again at the end of every pass.
+        let header = table.has_any("ext.builtin.trace_native").then(|| (tree_row(self.look().row.saturating_sub(self.before), self.look().column), self.look().row));
         self.move_past();
         if table.has_any("ext.builtin.exceptions.syntax") && self.glance(1).spelling() == "im" {
             return Err(String::from("SyntaxError: invalid syntax. Did you mean 'in'?"));
@@ -8414,7 +8418,7 @@ impl<'a> Builder<'a> {
                 };
                 self.claim(&var);
                 self.address_to_write(&var);
-                let walk = self.walk(source, None, var, None, place)?;
+                let walk = self.walk(source, None, var, None, place, header)?;
                 return Ok(self.located(bounds, walk));
             }
             self.move_past();

@@ -489,6 +489,18 @@ pub fn walk_departing(dying: &mut Generator) {
     plain_departing(dying as *const Generator as usize);
 }
 
+/// Set aside the walks already waiting to be closed, so that a hook about to run
+/// closes only those it lets go of itself; `restore_walks` puts the others back.
+pub fn set_aside_walks() -> Vec<Rc<RefCell<Generator>>> {
+    UNFINISHED.try_with(|q| std::mem::take(&mut *q.borrow_mut())).unwrap_or_default()
+}
+
+pub fn restore_walks(mut aside: Vec<Rc<RefCell<Generator>>>) {
+    if aside.is_empty() { return; }
+    let _ = UNFINISHED.try_with(|q| { let mut q = q.borrow_mut(); aside.append(&mut q); *q = aside; });
+    wake();
+}
+
 /// A set, a class or a routine is going: only the watchers care.
 pub fn plain_departing(address: usize) {
     release_endured(address);

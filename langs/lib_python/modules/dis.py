@@ -111,7 +111,12 @@ def get_instructions(x, *, first_line=None, show_caches=False, adaptive=False):
         yield instruction
 
 def findlinestarts(code):
-    _refuse()
+    """Find the offsets in a code object where each source line starts."""
+    lastline = None
+    for start, end, line in code.co_lines():
+        if line is not None and line != lastline:
+            lastline = line
+            yield start, line
 
 def findlabels(code):
     _refuse()

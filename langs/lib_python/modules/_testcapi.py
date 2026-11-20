@@ -4,7 +4,7 @@ import sys
 
 # Expose the signed size limit used by native sequence lengths.
 PY_SSIZE_T_MAX = sys.maxsize
-from _code_metadata import _debug_ranges_enabled
+from _code_metadata import _debug_ranges_enabled, code_offset_to_line
 
 # Read the debug-range setting that the kernels use for position records.
 def config_get(name):

@@ -1293,7 +1293,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
                     process::exit(1);
                 }
                 file = Some("-m".to_owned());
-                module_source = Some(format!("import runpy\nrunpy._run_module_as_main({})\n", python_string_literal(&module)));
+                module_source = Some(format!("import _runtime_import\n_runtime_import.run_as_main({})\n", python_string_literal(&module)));
                 language.get_or_insert_with(|| Language::Named("python".to_string()));
                 rest = &rest[used..];
                 break;

@@ -1563,4 +1563,12 @@ def _install(_bootstrap_module):
     _set_bootstrap_module(_bootstrap_module)
     supported_loaders = _get_supported_file_loaders()
     sys.path_hooks.extend([FileFinder.path_hook(*supported_loaders)])
-    sys.meta_path.append(PathFinder)
+    if PathFinder not in sys.meta_path:
+        sys.meta_path.append(PathFinder)
+
+
+# Definitions in the reference's frozen module carry that module's name.
+for _name, _value in list(globals().items()):
+    if getattr(_value, '__module__', None) == __name__ and isinstance(_value, (type, type(_install))):
+        _value.__module__ = '_frozen_importlib_external'
+del _name, _value

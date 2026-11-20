@@ -2,6 +2,7 @@
 # the same bytes for every case. Reuse members when the file is unchanged.
 _tar_load = TarFile._load
 _tar_members = {}
+_tar_seen = set()
 _tar_loading = set()
 _TAR_CACHE_LIMIT = 8 * 1024 * 1024
 _TAR_FIELDS = (
@@ -104,6 +105,10 @@ def _tar_load_members(self):
                     return
         _tar_load(self)
         if key is not None and self._loaded:
+            # Skip hashing and snapshotting archives opened only once (e.g. CLI).
+            if key not in _tar_seen:
+                _tar_seen.add(key)
+                return
             try:
                 tell = self.fileobj.tell()
             except Exception:
@@ -120,3 +125,91 @@ def _tar_load_members(self):
 
 
 TarFile._load = _tar_load_members
+
+
+_tar_open_func = TarFile.__dict__["open"].__func__
+# A transparent read tries every compressor before the plain header.
+# Building those decompressors costs more than the archive itself.
+_TAR_MAGIC = (
+    (b"\x1f\x8b", "gz"),
+    (b"BZh", "bz2"),
+    (b"\xfd7zXZ\x00", "xz"),
+    (b"\x28\xb5\x2f\xfd", "zst"),
+)
+
+def _tar_kind(name, fileobj):
+    if fileobj is not None:
+        try:
+            pos = fileobj.tell()
+            head = fileobj.read(6)
+            fileobj.seek(pos)
+        except Exception:
+            return None
+    else:
+        try:
+            handle = bltn_open(name, "rb")
+        except OSError:
+            return None
+        try:
+            head = handle.read(6)
+        finally:
+            handle.close()
+    for magic, kind in _TAR_MAGIC:
+        if head.startswith(magic):
+            return kind
+    return "tar"
+
+def _tar_open_rest(cls, name, fileobj, failed_kind, failed, **kwargs):
+    # The matching opener already failed. A second call would consume a
+    # one-shot mock and drop that failure from the ReadError text.
+    def not_compressed(comptype):
+        return cls.OPEN_METH[comptype] == "taropen"
+    error_msgs = []
+    for comptype in sorted(cls.OPEN_METH, key=not_compressed):
+        if comptype == failed_kind:
+            error_msgs.append("- method %s: %r" % (comptype, failed))
+            continue
+        func = getattr(cls, cls.OPEN_METH[comptype])
+        if fileobj is not None:
+            saved_pos = fileobj.tell()
+        try:
+            return func(name, "r", fileobj, **kwargs)
+        except (ReadError, CompressionError) as err:
+            error_msgs.append("- method %s: %r" % (comptype, err))
+            if fileobj is not None:
+                fileobj.seek(saved_pos)
+            continue
+    summary = "\n".join(error_msgs)
+    raise ReadError("file could not be opened successfully:\n%s" % summary)
+
+
+def _tar_open_matched(cls, name=None, mode="r", fileobj=None, bufsize=RECORDSIZE, **kwargs):
+    if mode in ("r", "r:*"):
+        pos = None
+        if fileobj is not None:
+            try:
+                pos = fileobj.tell()
+            except Exception:
+                pos = None
+        kind = _tar_kind(name, fileobj)
+        method = None
+        if kind is not None:
+            try:
+                method = cls.OPEN_METH[kind]
+            except KeyError:
+                method = None
+        if method is not None:
+            try:
+                return getattr(cls, method)(name, "r", fileobj, **kwargs)
+            except (ReadError, CompressionError) as err:
+                if fileobj is not None and pos is not None:
+                    try:
+                        fileobj.seek(pos)
+                    except Exception:
+                        raise
+                return _tar_open_rest(cls, name, fileobj, kind, err, **kwargs)
+    return _tar_open_func(cls, name, mode, fileobj, bufsize, **kwargs)
+
+TarFile.open = classmethod(_tar_open_matched)
+open = TarFile.open
+

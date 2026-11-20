@@ -2237,7 +2237,7 @@ impl<'a> Engine<'a> {
     fn descriptor_apply(&mut self, callable: Value, args: Vec<Value>) -> Flow<Value> {
         // Native callables use ordinary dispatch, and stored strings stay
         // strings. Routine calls retain their attached namespace here.
-        if !self.lang.class_builder.is_empty() && matches!(callable.contents(), Value::Native(..) | Value::ByteKind(..) | Value::SortOf(..) | Value::Text(_)) {
+        if !self.lang.class_builder.is_empty() && matches!(callable.contents(), Value::Native(..) | Value::ValueMethod(_) | Value::TextMethod(..) | Value::ByteKind(..) | Value::SortOf(..) | Value::Text(_)) {
             self.call_held(callable, args).map_err(|words| self.carried.take().unwrap_or_else(|| words.into()))
         } else { self.class_apply(callable, args) }
     }
@@ -2388,7 +2388,8 @@ impl<'a> Engine<'a> {
                 answer
             },
             Value::Class(c) => self.class_make(c,args),
-            Value::Adapter(w) if matches!(w.0, 3 | 131) => {
+            Value::Adapter(w) if matches!(w.0, 3 | 131) && self.profiler.borrow().is_none()
+                && !args.iter().any(|arg| matches!(arg, Value::Tie(pair) if matches!(pair.0, Value::Flag(_)))) => {
                 args.insert(0, w.1[1].clone());
                 self.descriptor_apply(w.1[0].clone(), args)
             }
@@ -2631,8 +2632,67 @@ impl<'a> Engine<'a> {
                     self.iterator_recipe_next(mode, &args[0])?.ok_or_else(|| self.core_fault("core.exhausted", "").into())
                 }
                 3 | 131 => {
-                    args.insert(0,w.1[1].clone());
-                    self.descriptor_apply(w.1[0].clone(), args)
+                    let function = w.1[0].contents();
+                    let python_method = w.0 == 131;
+                    let spread = args.iter().any(|arg| matches!(arg, Value::Tie(pair) if matches!(pair.0, Value::Flag(_))));
+                    let native = matches!(&function, Value::Native(..) | Value::ValueMethod(_) | Value::TextMethod(..))
+                        || matches!(&function, Value::Adapter(_) if function.core_kind() == "builtin_function_or_method");
+                    let descriptor = matches!(&function, Value::Adapter(_) if matches!(function.core_kind().as_str(), "method_descriptor" | "classmethod_descriptor"));
+                    self.call_site.set(false);
+                    let items = if !spread {
+                        self.expanded_call_items(args)?
+                    } else { match &function {
+                        Value::Native(_, word) => self.call_items_named(word, args)?,
+                        Value::Routine(body) => {
+                            self.expanded_call_items_for(args, Callee::Code(body))?
+                        }
+                        _ if native || descriptor => {
+                            let key = self.class_word("qualified").to_owned();
+                            let name = self.member_of(function.clone(), &key)?.map(|name| name.plain());
+                            match name {
+                                Some(name) => self.expanded_call_items_for(args, Callee::Builtin(&name))?,
+                                None => self.expanded_call_items(args)?,
+                            }
+                        }
+                        _ => self.expanded_call_items(args)?,
+                    } };
+                    let mut opened: Vec<Value> = items.into_iter().map(|(name, value)| {
+                        match name { None => value, Some(key) => Value::Tie(Rc::new((key, value))) }
+                    }).collect();
+                    // A built-in bound method is itself the C callable; it is not a Python method wrapper.
+                    if !python_method && (native || descriptor) && self.profiler.borrow().is_some()
+                        && !self.profiling.get() && !self.native_open.get() {
+                        opened.insert(0, w.1[1].clone());
+                        let mut raised = None;
+                        let result = self.around_native(Value::Adapter(w.clone()), |this| {
+                            this.descriptor_apply(function, opened).map_err(|fault| {
+                                raised = Some(this.carried.take().unwrap_or(fault));
+                                String::new()
+                            })
+                        });
+                        return result.map_err(|words| self.carried.take().or(raised).unwrap_or(Fault::Note(words)));
+                    }
+                    let observing = self.profiler.borrow().is_some() && !self.profiling.get() && !self.native_open.get();
+                    let target = if python_method && descriptor && !spread && observing {
+                        // Direct method calls bind native descriptors before reporting their C entry.
+                        let key = self.class_word("descriptor.get").to_owned();
+                        let getter = self.class_get(function.clone(), &key, false)?;
+                        let binding = if function.core_kind() == "classmethod_descriptor" {
+                            vec![Value::Null, w.1[1].clone()]
+                        } else { vec![w.1[1].clone()] };
+                        let prior = self.native_open.replace(true);
+                        let bound = self.class_apply(getter, binding);
+                        self.native_open.set(prior);
+                        bound?
+                    } else {
+                        opened.insert(0, w.1[1].clone());
+                        function
+                    };
+                    let previous = self.native_open.get();
+                    if python_method && spread && (native || descriptor) { self.native_open.set(true); }
+                    let result = self.descriptor_apply(target, opened);
+                    self.native_open.set(previous);
+                    result
                 }
                 // A member a builtin kind carries, standing loose: the
                 // first value it is called with is the one it works
@@ -3708,7 +3768,7 @@ impl<'a> Engine<'a> {
                         4 => Ok(wrapped.1[0].clone()),
                         5 => {
                             let owner = match explicit { Some(owner) => owner.clone(), None => self.call_held(self.kind_maker_word(), vec![instance.clone()])? };
-                            Ok(Self::adapter(3, vec![wrapped.1[0].clone(), owner]))
+                            Ok(Self::adapter(131, vec![wrapped.1[0].clone(), owner]))
                         }
                         _ => Err(self.class_refusal()),
                     }
@@ -4973,7 +5033,7 @@ impl<'a> Engine<'a> {
                 63 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 119 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 4 => Ok(w.1[0].clone()),
-                5 => Ok(Self::adapter(3,vec![w.1[0].clone(),self.public_class(class)])),
+                5 => Ok(Self::adapter(131,vec![w.1[0].clone(),self.public_class(class)])),
                 6 if subject.is_some() => self.class_apply(w.1[0].clone(),vec![subject.unwrap()]),
                 16 if subject.is_some() => self.slot_read(&subject.unwrap(), &w.1),
                 205 if subject.is_some() => self.native_getset_read(&w.1, subject.unwrap()),
@@ -5559,7 +5619,7 @@ impl<'a> Engine<'a> {
         if name == "__reduce__" {
             let python_binding = match &subject {
                 Value::Method(owner, code, _) => Some((Value::Object(owner.clone()), Value::Routine(code.clone()))),
-                Value::Adapter(entry) if entry.0 == 3 && matches!(entry.1.first(), Some(Value::Routine(_) | Value::Native(Builtin::Text(_), _))) => Some((entry.1[1].clone(), entry.1[0].clone())),
+                Value::Adapter(entry) if matches!(entry.0, 3 | 131) && matches!(entry.1.first(), Some(Value::Routine(_) | Value::Native(Builtin::Text(_), _))) => Some((entry.1[1].clone(), entry.1[0].clone())),
                 _ => None,
             };
             if let Some((owner, code)) = python_binding {
@@ -5569,7 +5629,7 @@ impl<'a> Engine<'a> {
             }
         }
         if name == self.class_word("allocate") && matches!(&subject, Value::Native(operation, _) if !Self::kind_builtin(operation)) { return Ok(self.root_allocator()); }
-        if name == "__reduce_ex__" && (matches!(&subject, Value::Native(operation, _) if !Self::kind_builtin(operation)) || (matches!(&subject, Value::ValueMethod(_) | Value::TextMethod(..) | Value::Method(..)) || matches!(&subject, Value::View(_)) || matches!(&subject, Value::Adapter(entry) if matches!(entry.0, 3 | 64)))) {
+        if name == "__reduce_ex__" && (matches!(&subject, Value::Native(operation, _) if !Self::kind_builtin(operation)) || (matches!(&subject, Value::ValueMethod(_) | Value::TextMethod(..) | Value::Method(..)) || matches!(&subject, Value::View(_)) || matches!(&subject, Value::Adapter(entry) if matches!(entry.0, 3 | 64 | 131)))) {
             return Ok(Value::ValueMethod(Rc::new((subject, String::from("callable_reduce_ex")))));
         }
         if matches!(&subject, Value::Adapter(parts) if parts.0 == 4 || parts.0 == 5 || parts.0 == 29 && parts.1.len() == 3) {
@@ -6802,8 +6862,9 @@ impl<'a> Engine<'a> {
                     if name == "__replace__" || self.lang.class_details.get("code.replace").and_then(|words| words.first()).map_or(false, |word| word == name) {
                         return Ok(Value::ValueMethod(Rc::new((subject.clone(), "code_replace".to_string()))));
                     }
-                    if name == "co_lines" || name == "co_positions" {
-                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), if name == "co_lines" { "code_lines" } else { "code_positions" }.to_string()))));
+                    if matches!(name, "co_lines" | "co_positions" | "co_branches") {
+                        let method = match name { "co_lines" => "code_lines", "co_branches" => "code_branches", _ => "code_positions" };
+                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), method.to_string()))));
                     }
                     if name == "co_linetable" {
                         if let Some(table) = &f.location_bytes { return Ok(table.clone()); }
@@ -7472,6 +7533,7 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn class_write(&mut self, subject:Value, name:&str, value:Option<Value>, plain:bool) -> Flow<Value> {
+        if name == "f_trace_opcodes" && value.as_ref().is_some_and(Value::is_true) { self.opcode_events = true; }
         // A class or instance behind a binding receives its own attribute
         // writes. Collection and function wrappers keep their identities.
         let subject = match &subject {
@@ -7985,7 +8047,13 @@ impl<'a> Engine<'a> {
                     let annotate = self.lang.class_details.get("code.fields").and_then(|row| row.get(10)).cloned().unwrap_or_default();
                     Self::write_members(&mut c.shared.borrow_mut(), &annotate, Some(Value::Null), false).map_err(|_| self.class_refusal())?;
                 }
-                Self::write_members(&mut c.shared.borrow_mut(),name,value,false).map_err(|_|absent)?;
+                // The member this write displaces may hold an object with last words
+                // to say, which reads this class's members: let go of it only once
+                // the members are no longer borrowed for the write.
+                let displaced = c.shared.borrow().iter().find(|(member, _)| member == name).map(|(_, held)| held.clone());
+                let written = Self::write_members(&mut c.shared.borrow_mut(),name,value,false);
+                drop(displaced);
+                written.map_err(|_|absent)?;
             }
             Value::Routine(_) => {
                 if name == self.class_word("namespace") {

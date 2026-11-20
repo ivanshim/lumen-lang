@@ -1156,7 +1156,7 @@ impl Value {
                 Ok(address)
             }
             // Bound callables keep a key by function and receiver identity.
-            Value::Wrapped(3, parts) if parts.len() == 2 => {
+            Value::Wrapped(3 | 132, parts) if parts.len() == 2 => {
                 let receiver = match &parts[1] {
                     Value::Thing(object) => format!("receiver/{:p}", crate::data::Hold::as_ptr(object)),
                     other => other.hash_address()?,
@@ -1767,7 +1767,11 @@ impl Value {
                     p.len() == q.len() && p.iter().zip(q.iter()).all(|(u,v)| u.equals(v)) && (a.one_and_same(b) || a.one_place(b))
                 } else { Rc::ptr_eq(x,y) || x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| p.equals(q)) }
             },
-            (Value::Wrapped(132, one), Value::Wrapped(132, two)) => one[0].equals(&two[0]) && one[1].one_place(&two[1]),
+            (Value::Wrapped(132, one), Value::Wrapped(132, two)) => {
+                let receiver = one[1].settled();
+                let other_receiver = two[1].settled();
+                one[0].equals(&two[0]) && (receiver.one_place(&other_receiver) || receiver.one_and_same(&other_receiver))
+            },
             // A cell asked after twice is the one cell where both
             // wrappers name the one room they look into.
             (Value::Wrapped(35, x), Value::Wrapped(35, y)) => match (x.as_slice(), y.as_slice()) {
