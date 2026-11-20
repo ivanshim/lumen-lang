@@ -871,6 +871,8 @@ pub struct Routine {
     pub globals_rebound: bool,
     #[serde(skip)]
     pub code_description: std::cell::OnceCell<Rc<Routine>>,
+    #[serde(skip)]
+    pub compiled_state: Option<Rc<crate::build::CompiledState>>,
     pub display_names: std::cell::RefCell<Option<(Rc<str>, Rc<str>)>>,
     /// Full source. The cache stores one shared copy; nested routines point at it.
     #[serde(serialize_with = "crate::cache::write_source", deserialize_with = "crate::cache::read_source", default)]
@@ -1337,9 +1339,189 @@ impl Routine {
         adjusted.literals = literals;
         Ok(adjusted)
     }
+
+    pub fn rebased(
+        self: &Rc<Self>,
+        offsets: &[usize],
+        globe: &Option<Value>,
+        born: &Option<Value>,
+        framed_in: &Option<Rc<str>>,
+    ) -> Result<Rc<Self>, String> {
+        let mut cache: std::collections::HashMap<usize, Rc<Self>> = std::collections::HashMap::new();
+        self.rebase_tree(offsets, globe, born, framed_in, &mut cache)
+    }
+
+    fn rebase_tree(
+        self: &Rc<Self>,
+        offsets: &[usize],
+        globe: &Option<Value>,
+        born: &Option<Value>,
+        framed_in: &Option<Rc<str>>,
+        cache: &mut std::collections::HashMap<usize, Rc<Self>>,
+    ) -> Result<Rc<Self>, String> {
+        let ptr_key = Rc::as_ptr(self) as usize;
+        if let Some(existing) = cache.get(&ptr_key) {
+            return Ok(existing.clone());
+        }
+        let mut copy = (**self).clone();
+        copy.code_description = Default::default();
+        copy.compiled_state = None;
+        copy.globe = globe.clone();
+        copy.born = born.clone();
+        copy.framed_in = framed_in.clone();
+        if let Some(def_body) = &self.definition {
+            copy.definition = Some(def_body.rebase_tree(offsets, globe, born, framed_in, cache)?);
+        }
+        if let Some(ann_body) = &self.annotator {
+            copy.annotator = Some(ann_body.rebase_tree(offsets, globe, born, framed_in, cache)?);
+        }
+        for addr in &mut copy.reaching {
+            rebase_address(addr, offsets)?;
+        }
+        for lit in &mut copy.literals {
+            rebase_value(lit, offsets, globe, born, framed_in, cache)?;
+        }
+        copy.body.rebase_form(offsets, globe, born, framed_in, cache)?;
+        let out = Rc::new(copy);
+        cache.insert(ptr_key, out.clone());
+        Ok(out)
+    }
+}
+
+fn rebase_address(addr: &mut Address, offsets: &[usize]) -> Result<(), String> {
+    if addr.cache_global {
+        addr.at = *offsets.get(addr.at).ok_or("ValueError: global slot outside cache")?;
+    }
+    if let Some(fb) = &mut addr.fallback {
+        *fb = *offsets.get(*fb).ok_or("ValueError: invalid global fallback")?;
+    }
+    Ok(())
+}
+
+fn rebase_value(
+    val: &mut Value,
+    offsets: &[usize],
+    globe: &Option<Value>,
+    born: &Option<Value>,
+    framed_in: &Option<Rc<str>>,
+    cache: &mut std::collections::HashMap<usize, Rc<Routine>>,
+) -> Result<(), String> {
+    match val {
+        Value::Routine(body) => *body = body.rebase_tree(offsets, globe, born, framed_in, cache)?,
+        Value::Tuple(seq) => {
+            let mut vec = seq.as_slice().to_vec();
+            for item in &mut vec { rebase_value(item, offsets, globe, born, framed_in, cache)?; }
+            *val = Value::tuple(vec);
+        }
+        Value::Vector(seq) => {
+            let mut vec = seq.as_slice().to_vec();
+            for item in &mut vec { rebase_value(item, offsets, globe, born, framed_in, cache)?; }
+            *val = Value::Vector(crate::tuples::Sequence::plain(vec));
+        }
+        Value::Wrapped(tag, seq) => {
+            let mut vec = seq.as_slice().to_vec();
+            for item in &mut vec { rebase_value(item, offsets, globe, born, framed_in, cache)?; }
+            *val = Value::Wrapped(*tag, crate::tuples::Sequence::plain(vec));
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 impl Form {
+    fn rebase_form(
+        &mut self,
+        offsets: &[usize],
+        globe: &Option<Value>,
+        born: &Option<Value>,
+        framed_in: &Option<Rc<str>>,
+        cache: &mut std::collections::HashMap<usize, Rc<Routine>>,
+    ) -> Result<(), String> {
+        match self {
+            Self::Fits { value, test: _, slots, tuple: _, kinds } => {
+                value.rebase_form(offsets, globe, born, framed_in, cache)?;
+                for (_, addr) in slots { rebase_address(addr, offsets)?; }
+                for kind in kinds { kind.rebase_form(offsets, globe, born, framed_in, cache)?; }
+            }
+            Self::Const(val) => rebase_value(val, offsets, globe, born, framed_in, cache)?,
+            Self::Read(addr) | Self::Take(addr) | Self::Release(addr) | Self::Glance(addr)
+            | Self::Missing(addr) | Self::Share(addr) | Self::Forget(addr)
+            | Self::RemoveName(addr) | Self::Ready(addr) => rebase_address(addr, offsets)?,
+            Self::Write(addr, inner) | Self::Tie(addr, inner) | Self::ShareItem(addr, inner) => {
+                rebase_address(addr, offsets)?;
+                inner.rebase_form(offsets, globe, born, framed_in, cache)?;
+            }
+            Self::SharePlace(addr, keys) => {
+                rebase_address(addr, offsets)?;
+                for key in keys { key.rebase_form(offsets, globe, born, framed_in, cache)?; }
+            }
+            Self::Apply(callee, args) => {
+                if let Callee::Code(target) = callee {
+                    target.rebase_form(offsets, globe, born, framed_in, cache)?;
+                }
+                for arg in args { arg.rebase_form(offsets, globe, born, framed_in, cache)?; }
+            }
+            Self::Cycle { test, body, step, after: _, otherwise } => {
+                test.rebase_form(offsets, globe, born, framed_in, cache)?;
+                body.rebase_form(offsets, globe, born, framed_in, cache)?;
+                if let Some(s) = step { s.rebase_form(offsets, globe, born, framed_in, cache)?; }
+                if let Some(o) = otherwise { o.rebase_form(offsets, globe, born, framed_in, cache)?; }
+            }
+            Self::Dyad { a, b, .. } => {
+                for inp in [a, b] {
+                    match inp {
+                        Input::Form(inner) => inner.rebase_form(offsets, globe, born, framed_in, cache)?,
+                        Input::Address(addr) => rebase_address(addr, offsets)?,
+                        Input::Const(val) => rebase_value(val, offsets, globe, born, framed_in, cache)?,
+                    }
+                }
+            }
+            Self::Bump { slot, .. } => rebase_address(slot, offsets)?,
+            Self::Class { plan, values } => {
+                let mut cloned = (**plan).clone();
+                for (_, m) in &mut cloned.methods {
+                    *m = m.rebase_tree(offsets, globe, born, framed_in, cache)?;
+                }
+                *plan = Rc::new(cloned);
+                for val in values { val.rebase_form(offsets, globe, born, framed_in, cache)?; }
+            }
+            Self::Attempt { context, async_context: _, body, clauses, last, otherwise } => {
+                if let Some(ctx) = context { rebase_address(ctx, offsets)?; }
+                body.rebase_form(offsets, globe, born, framed_in, cache)?;
+                for cl in clauses {
+                    if let Some(rp) = &mut cl.reraise_position { rp.rebase_form(offsets, globe, born, framed_in, cache)?; }
+                    if let Some(ch) = &mut cl.choices {
+                        for item in ch { item.rebase_form(offsets, globe, born, framed_in, cache)?; }
+                    }
+                    if let Some(h) = &mut cl.held { rebase_address(h, offsets)?; }
+                    cl.body.rebase_form(offsets, globe, born, framed_in, cache)?;
+                }
+                if let Some(l) = last { l.rebase_form(offsets, globe, born, framed_in, cache)?; }
+                if let Some(o) = otherwise { o.rebase_form(offsets, globe, born, framed_in, cache)?; }
+            }
+            Self::OnLine(_, _, inner) | Self::Located(_, _, inner) | Self::ShareField(inner, _)
+            | Self::ShareOwn(inner, _) | Self::ShareCalled(inner) | Self::ForgetCalled(inner)
+            | Self::ReadyCalled(inner) | Self::Muted(inner) | Self::Silenced(inner)
+            | Self::Called(inner) | Self::CellOrSaid(_, _, _, inner) | Self::HeldEither(_, _, _, inner) => {
+                inner.rebase_form(offsets, globe, born, framed_in, cache)?;
+            }
+            Self::Assert { condition, message } => {
+                condition.rebase_form(offsets, globe, born, framed_in, cache)?;
+                message.rebase_form(offsets, globe, born, framed_in, cache)?;
+            }
+            Self::ShareWithin(inner, keys) => {
+                inner.rebase_form(offsets, globe, born, framed_in, cache)?;
+                for key in keys { key.rebase_form(offsets, globe, born, framed_in, cache)?; }
+            }
+            Self::ForgetWithin(lhs, rhs) | Self::TieCalled(lhs, rhs) | Self::CallWrite(lhs, rhs) => {
+                lhs.rebase_form(offsets, globe, born, framed_in, cache)?;
+                rhs.rebase_form(offsets, globe, born, framed_in, cache)?;
+            }
+            Self::Again | Self::Remark(..) => {}
+        }
+        Ok(())
+    }
+
     pub fn position_rows(&self, entries: &mut Vec<[Option<u32>; 4]>, inherited: [Option<u32>; 4]) {
         let current = match self {
             Self::OnLine(row, _, _) => [Some(*row), Some(*row), None, None],
@@ -1347,7 +1529,12 @@ impl Form {
             _ => inherited,
         };
         entries.push(current);
-        for child in self.children(true) { child.position_rows(entries, current); }
+        for child in self.children(true) {
+            let carried = if matches!(self, Self::Apply(Callee::Prim(Prim::Seq, _), _)) && matches!(child, Self::Const(Value::Nil) | Self::Release(_) | Self::Forget(_)) {
+                entries.last().copied().unwrap_or(current)
+            } else { current };
+            child.position_rows(entries, carried);
+        }
     }
 }
 

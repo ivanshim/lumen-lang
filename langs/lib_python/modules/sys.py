@@ -269,6 +269,26 @@ def set_int_max_str_digits(maxdigits):
         raise ValueError('maxdigits must be 0 or larger than 640')
     _int_max_str_digits = maxdigits
 
+# PYTHONIOENCODING is encoding[:errors]. An empty encoding leaves the
+# stream's own. Stderr keeps backslashreplace so a traceback can still
+# be written; the other streams use strict when no handler is named.
+def _apply_io_encoding(stream):
+    if _ignore_environment:
+        return
+    value = _host_environment('environ')[1].get(b'PYTHONIOENCODING')
+    if not value:
+        return
+    raw = value.decode('utf-8', 'surrogateescape') if isinstance(value, bytes) else value
+    encoding, sep, errors = raw.partition(':')
+    if encoding:
+        stream.encoding = encoding
+    if stream._fd == 2:
+        return
+    if sep and errors:
+        stream.errors = errors
+    else:
+        stream.errors = 'strict'
+
 # Standard streams validate their descriptor before asking os.isatty.
 class _StandardStream:
     closed = False
@@ -303,9 +323,22 @@ class _StandardStream:
 
 class _BinaryInput(_StandardStream):
     _fd = 0
+    def readable(self):
+        self._ensure_open()
+        return True
+    def writable(self):
+        self._ensure_open()
+        return False
+    def seekable(self):
+        self._ensure_open()
+        return False
     def read(self, size=-1):
         self._ensure_open()
         return _host_stream_read(size, False, True)
+    def read1(self, size=-1):
+        # One host read. A text chunk must return while the writer is still open.
+        self._ensure_open()
+        return _host_stream_read(size, False, True, True)
     def readline(self, size=-1):
         self._ensure_open()
         return _host_stream_read(size, True, True)
@@ -339,6 +372,7 @@ class _Output(_StandardStream):
     _fd = 1
     def __init__(self):
         self.buffer = _BinaryOutput()
+        _apply_io_encoding(self)
     def write(self, *args, **keywords):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
@@ -356,6 +390,7 @@ class _Error(_StandardStream):
     _fd = 2
     def __init__(self):
         self.buffer = _BinaryOutput(True)
+        _apply_io_encoding(self)
     def write(self, *args, **keywords):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
@@ -369,173 +404,16 @@ class _Error(_StandardStream):
         import os
         return os.isatty(self.fileno())
 
-class _Input(_BinaryInput):
-    # The text side of stdin is a universal-newline stream, as a
-    # terminal's is: on input \r\n and \r become \n, and the endings it
-    # has met are reported.  A \r at the end of what has arrived is held
-    # until the next read says whether a \n follows, so a \r\n split
-    # across reads still counts once and comes back as a single \n.
-    # Only the text side decodes this way; self.buffer still returns the
-    # bytes untouched.  reconfigure(newline=...) mirrors the reference:
-    # None and '' detect the endings, '' and a fixed ending (\n, \r or
-    # \r\n) leave the text untranslated, and a fixed ending is the only
-    # break lines are cut at.
-    _NEWLINES = (None, '\n', '\r', ('\r', '\n'), '\r\n',
-                 ('\n', '\r\n'), ('\r', '\r\n'),
-                 ('\r', '\n', '\r\n'))
-    _CHUNK = 8192
-
-    def __init__(self):
-        self.buffer = _BinaryInput()
-        self._newline = None
-        self._seen = 0
-        self._held = ''
-        self._ready = ''
-        self._drained = False
-        self._read_started = False
-
-    @property
-    def newlines(self):
-        return self._NEWLINES[self._seen]
-
-    def reconfigure(self, *, encoding=None, errors=None, newline=Ellipsis,
-                    line_buffering=None, write_through=None):
-        # The host stream's encoding is fixed; only the newline mode can
-        # be chosen, and only up to the first read.  The reference refuses
-        # an encoding, errors or newline change once it has read, and the
-        # characters it has already decoded must survive the refusal.
-        self._ensure_open()
-        if self._read_started and (encoding is not None
-                                   or errors is not None
-                                   or newline is not Ellipsis):
-            import io as _io
-            raise _io.UnsupportedOperation(
-                "It is not possible to set the encoding or newline of stream "
-                "after the first read")
-        if newline is not Ellipsis:
-            if newline not in (None, '', '\n', '\r', '\r\n'):
-                raise ValueError('illegal newline value: ' + repr(newline))
-            self._newline = newline
-            self._seen = 0
-            self._held = ''
-            self._ready = ''
-
-    def _decoded(self, raw, final):
-        newline = self._newline
-        if newline not in (None, ''):
-            return raw
-        text = self._held + raw
-        self._held = ''
-        if not final and text.endswith('\r'):
-            text = text[:-1]
-            self._held = '\r'
-        crlf = text.count('\r\n')
-        cr = text.count('\r') - crlf
-        lf = text.count('\n') - crlf
-        self._seen |= (1 if lf else 0) | (2 if cr else 0) | (4 if crlf else 0)
-        if newline is None:
-            return text.replace('\r\n', '\n').replace('\r', '\n')
-        return text
-
-    def _pull(self, count=-1, line=False):
-        # A line pull takes a whole chunk: reading a reply one character at a
-        # time made a long line cost its length in calls.  The stream stops
-        # the chunk at a newline, so a prompt still answers on Enter.
-        if line:
-            # A held CR only needs one more character to decide between CR
-            # and CRLF; a chunk pull would wait for another line ending.
-            if self._held:
-                raw = _host_stream_read(1, False)
-            else:
-                if count <= 0:
-                    count = self._CHUNK
-                raw = _host_stream_read(count, True)
-        else:
-            if count <= 0:
-                count = 1
-            raw = _host_stream_read(count, False)
-        if raw == '':
-            self._drained = True
-            self._ready += self._decoded('', True)
-        else:
-            self._ready += self._decoded(raw, False)
-
-    def _line_stop(self):
-        ready = self._ready
-        newline = self._newline
-        if newline is None:
-            at = ready.find('\n')
-            return len(ready) if at < 0 else at + 1
-        if newline == '':
-            best = -1
-            width = 0
-            for ending in ('\r\n', '\r', '\n'):
-                at = ready.find(ending)
-                if at >= 0 and (best < 0 or at < best):
-                    best = at
-                    width = len(ending)
-            return len(ready) if best < 0 else best + width
-        at = ready.find(newline)
-        return len(ready) if at < 0 else at + len(newline)
-
-    def _line_ready(self):
-        newline = self._newline
-        if newline is None:
-            return '\n' in self._ready
-        if newline == '':
-            return '\r' in self._ready or '\n' in self._ready
-        return newline in self._ready
-
-    def read(self, size=-1):
-        import _io
-        size = _io._size(size)
-        self._ensure_open()
-        if size == 0:
-            return ''
-        self._read_started = True
-        if size is None or size < 0:
-            while not self._drained:
-                self._pull(self._CHUNK)
-            text, self._ready = self._ready, ''
-            return text
-        while len(self._ready) < size and not self._drained:
-            self._pull(size - len(self._ready))
-        text = self._ready[:size]
-        self._ready = self._ready[size:]
-        return text
-
-    def readline(self, size=-1):
-        import _io
-        size = _io._ssize(size)
-        self._ensure_open()
-        self._read_started = True
-        while not self._drained:
-            if self._line_ready():
-                break
-            if size is not None and size >= 0:
-                if len(self._ready) >= size:
-                    break
-                self._pull(size - len(self._ready), line=True)
-            else:
-                self._pull(line=True)
-        if not self._ready:
-            return ''
-        stop = self._line_stop()
-        if size is not None and size >= 0 and size < stop:
-            stop = size
-        line = self._ready[:stop]
-        self._ready = self._ready[stop:]
-        return line
-
-    def isatty(self):
-        import os
-        return os.isatty(self.fileno())
-
 stdout = _Output()
 stderr = _Error()
-stdin = _Input()
 __stdout__ = stdout
 __stderr__ = stderr
+_stdin_holder = _StandardStream()
+_stdin_holder._fd = 0
+_apply_io_encoding(_stdin_holder)
+_stdin_buffer = _BinaryInput()
+_stdin_buffer.name = '<stdin>'
+stdin = _stdin_buffer
 __stdin__ = stdin
 
 def _input(prompt=''):
@@ -707,9 +585,15 @@ def unraisablehook(unraisable):
         print('Exception ignored in: ' + repr(unraisable.object), file=stderr)
     else:
         print(unraisable.err_msg, file=stderr)
-    import traceback
-    traceback.print_exception(unraisable.exc_type, unraisable.exc_value,
-                              unraisable.exc_traceback, file=stderr, chain=False)
+    # Finalization refuses a first import, and this hook is what shows
+    # an error raised from a finalizer.
+    try:
+        import traceback
+        traceback.print_exception(unraisable.exc_type, unraisable.exc_value,
+                                  unraisable.exc_traceback, file=stderr, chain=False)
+    except BaseException:
+        kind = getattr(unraisable.exc_type, '__name__', 'Exception')
+        stderr.write(kind + ': ' + str(unraisable.exc_value) + '\n')
 
 
 __unraisablehook__ = unraisablehook
@@ -730,7 +614,7 @@ __displayhook__ = displayhook
 
 def _report_unraisable(exc_value, exc_traceback, about, kind):
     # A failed native signal write has no Python traceback.
-    if exc_traceback is None and kind != 'signal':
+    if exc_traceback is None and kind not in ('signal', 'signal_handler'):
         try:
             raise exc_value
         except BaseException as raised:
@@ -743,11 +627,13 @@ def _report_unraisable(exc_value, exc_traceback, about, kind):
         message = 'Exception ignored while finalizing coroutine ' + repr(about)
     elif kind == 'generator':
         message = 'Exception ignored while closing generator ' + repr(about)
+    elif kind == 'signal_handler':
+        message = 'Exception ignored while calling signal handler'
     elif kind == 'signal':
         message = 'Exception ignored while trying to write to the signal wakeup fd'
     else:
         message = None
-    target = None if kind in ('generator', 'coroutine', 'file') else about
+    target = None if kind in ('generator', 'coroutine', 'file', 'signal', 'signal_handler') else about
     try:
         unraisablehook(UnraisableHookArgs(type(exc_value), exc_value,
                                          exc_traceback, message, target))
@@ -846,7 +732,7 @@ def _getframemodulename(depth=0):
     return __frame_module(max(depth, 0) + 1)
 
 # Names supplied by the native importer and its source-backed adapters.
-builtin_module_names = ('sys', 'builtins', '_imp', '_thread', '_weakref', '_io', 'posix', 'marshal', '_warnings')
+builtin_module_names = ('sys', 'builtins', '_imp', '_thread', '_weakref', '_io', 'posix', 'marshal', '_warnings', '_typing')
 
 
 def getfilesystemencoding():

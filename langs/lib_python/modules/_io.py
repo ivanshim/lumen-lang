@@ -1641,6 +1641,31 @@ class FileIO(_RawIOBase):
             raise ValueError('I/O operation on closed file.')
         if not self._readable:
             raise UnsupportedOperation('File or stream is not readable.')
+        if type(self) is FileIO and 'read' not in vars(self) and type(self).read is _FILEIO_READ:
+            fd = self._fd
+            want = DEFAULT_BUFFER_SIZE
+            try:
+                pos = _finalizer_os.lseek(fd, 0, 1)
+                total = _finalizer_os.fstat(fd).st_size
+                if total > pos >= 0:
+                    want = total - pos + 1
+            except OSError:
+                pass
+            chunks = []
+            while True:
+                try:
+                    chunk = _finalizer_os.read(fd, want)
+                except BlockingIOError:
+                    if not chunks:
+                        return None
+                    return chunks[0] if len(chunks) == 1 else b''.join(chunks)
+                if not chunk:
+                    if not chunks:
+                        return b''
+                    return chunks[0] if len(chunks) == 1 else b''.join(chunks)
+                chunks.append(chunk)
+                if want < 1048576:
+                    want = min(want * 2, 1048576)
         chunks = []
         while True:
             chunk = self.read(DEFAULT_BUFFER_SIZE)
@@ -1691,9 +1716,14 @@ class FileIO(_RawIOBase):
         return size
 
 # Retain original methods so class replacements use validated buffered reads.
+_FILEIO_READ = FileIO.read
+_FILEIO_READALL = FileIO.readall
 _FILEIO_READINTO = FileIO.readinto
+_FILEIO_WRITE = FileIO.write
 _FILEIO_FLUSH = FileIO.flush
+_BYTESIO_READ = BytesIO.read
 _BYTESIO_READINTO = BytesIO.readinto
+_BYTESIO_WRITE = BytesIO.write
 
 class _CheckedRaw:
     # Buffered streams refill through readinto() so that every raw object's
@@ -1945,27 +1975,178 @@ class BufferedReader(_BufferedIOBase):
             impl = self._impl
         return impl.fileno()
     def read(self, size=-1):
-        size = _size(size)
+        if size is None:
+            size = -1
+        elif type(size) is not int or size > _MAXSIZE or size < _MINSIZE:
+            size = _size(size)
+        if size < -1:
+            raise ValueError('invalid number of bytes to read')
         impl = self._live
         if impl is None:
             impl = self._impl
+        if type(self) is BufferedReader:
+            checked = impl.raw
+            if checked._plain:
+                if not checked._owned or checked.raw._closed:
+                    raise ValueError('read of closed file')
+                lock = impl._read_lock
+                if not lock._held:
+                    if size >= 0:
+                        held = impl._read_buf
+                        at = impl._read_pos
+                        avail = len(held) - at
+                        if size <= avail:
+                            impl._read_pos = at + size
+                            return held[at:at + size]
+                        raw = checked.raw
+                        is_fio = type(raw) is FileIO
+                        raw_dict = raw.__dict__
+                        raw_cls = type(raw)
+                        if ('readinto' not in raw_dict and 'read' not in raw_dict
+                                and raw_cls.readinto is (_FILEIO_READINTO if is_fio else _BYTESIO_READINTO)
+                                and raw_cls.read is (_FILEIO_READ if is_fio else _BYTESIO_READ)):
+                            cap = impl.buffer_size
+                            wanted = cap if cap >= size else size
+                            prefix = held[at:] if at else held
+                            chunks = [prefix] if prefix else []
+                            nodata = b''
+                            lock._held = True
+                            try:
+                                if is_fio:
+                                    if raw._closed:
+                                        raise ValueError('I/O operation on closed file.')
+                                    if not raw._readable:
+                                        raise UnsupportedOperation('File or stream is not readable.')
+                                    fd = raw._fd
+                                    while avail < size:
+                                        try:
+                                            chunk = _finalizer_os.read(fd, wanted)
+                                        except BlockingIOError:
+                                            chunk = None
+                                        if not chunk:
+                                            nodata = chunk
+                                            break
+                                        avail += len(chunk)
+                                        chunks.append(chunk)
+                                else:
+                                    while avail < size:
+                                        chunk = _memory_cursor(6, raw, wanted)
+                                        if not chunk:
+                                            nodata = chunk
+                                            break
+                                        avail += len(chunk)
+                                        chunks.append(chunk)
+                            finally:
+                                lock._held = False
+                            out = chunks[0] if len(chunks) == 1 else (b''.join(chunks) if chunks else b'')
+                            if not out:
+                                impl._read_buf = b''
+                                impl._read_pos = 0
+                                return nodata
+                            n = size if size <= avail else avail
+                            if size <= cap:
+                                # Preserve trailing read buffer window for backward seeks.
+                                kept = out[-cap:] if len(out) > cap else out
+                                impl._read_buf = kept
+                                impl._read_pos = len(kept) - (len(out) - n)
+                            else:
+                                impl._read_buf = out[n:]
+                                impl._read_pos = 0
+                            return out[:n]
+                    else:
+                        raw = checked.raw
+                        is_fio = type(raw) is FileIO
+                        raw_dict = raw.__dict__
+                        raw_cls = type(raw)
+                        if ('readinto' not in raw_dict and 'read' not in raw_dict
+                                and raw_cls.readinto is (_FILEIO_READINTO if is_fio else _BYTESIO_READINTO)
+                                and raw_cls.read is (_FILEIO_READ if is_fio else _BYTESIO_READ)
+                                and (not is_fio or ('readall' not in raw_dict and raw_cls.readall is _FILEIO_READALL))):
+                            held = impl._read_buf
+                            at = impl._read_pos
+                            prefix = held[at:] if at else held
+                            impl._read_buf = b''
+                            impl._read_pos = 0
+                            lock._held = True
+                            try:
+                                chunk = raw.readall() if is_fio else _memory_cursor(6, raw, -1)
+                            finally:
+                                lock._held = False
+                            if chunk is None:
+                                return prefix or None
+                            return prefix + chunk if prefix else chunk
+            else:
+                impl._checkClosed('read of closed file')
+                if size >= 0 and not impl._read_lock._held:
+                    held = impl._read_buf
+                    at = impl._read_pos
+                    if size <= len(held) - at:
+                        impl._read_pos = at + size
+                        return held[at:at + size]
+                return impl.read(size)
         impl._checkClosed('read of closed file')
-        # A read the buffer already holds is answered here, the way the
-        # reference's fast path answers it, without the lock and the
-        # refill road: only for the plain reader, whose read does not
-        # flush first.
-        if type(self) is BufferedReader and type(size) is int and size >= 0 and not impl._read_lock._held:
-            held = impl._read_buf
-            at = impl._read_pos
-            if size <= len(held) - at:
-                impl._read_pos = at + size
-                return held[at:at + size]
         return impl.read(size)
     def read1(self, size=-1):
-        size = _size(size)
+        if size is None:
+            size = -1
+        elif type(size) is not int or size > _MAXSIZE or size < _MINSIZE:
+            size = _size(size)
         impl = self._live
         if impl is None:
             impl = self._impl
+        if type(self) is BufferedReader:
+            checked = impl.raw
+            if checked._plain:
+                if not checked._owned or checked.raw._closed:
+                    raise ValueError('read of closed file')
+                if size < 0:
+                    size = impl.buffer_size
+                if size == 0:
+                    return b''
+                lock = impl._read_lock
+                if not lock._held:
+                    held = impl._read_buf
+                    at = impl._read_pos
+                    avail = len(held) - at
+                    if avail > 0:
+                        take = size if size <= avail else avail
+                        impl._read_pos = at + take
+                        return held[at:at + take]
+                    raw = checked.raw
+                    is_fio = type(raw) is FileIO
+                    raw_dict = raw.__dict__
+                    raw_cls = type(raw)
+                    if ('readinto' not in raw_dict and 'read' not in raw_dict
+                            and raw_cls.readinto is (_FILEIO_READINTO if is_fio else _BYTESIO_READINTO)
+                            and raw_cls.read is (_FILEIO_READ if is_fio else _BYTESIO_READ)):
+                        cap = impl.buffer_size
+                        lock._held = True
+                        try:
+                            if is_fio:
+                                if raw._closed:
+                                    raise ValueError('I/O operation on closed file.')
+                                if not raw._readable:
+                                    raise UnsupportedOperation('File or stream is not readable.')
+                                try:
+                                    chunk = _finalizer_os.read(raw._fd, cap)
+                                except BlockingIOError:
+                                    chunk = None
+                            else:
+                                chunk = _memory_cursor(6, raw, cap)
+                        finally:
+                            lock._held = False
+                        if not chunk:
+                            impl._read_buf = b''
+                            impl._read_pos = 0
+                            return chunk
+                        take = size if size <= len(chunk) else len(chunk)
+                        if take <= cap:
+                            impl._read_buf = chunk[-cap:] if len(chunk) > cap else chunk
+                            impl._read_pos = len(impl._read_buf) - (len(chunk) - take)
+                        else:
+                            impl._read_buf = chunk[take:]
+                            impl._read_pos = 0
+                        return chunk[:take]
         return impl.read1(size)
     def readline(self, size=-1):
         size = _size(size)
@@ -2067,6 +2248,38 @@ _BUFFEREDREADER_FLUSH = BufferedReader.flush
 class BufferedWriter(BufferedReader):
     def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
         self._initialize(_buffered_impl('BufferedWriter'), raw, buffer_size)
+    def write(self, b):
+        kind = type(b)
+        if kind is str:
+            raise TypeError("can't write str to binary stream")
+        if kind is not bytes and kind is not bytearray and not isinstance(b, (bytes, bytearray)):
+            b = memoryview(b).tobytes()
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        if type(self) is BufferedWriter and not impl._write_lock._held:
+            checked = impl.raw
+            if checked._plain:
+                if not checked._owned or checked.raw._closed:
+                    raise ValueError('write to closed file')
+                buf = impl._write_buf
+                cap = impl.buffer_size
+                if len(buf) <= cap and len(buf) + len(b) <= cap:
+                    buf.extend(b)
+                    return len(b)
+        return impl.write(b)
+    def flush(self):
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        if type(self) is BufferedWriter and not impl._write_lock._held:
+            checked = impl.raw
+            if checked._plain:
+                if not checked._owned or checked.raw._closed:
+                    raise ValueError('flush on closed file')
+                if not impl._write_buf:
+                    return None
+        return impl.flush()
     # The reference's writer answers writable with the raw stream's own
     # answer and readable with the base answer.
     def readable(self):

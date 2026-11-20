@@ -72,6 +72,13 @@ fn integer(value: &Value) -> Result<i64, String> {
     }
 }
 // Read the current operating-system error, with the existing fallback.
+
+fn path_value_from_bytes(raw: Vec<u8>) -> Value {
+    match String::from_utf8(raw) {
+        Ok(text) => Value::text(&text),
+        Err(err) => bytes(err.into_bytes()),
+    }
+}
 fn errno() -> i32 { std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO) }
 fn status(result: i64) -> Result<Value, i32> {
     if result < 0 { Err(errno()) }
@@ -469,6 +476,29 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
                 data.resize(data.len()*2, 0);
             }
         },
+        "realpath" => {
+            let p = raw(&a[0])?;
+            let mode = number(1)?;
+            return match lumen_posix::realpath_bytes(&p, mode)? {
+                Ok(resolved) => Ok(Value::tuple(vec![Value::Small(0), path_value_from_bytes(resolved)])),
+                Err((err, bad)) => Ok(Value::tuple(vec![Value::Small(err.into()), path_value_from_bytes(bad)])),
+            };
+        },
+        "makedirs" => {
+            let p = raw(&a[0])?;
+            return match lumen_posix::makedirs_bytes(&p)? {
+                Ok(()) => Ok(Value::tuple(vec![Value::Small(0), Value::Null])),
+                Err((err, bad)) => Ok(Value::tuple(vec![Value::Small(err.into()), path_value_from_bytes(bad)])),
+            };
+        },
+        "rmtree" => {
+            let p = raw(&a[0])?;
+            let ignore_errors = matches!(a.get(1).map(|v| v.contents()), Some(Value::Flag(true)));
+            return match lumen_posix::rmtree_bytes(&p, ignore_errors)? {
+                Ok(done) => Ok(Value::tuple(vec![Value::Small(0), Value::Flag(done)])),
+                Err((err, bad)) => Ok(Value::tuple(vec![Value::Small(err.into()), path_value_from_bytes(bad)])),
+            };
+        },
         "listdir" => {
             use std::os::unix::ffi::OsStrExt;
             let p = pathname(0)?;
@@ -564,6 +594,49 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
         "terminal" => {
             let mut size = std::mem::zeroed::<libc::winsize>();
             status(libc::ioctl(number(0)? as i32, libc::TIOCGWINSZ, &mut size) as i64).map(|_| Value::tuple(vec![Value::Small(size.ws_col as i64),Value::Small(size.ws_row as i64)]))
+        },
+        "fcntl" => {
+            let descriptor = number(0)? as i32;
+            let command = number(1)? as libc::c_int;
+            let argument = number(2)? as libc::c_long;
+            loop {
+                let result = status(libc::fcntl(descriptor, command, argument) as i64);
+                if matches!(result, Err(libc::EINTR)) { check_signals()?; continue; }
+                break result;
+            }
+        },
+        "fcntl_buf" => {
+            let descriptor = number(0)? as i32;
+            let command = number(1)? as libc::c_int;
+            let mut block = raw(&a[2])?;
+            loop {
+                let result = status(libc::fcntl(descriptor, command, block.as_mut_ptr()) as i64);
+                if matches!(result, Err(libc::EINTR)) { check_signals()?; continue; }
+                break result.map(|_| bytes(block));
+            }
+        },
+        "lockf" => {
+            let descriptor = number(0)? as i32;
+            let waiting = number(1)? != 0;
+            let kind = match number(2)? {
+                0 => libc::F_RDLCK,
+                1 => libc::F_WRLCK,
+                2 => libc::F_UNLCK,
+                _ => return Err("ValueError: unrecognized lockf argument".into()),
+            };
+            let mut region = libc::flock {
+                l_type: kind as libc::c_short,
+                l_whence: number(3)? as libc::c_short,
+                l_start: number(4)?,
+                l_len: number(5)?,
+                l_pid: 0,
+            };
+            let request = if waiting { libc::F_SETLKW } else { libc::F_SETLK };
+            loop {
+                let result = status(libc::fcntl(descriptor, request, &mut region) as i64);
+                if matches!(result, Err(libc::EINTR)) { check_signals()?; continue; }
+                break result;
+            }
         },
         "get_inheritable" | "set_inheritable" => {
             let fd = number(0)? as i32;

@@ -45,6 +45,13 @@ pub fn stream_row(name: Vec<u8>, inode: u64, kind: u8) -> Value {
 fn octets(part: impl Into<Vec<u8>>) -> Value {
     Value::Octets { cell: Rc::new(RefCell::new(part.into())), changeable: false, lead: "b".into() }
 }
+
+fn path_value_from_bytes(raw: Vec<u8>) -> Value {
+    match String::from_utf8(raw) {
+        Ok(text) => Value::text(&text),
+        Err(err) => octets(err.into_bytes()),
+    }
+}
 fn errno() -> i32 { std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO) }
 fn checked(code: i64) -> Result<Value, i32> {
     match code { -1 => Err(errno()), n => Ok(Value::Small(n)) }
@@ -489,6 +496,29 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                     capacity *= 2;
                 }
             }
+            "realpath" => {
+                let p = data_of(&params[0])?;
+                let mode = int(1)?;
+                return match lumen_posix::realpath_bytes(&p, mode)? {
+                    Ok(resolved) => Ok(Value::tuple(vec![Value::Small(0), path_value_from_bytes(resolved)])),
+                    Err((err, bad)) => Ok(Value::tuple(vec![Value::Small(err.into()), path_value_from_bytes(bad)])),
+                };
+            }
+            "makedirs" => {
+                let p = data_of(&params[0])?;
+                return match lumen_posix::makedirs_bytes(&p)? {
+                    Ok(()) => Ok(Value::tuple(vec![Value::Small(0), Value::Nil])),
+                    Err((err, bad)) => Ok(Value::tuple(vec![Value::Small(err.into()), path_value_from_bytes(bad)])),
+                };
+            }
+            "rmtree" => {
+                let p = data_of(&params[0])?;
+                let ignore_errors = matches!(params.get(1).map(|v| v.settled()), Some(Value::Flag(true)));
+                return match lumen_posix::rmtree_bytes(&p, ignore_errors)? {
+                    Ok(done) => Ok(Value::tuple(vec![Value::Small(0), Value::Flag(done)])),
+                    Err((err, bad)) => Ok(Value::tuple(vec![Value::Small(err.into()), path_value_from_bytes(bad)])),
+                };
+            }
             "listdir" => {
                 use std::os::unix::ffi::OsStrExt as _;
                 let filename = path(0)?;
@@ -548,6 +578,49 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                     (-1, 0) => Ok(Value::Nil),
                     (-1, code) => Err(code),
                     (found, _) => Ok(Value::Small(found as i64)),
+                }
+            }
+            "fcntl" => {
+                let held = int(0)? as libc::c_int;
+                let request = int(1)? as libc::c_int;
+                let argument = int(2)? as libc::c_long;
+                loop {
+                    let outcome = checked(libc::fcntl(held, request, argument) as i64);
+                    if matches!(outcome, Err(libc::EINTR)) { interrupted()?; continue; }
+                    break outcome;
+                }
+            }
+            "fcntl_buf" => {
+                let held = int(0)? as libc::c_int;
+                let request = int(1)? as libc::c_int;
+                let mut block = data_of(&params[2])?;
+                loop {
+                    let outcome = checked(libc::fcntl(held, request, block.as_mut_ptr()) as i64);
+                    if matches!(outcome, Err(libc::EINTR)) { interrupted()?; continue; }
+                    break outcome.map(|_| octets(block));
+                }
+            }
+            "lockf" => {
+                let held = int(0)? as libc::c_int;
+                let waiting = int(1)? != 0;
+                let kind = match int(2)? {
+                    0 => libc::F_RDLCK,
+                    1 => libc::F_WRLCK,
+                    2 => libc::F_UNLCK,
+                    _ => return Err(String::from("ValueError: unrecognized lockf argument")),
+                };
+                let mut region = libc::flock {
+                    l_type: kind as libc::c_short,
+                    l_whence: int(3)? as libc::c_short,
+                    l_start: int(4)?,
+                    l_len: int(5)?,
+                    l_pid: 0,
+                };
+                let request = if waiting { libc::F_SETLKW } else { libc::F_SETLK };
+                loop {
+                    let outcome = checked(libc::fcntl(held, request, &mut region) as i64);
+                    if matches!(outcome, Err(libc::EINTR)) { interrupted()?; continue; }
+                    break outcome;
                 }
             }
             "get_inheritable" | "set_inheritable" | "get_blocking" | "set_blocking" => {

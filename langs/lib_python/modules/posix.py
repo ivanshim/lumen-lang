@@ -298,31 +298,54 @@ def stat(path, *, dir_fd=None, follow_symlinks=True):
         return fstat(_descriptor(path))
     else:
         original = _path(path)
-    error, data = _host('stat', original, -100 if dir_fd is None else dir_fd if type(dir_fd) is int and -2147483648 <= dir_fd <= 2147483647 else _descriptor(dir_fd), int(bool(follow_symlinks)))
-    if error:
-        _raise(error, original)
-    return _host('structseq_new', stat_result, data[:10], data[10:])
+    fd_val = -100 if dir_fd is None else dir_fd if type(dir_fd) is int and -2147483648 <= dir_fd <= 2147483647 else _descriptor(dir_fd)
+    return _host('statat_native', stat_result, original, fd_val, bool(follow_symlinks))
 
 
 def lstat(path, *, dir_fd=None):
     if type(path) is str:
-        path.encode('utf-8', 'surrogateescape')
         if '\0' in path:
             raise ValueError('embedded null character')
+        if not path.isascii():
+            path.encode('utf-8', 'surrogateescape')
+        if dir_fd is None:
+            return _host('stat_native', stat_result, path, False)
         original = path
     else:
         original = _path(path)
-    error, data = _host('lstat', original, -100 if dir_fd is None else dir_fd if type(dir_fd) is int and -2147483648 <= dir_fd <= 2147483647 else _descriptor(dir_fd), 0)
-    if error:
-        _raise(error, original)
-    return _host('structseq_new', stat_result, data[:10], data[10:])
+    fd_val = -100 if dir_fd is None else dir_fd if type(dir_fd) is int and -2147483648 <= dir_fd <= 2147483647 else _descriptor(dir_fd)
+    return _host('statat_native', stat_result, original, fd_val, False)
 
 
 def fstat(fd):
-    error, data = _host('fstat', fd if type(fd) is int and -2147483648 <= fd <= 2147483647 else _cint(fd))
+    return _host('fstat_native', stat_result, fd if type(fd) is int and -2147483648 <= fd <= 2147483647 else _cint(fd))
+
+
+def _realpath(path, strict=False):
+    mode = 2 if strict is not False and strict is not True else (1 if strict else 0)
+    error, value = _host('realpath', path, mode)
+    if type(value) is bytes:
+        value = value.decode('utf-8', 'surrogateescape')
     if error:
-        _raise(error)
-    return _host('structseq_new', stat_result, data[:10], data[10:])
+        _raise(error, value)
+    return value
+
+
+def _makedirs(path):
+    error, value = _host('makedirs', path)
+    if error:
+        if type(value) is bytes:
+            value = value.decode('utf-8', 'surrogateescape')
+        _raise(error, value)
+
+
+def _rmtree(path, ignore_errors=False):
+    error, value = _host('rmtree', path, bool(ignore_errors))
+    if error:
+        if type(value) is bytes:
+            value = value.decode('utf-8', 'surrogateescape')
+        _raise(error, value)
+    return value
 
 
 def getcwdb():
@@ -377,21 +400,21 @@ def listdir(path=None):
 
 
 def mkdir(path, mode=0o777, *, dir_fd=None):
-    original = _path(path)
+    original = path if (type(path) is str and '\0' not in path and path.isascii()) else _path(path)
     error, _ = _host('mkdir', original, mode if type(mode) is int and -2147483648 <= mode <= 2147483647 else _cint(mode), -100 if dir_fd is None else dir_fd if type(dir_fd) is int and -2147483648 <= dir_fd <= 2147483647 else _descriptor(dir_fd))
     if error:
         _raise(error, original)
 
 
 def rmdir(path, *, dir_fd=None):
-    original = _path(path)
+    original = path if (type(path) is str and '\0' not in path and path.isascii()) else _path(path)
     error, _ = _host('rmdir', original, -100 if dir_fd is None else dir_fd if type(dir_fd) is int and -2147483648 <= dir_fd <= 2147483647 else _descriptor(dir_fd))
     if error:
         _raise(error, original)
 
 
 def unlink(path, *, dir_fd=None):
-    original = _path(path)
+    original = path if (type(path) is str and '\0' not in path and path.isascii()) else _path(path)
     error, _ = _host('unlink', original, -100 if dir_fd is None else dir_fd if type(dir_fd) is int and -2147483648 <= dir_fd <= 2147483647 else _descriptor(dir_fd))
     if error:
         _raise(error, original)
@@ -411,7 +434,7 @@ def replace(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
 
 
 def open(path, flags, mode=0o777, *, dir_fd=None):
-    original = _path(path)
+    original = path if (type(path) is str and '\0' not in path and path.isascii()) else _path(path)
     error, fd = _host('open', original, flags if type(flags) is int and -2147483648 <= flags <= 2147483647 else _cint(flags), mode if type(mode) is int and -2147483648 <= mode <= 2147483647 else _cint(mode), -100 if dir_fd is None else dir_fd if type(dir_fd) is int and -2147483648 <= dir_fd <= 2147483647 else _descriptor(dir_fd))
     if error:
         _raise(error, original)
@@ -759,13 +782,27 @@ class DirEntry:
                 if self._type != 10 and self._lstat is not None:
                     self._stat = self._lstat
                 else:
-                    self._stat = stat(self.path, dir_fd=self._dir_fd)
+                    dfd = self._dir_fd
+                    p = self._path
+                    if dfd is None and type(p) is str and '\0' not in p and p.isascii():
+                        self._stat = _host('stat_native', stat_result, p, True)
+                    elif type(p) is str and '\0' not in p and p.isascii():
+                        self._stat = _host('statat_native', stat_result, p, dfd, True)
+                    else:
+                        self._stat = stat(p, dir_fd=dfd)
             return self._stat
         if self._lstat is None:
             if self._type != 10 and self._stat is not None:
                 self._lstat = self._stat
             else:
-                self._lstat = lstat(self.path, dir_fd=self._dir_fd)
+                dfd = self._dir_fd
+                p = self._path
+                if dfd is None and type(p) is str and '\0' not in p and p.isascii():
+                    self._lstat = _host('stat_native', stat_result, p, False)
+                elif type(p) is str and '\0' not in p and p.isascii():
+                    self._lstat = _host('statat_native', stat_result, p, dfd, False)
+                else:
+                    self._lstat = lstat(p, dir_fd=dfd)
         return self._lstat
     def is_symlink(self):
         if self._type:

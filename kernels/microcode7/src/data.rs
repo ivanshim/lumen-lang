@@ -1219,7 +1219,7 @@ impl Value {
             // A loose member descriptor is addressed by the descriptor it
             // is kept as: two readings of the same member, and of the
             // same member on the same kind, are the one address.
-            Value::Wrapped(60, parts) => Ok(format!("descriptor:{:p}", Rc::as_ptr(parts))),
+            Value::Wrapped(60 | 134, parts) => Ok(format!("descriptor:{:p}", Rc::as_ptr(parts))),
             value => {
                 let Some(ratio) = crate::math::ratio_of(value) else { return Err(""); };
                 // Nothing under the line marks a worth off the scale.
@@ -2255,6 +2255,7 @@ impl Value {
                     format!("<code object {} at {:p}, file {filename:?}, line {}>", program.ident, Rc::as_ptr(payload), program.declared_on)
                 } else { String::from("<code object>") }
             },
+            Value::Wrapped(134, parts) => format!("<built-in function {}>", parts[0].bare()),
             Value::Wrapped(..) => "<member wrapper>".into(),
             Value::Tuple(items) => {
                 let among = Among::members(self);

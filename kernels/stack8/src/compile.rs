@@ -89,7 +89,7 @@ fn ast_line(row: u32, column: usize) -> u32 {
 }
 
 /// The global names, each with a slot.
-#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Registry {
     /// Slots owned by another registry need addresses, not placeholder strings.
     #[serde(default)]
@@ -183,6 +183,9 @@ pub struct Registry {
     /// The text under way, where the caller handed it over: the words
     /// an annotation was written with are read back out of it.
     pub source: Option<Rc<str>>,
+    /// Global names declared inside nested routines, captured when compiled directly.
+    #[serde(skip)]
+    pub compiled_wide_globals: Vec<String>,
 }
 
 impl Registry {
@@ -311,7 +314,6 @@ struct BindingPlan {
 }
 
 /// Scope summaries contain names rather than runtime slots or values.
-#[derive(serde::Serialize, serde::Deserialize)]
 struct PreparedScope {
     plans: HashMap<usize, BindingPlan, crate::value::FxBuildHasher>,
     bound: HashSet<String, crate::value::FxBuildHasher>,
@@ -319,7 +321,7 @@ struct PreparedScope {
 }
 
 pub type PreparedEntries = &'static [(u64, &'static [u8], &'static [u8])];
-pub type PreparedSources = &'static [(u64, &'static [u8], usize)];
+pub type PreparedSources = &'static [(u64, u64, usize, usize)];
 thread_local! {
     static PREPARED_DEFINITIONS: std::cell::RefCell<HashMap<String, (PreparedEntries, PreparedSources)>> = std::cell::RefCell::new(HashMap::new());
 }
@@ -405,6 +407,70 @@ impl<'a> PackedTokens<'a> {
         self.at = end;
         Some(text)
     }
+    fn words(&mut self) -> Option<Vec<String>> {
+        let n = self.count()?;
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n { out.push(self.text()?); }
+        Some(out)
+    }
+}
+
+fn push_words<'a>(out: &mut Vec<u8>, iter: impl ExactSizeIterator<Item = &'a str>) {
+    out.extend_from_slice(&(iter.len() as u64).to_le_bytes());
+    for s in iter {
+        out.extend_from_slice(&(s.len() as u64).to_le_bytes());
+        out.extend_from_slice(s.as_bytes());
+    }
+}
+
+fn pack_scope(scope: &PreparedScope) -> Vec<u8> {
+    let mut out = Vec::with_capacity(512);
+    let mut plan_entries: Vec<(usize, &BindingPlan)> = scope.plans.iter().map(|(&k, v)| (k, v)).collect();
+    plan_entries.sort_by_key(|(k, _)| *k);
+    out.extend_from_slice(&(plan_entries.len() as u64).to_le_bytes());
+    for (id, plan) in plan_entries {
+        out.extend_from_slice(&(id as u64).to_le_bytes());
+        push_words(&mut out, plan.names.iter().map(String::as_str));
+        out.extend_from_slice(&(plan.globals.len() as u64).to_le_bytes());
+        for (a, b) in &plan.globals {
+            out.extend_from_slice(&(a.len() as u64).to_le_bytes());
+            out.extend_from_slice(a.as_bytes());
+            out.extend_from_slice(&(b.len() as u64).to_le_bytes());
+            out.extend_from_slice(b.as_bytes());
+        }
+        push_words(&mut out, plan.nonlocals.iter().map(String::as_str));
+        push_words(&mut out, plan.class_nonlocals.iter().map(String::as_str));
+    }
+    let mut bound: Vec<&str> = scope.bound.iter().map(String::as_str).collect();
+    bound.sort_unstable();
+    push_words(&mut out, bound.into_iter());
+    let mut exports: Vec<&str> = scope.exports.iter().map(String::as_str).collect();
+    exports.sort_unstable();
+    push_words(&mut out, exports.into_iter());
+    out
+}
+
+fn unpack_scope(raw: &[u8]) -> Option<PreparedScope> {
+    let mut cur = PackedTokens { bytes: raw, at: 0 };
+    let plan_count = cur.count()?;
+    let mut plans = HashMap::with_capacity_and_hasher(plan_count, Default::default());
+    for _ in 0..plan_count {
+        let id = cur.count()?;
+        let names = cur.words()?;
+        let gcount = cur.count()?;
+        let mut globals = Vec::with_capacity(gcount);
+        for _ in 0..gcount { globals.push((cur.text()?, cur.text()?)); }
+        let nonlocals = cur.words()?;
+        let class_nonlocals = cur.words()?;
+        plans.insert(id, BindingPlan { names, globals, nonlocals, class_nonlocals });
+    }
+    let bcount = cur.count()?;
+    let mut bound = HashSet::with_capacity_and_hasher(bcount, Default::default());
+    for _ in 0..bcount { bound.insert(cur.text()?); }
+    let ecount = cur.count()?;
+    let mut exports = HashSet::with_capacity_and_hasher(ecount, Default::default());
+    for _ in 0..ecount { exports.insert(cur.text()?); }
+    (cur.at == raw.len()).then_some(PreparedScope { plans, bound, exports })
 }
 
 fn unpack_tokens(proof: &[u8]) -> Option<Vec<Token>> {
@@ -429,13 +495,24 @@ fn unpack_tokens(proof: &[u8]) -> Option<Vec<Token>> {
 pub(crate) fn prepared_tokens(source: &str, lang: &Lang) -> Option<(Vec<Token>, usize)> {
     if lang.prologue_brief_setting.is_some() { return None; }
     let key = source_stamp(source);
-    let (_, _, index) = lang.prepared_source_tokens?.iter().find(|(stamp, compressed, _)|
-        *stamp == key && unpack_library_proof(compressed).is_some_and(|bytes| bytes.as_slice() == source.as_bytes()))?;
-    let (_, proof, _) = lang.prepared_scopes?.get(*index)?;
-    Some((unpack_tokens(&unpack_library_proof(proof)?)?, *index))
+    let check = source_digest(source);
+    let len = source.len();
+    let &(_, _, _, index) = lang.prepared_source_tokens?.iter().find(|&&(stamp, extra, bytes, _)|
+        stamp == key && extra == check && bytes == len)?;
+    let (_, proof, _) = lang.prepared_scopes?.get(index)?;
+    Some((unpack_tokens(&unpack_library_proof(proof)?)?, index))
 }
 
 pub fn source_stamp(source: &str) -> u64 { token_stamp(source.as_bytes()) }
+
+pub fn source_digest(source: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &b in source.as_bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x100000001b3).rotate_left(7);
+    }
+    h ^ (source.len() as u64).wrapping_mul(0x9e3779b97f4a7c15)
+}
 
 fn token_stamp(bytes: &[u8]) -> u64 {
     use std::hash::Hasher;
@@ -478,18 +555,18 @@ fn prepared_scope(tokens: &[Token], lang: &Lang, hint: Option<usize>) -> Option<
     // spelled out and matched against it again.
     if let Some(at) = hint {
         let (_, _, text) = entries.get(at)?;
-        return serde_json::from_slice(&unpack_library_proof(text)?).ok();
+        return unpack_scope(&unpack_library_proof(text)?);
     }
     let fingerprint = token_fingerprint(tokens);
     let stamp = token_stamp(&fingerprint);
     for &(key, proof, text) in entries {
-        if key == stamp && unpack_library_proof(proof).as_deref().map(Vec::as_slice) == Some(fingerprint.as_slice()) { return serde_json::from_slice(&unpack_library_proof(text)?).ok(); }
+        if key == stamp && unpack_library_proof(proof).as_deref().map(Vec::as_slice) == Some(fingerprint.as_slice()) { return unpack_scope(&unpack_library_proof(text)?); }
     }
     None
 }
 
 /// Produce the same lexical scope survey used by ordinary module imports.
-pub fn prepare_library(definition: &str, source: &str) -> Option<(u64, Vec<u8>, String)> {
+pub fn prepare_library(definition: &str, source: &str) -> Option<(u64, Vec<u8>, Vec<u8>)> {
     let lang = Lang::parse(definition).ok()?;
     let tokens = crate::lex::lex_position(source, &lang).ok()?;
     let tokens = crate::layout::layout_position(tokens, &lang, 0).ok()?;
@@ -499,7 +576,9 @@ pub fn prepare_library(definition: &str, source: &str) -> Option<(u64, Vec<u8>, 
     let proof = token_fingerprint(&tokens);
     if unpack_tokens(&proof).as_deref() != Some(tokens.as_slice()) { return None; }
     let stamp = token_stamp(&proof);
-    serde_json::to_string(&PreparedScope { plans, bound: registry.program_bound, exports: registry.builtin_exports }).ok().map(|text| (stamp, proof, text))
+    let packed = pack_scope(&PreparedScope { plans, bound: registry.program_bound, exports: registry.builtin_exports });
+    if unpack_scope(&packed).is_none() { return None; }
+    Some((stamp, proof, packed))
 }
 
 
@@ -1273,7 +1352,7 @@ fn compile_pass(
     // Discovery retains bindings and syntax checks, not discarded runtime metadata.
     let (root_constants, root_names) = if discovering { (Vec::new(), Vec::new()) } else { code_metadata(&unit.instrs, &None, &[], false) };
     a.registry.future_bits = a.future_bits;
-    Ok(Rc::new(Routine { code_content: Default::default(), compiled_optimize: a.registry.optimize.max(0), live_source: tokens.last().and_then(|token| token.source_text.clone()).unwrap_or_else(|| Rc::from("")), body_spelling: if discovering { Rc::from("") } else { Rc::from(tokens[..a.pos].iter().fold(String::new(), |mut text, token| { let _ = write!(text, "{:?}:{:?};", token.shape, token.lexeme); text })) }, initial_constants: None, globals_rebound: false, code_snapshot: Default::default(), image_origin: (0, a.before, a.future_bits | a.image_modes), instruction_image: None, exception_image: None, code_identity: Rc::new(()), embedded_integers: None, source_end: a.pos, source_content: a.source_content.clone(), source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), cell_names: Vec::new(), code_flags: 0, future_bits: a.future_bits, lineless: false, location_baseline: None, location_bytes: None, declared_stack: None, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(if discovering { unit.instrs } else { peephole(unit.instrs) }), revised: std::cell::RefCell::new(None) }))
+    Ok(Rc::new(Routine { code_content: Default::default(), compiled_optimize: a.registry.optimize.max(0), live_source: tokens.last().and_then(|token| token.source_text.clone()).unwrap_or_else(|| Rc::from("")), body_spelling: if discovering { Rc::from("") } else { Rc::from(tokens[..a.pos].iter().fold(String::new(), |mut text, token| { let _ = write!(text, "{:?}:{:?};", token.shape, token.lexeme); text })) }, initial_constants: None, globals_rebound: false, code_snapshot: Default::default(), compiled_registry: None, image_origin: (0, a.before, a.future_bits | a.image_modes), instruction_image: None, exception_image: None, code_identity: Rc::new(()), embedded_integers: None, source_end: a.pos, source_content: a.source_content.clone(), source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), cell_names: Vec::new(), code_flags: 0, future_bits: a.future_bits, lineless: false, location_baseline: None, location_bytes: None, declared_stack: None, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(if discovering { unit.instrs } else { peephole(unit.instrs) }), revised: std::cell::RefCell::new(None) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -2539,9 +2618,8 @@ impl<'a> Compiler<'a> {
             literal.push_str(&leading.next().unwrap().lexeme);
             doc_end += 1;
         }
-        let documentation_at = self.tokens.len() - self.tokens[self.pos..].iter().skip_while(|t| matches!(t.shape, Shape::LineEnd | Shape::Open) || self.lang.block_intros.contains(&t.lexeme)).count();
         let is_doc = !expression && quoted && leading.peek().is_some_and(|t| matches!(t.shape, Shape::LineEnd | Shape::Close | Shape::Finish) || self.lang.ends_stmt(&t.lexeme));
-        if is_doc && self.registry.optimize == 2 { self.omitted_docs.insert(documentation_at); }
+        if is_doc && self.registry.optimize == 2 { self.omitted_docs.insert(doc_begin); }
         let doc = (is_doc && self.registry.optimize < 2).then_some(literal);
         let doc_literal = is_doc;
         let doc = if self.lang.class_builder.is_empty() { doc } else { doc.map(|text| clean_python_documentation(&text)) };
@@ -2694,7 +2772,7 @@ impl<'a> Compiler<'a> {
         local_names.retain(|name| formals.contains(name) || !cell_names.contains(name));
         if doc.is_some() { code_flags |= 0x4000000; }
         if within.as_ref().is_some_and(|class| qualified == format!("{class}.{name}")) { code_flags |= 0x8000000; }
-        Ok(Rc::new(Routine { code_content: Default::default(), compiled_optimize: self.registry.optimize.max(0), live_source: self.spelled.last().and_then(|token| token.source_text.clone()).unwrap_or_else(|| Rc::from("")), body_spelling: if self.discovering { Rc::from("") } else { Rc::from(format!("{}|{}", self.spelled[source..self.pos].iter().fold(String::new(), |mut text, t| { let _ = write!(text, "{:?}:{:?};", t.shape, t.lexeme); text }), crate::code::instruction_shape(&instrs))) }, initial_constants: None, globals_rebound: false, code_snapshot: Default::default(), image_origin: (source, self.before, self.future_bits | self.image_modes), instruction_image: None, exception_image: None, code_identity: Rc::new(()), embedded_integers: None, source_end: self.pos, source_content: self.source_content.clone(), source_tokens: self.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation, code_constants, code_names, local_names, cell_names, code_flags, future_bits: self.future_bits, lineless: false, location_baseline: None, location_bytes: None, declared_stack: None, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(if self.discovering { instrs } else { peephole(instrs) }), revised: std::cell::RefCell::new(None) }))
+        Ok(Rc::new(Routine { code_content: Default::default(), compiled_optimize: self.registry.optimize.max(0), live_source: self.spelled.last().and_then(|token| token.source_text.clone()).unwrap_or_else(|| Rc::from("")), body_spelling: if self.discovering { Rc::from("") } else { Rc::from(format!("{}|{}", self.spelled[source..self.pos].iter().fold(String::new(), |mut text, t| { let _ = write!(text, "{:?}:{:?};", t.shape, t.lexeme); text }), crate::code::instruction_shape(&instrs))) }, initial_constants: None, globals_rebound: false, code_snapshot: Default::default(), compiled_registry: None, image_origin: (source, self.before, self.future_bits | self.image_modes), instruction_image: None, exception_image: None, code_identity: Rc::new(()), embedded_integers: None, source_end: self.pos, source_content: self.source_content.clone(), source_tokens: self.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation, code_constants, code_names, local_names, cell_names, code_flags, future_bits: self.future_bits, lineless: false, location_baseline: None, location_bytes: None, declared_stack: None, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(if self.discovering { instrs } else { peephole(instrs) }), revised: std::cell::RefCell::new(None) }))
     }
 
     /// The words an annotation was written with, read back out of the text
@@ -5390,6 +5468,7 @@ impl<'a> Compiler<'a> {
     /// the value bound from it at the head of each pass.
     fn walk(&mut self, bag: &str, key: Option<&str>, value: &str, shared: bool, place: Option<usize>) -> Res<()> {
         let lang = self.lang;
+        let header_location = self.piece().instrs.iter().rev().find(|op| matches!(op, Instr::Location(..))).cloned();
         // A walk that hands out the items' own cells goes over the array
         // as it stands: what the body does to the array it does to the
         // walk. One that walks a copy takes the copy here, and what the
@@ -5503,6 +5582,7 @@ impl<'a> Compiler<'a> {
         }
         self.body()?;
         let again = self.mark();
+        if let Some(location) = header_location { self.put(location); }
         match &held {
             // The place the walk goes on from is the one past where the
             // item it handed out now lies, which is not where it lay
@@ -9067,6 +9147,12 @@ impl<'a> Compiler<'a> {
                 let code = a.member_value()?;
                 a.replay(code, 0);
             } else {
+                let body_start = a.pos;
+                let location_slot = (!a.lang.trace_fields.is_empty()).then(|| {
+                    let slot = a.mark();
+                    a.put(Instr::Line(a.declared_at));
+                    slot
+                });
                 a.bare_named_blocked = true;
                 let outcome = a.expr_at(0, false);
                 a.bare_named_blocked = false;
@@ -9083,6 +9169,12 @@ impl<'a> Compiler<'a> {
                     a.stop_after(last);
                     a.pos = lambda_at;
                     return Err("SyntaxError: cannot assign to lambda".into());
+                }
+                if let Some(slot) = location_slot {
+                    let span = a.expression_location(body_start);
+                    a.piece().instrs[slot] = span.clone();
+                    a.piece().instrs[..=slot].rotate_right(1);
+                    a.put(span);
                 }
             }
             a.give_result();
@@ -13580,6 +13672,8 @@ impl<'a> Compiler<'a> {
         let prior = self.generator_source.replace((source_at, source_end, seed.clone()));
         let mut asynchronous = false;
         let enclosing_await_rule = std::mem::replace(&mut self.forbids_await, false);
+        let open_at = self.tokens[..head].iter().rposition(|t| t.lexeme == pair.open).unwrap_or(head);
+        let outer_declared = std::mem::replace(&mut self.declared_at, ast_line((self.tokens[open_at].row as u32).saturating_sub(self.before), self.tokens[open_at].column));
         let program = self.routine(&name, vec![seed.clone()], 1, true, |r| {
             r.piece().comprehension_kind = Some("generator expression");
             r.pos = clause;
@@ -13592,7 +13686,9 @@ impl<'a> Compiler<'a> {
             asynchronous = r.piece().asynchronous_walk;
             r.piece().generator = true;
             Ok(())
-        })?;
+        });
+        self.declared_at = outer_declared;
+        let program = program?;
         self.forbids_await = enclosing_await_rule;
         self.generator_source = prior;
         self.constant(Value::Routine(program));
@@ -13787,7 +13883,8 @@ impl<'a> Compiler<'a> {
             self.pos = target_end + 1;
             let expression_start = self.pos;
             let instruction_start = self.mark();
-            if let Some((_, end, seed)) = self.generator_source.clone().filter(|(at, _, _)| *at == self.pos) {
+            let seeded = self.generator_source.clone().filter(|(at, _, _)| *at == self.pos);
+            if let Some((_, end, seed)) = seeded.clone() {
                 self.read(&seed);
                 if !asynchronous && !self.lang.yield_input.is_empty() { self.act(Action::IteratorSeed, 1); }
                 self.pos = end;
@@ -13796,7 +13893,7 @@ impl<'a> Compiler<'a> {
                 self.act(if asynchronous { Action::AsyncWalk } else if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
             }
             let position = self.expression_location(expression_start);
-            if !self.lang.trace_fields.is_empty() {
+            if !self.lang.trace_fields.is_empty() && (!result.is_empty() || seeded.is_none()) {
                 let code: Vec<Instr> = self.piece().instrs.drain(instruction_start..).collect();
                 self.put(position.clone());
                 for op in relocated(code, 1) { self.put(op); }
@@ -13807,7 +13904,7 @@ impl<'a> Compiler<'a> {
             self.constant(Value::Small(0));
             self.write(&at);
             let test = self.mark();
-            if !self.lang.trace_fields.is_empty() { self.put(position); }
+            if !self.lang.trace_fields.is_empty() { self.put(position.clone()); }
             if self.lang.yield_suspends {
                 self.read(&bag);
                 self.read(&at);
@@ -13825,6 +13922,11 @@ impl<'a> Compiler<'a> {
             let item = self.gensym("comprehension_item");
             self.write(&item);
             let resume = self.pos;
+            if !self.lang.trace_fields.is_empty() {
+                self.pos = target_end;
+                let target_position = self.expression_location(target_start);
+                self.put(target_position);
+            }
             if let Err(error) = self.give_places(target_start, target_end, &item) {
                 let message = self.loop_target_error(target_start, target_end, error);
                 if message.starts_with("SyntaxError: cannot assign to") { self.pos = target_start; }
@@ -13832,6 +13934,7 @@ impl<'a> Compiler<'a> {
             }
             self.pos = resume;
             self.comprehension_clause(head, result, map)?;
+            if !self.lang.trace_fields.is_empty() { self.put(position); }
             self.read(&at);
             self.constant(Value::Small(1));
             self.act(Action::Add, 2);
@@ -13856,10 +13959,20 @@ impl<'a> Compiler<'a> {
             if !result.is_empty() { self.read_taking(result); }
             let spread = self.on_any(if map { &self.lang.map_spread } else { &self.lang.array_spread });
             if spread { self.pass_token(); }
+            let element_start = self.pos;
+            let element_slot = (!self.lang.trace_fields.is_empty()).then(|| {
+                let slot = self.mark();
+                self.put(Instr::Line(self.declared_at));
+                slot
+            });
             let before_yield = self.yield_operand;
             if result.is_empty() { self.yield_operand = true; }
             self.expr(0)?;
             self.yield_operand = before_yield;
+            let element_span = self.expression_location(element_start);
+            if let Some(slot) = element_slot {
+                self.piece().instrs[slot] = element_span.clone();
+            }
             if map && !spread {
                 let mark = self.lang.pair_mark.clone().expect("map pair mark");
                 self.want_sign(&mark, "between a comprehension key and value")?;
@@ -13867,6 +13980,7 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Tie, 2);
             }
             if !self.on_any(&self.lang.comprehension_for) && !self.on_any(&self.lang.comprehension_async) { return Err("Expected a comprehension clause after its expression".to_string()); }
+            if !self.lang.trace_fields.is_empty() { self.put(element_span); }
             if result.is_empty() {
                 self.act(if spread { Action::Delegate } else { Action::Suspend }, 1);
                 self.discard();

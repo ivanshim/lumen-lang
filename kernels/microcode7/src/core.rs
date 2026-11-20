@@ -376,7 +376,7 @@ impl Value {
                 total
             }
             Self::Wrapped(7, _) => return Self::code_worth_hash(self),
-            Self::Wrapped(4..=6, contents) => (crate::data::Rc::as_ptr(contents) as usize / 16) as i64,
+            Self::Wrapped(4..=6 | 134, contents) => (crate::data::Rc::as_ptr(contents) as usize / 16) as i64,
             Self::Bound(program, frame) => ((crate::data::Rc::as_ptr(program) as usize / 16) ^ (crate::data::Rc::as_ptr(frame) as usize / 16)) as i64,
             Self::Method(program, receiver, _) => ((crate::data::Rc::as_ptr(program) as usize / 16) ^ (crate::data::Hold::as_ptr(receiver) as usize / 16)) as i64,
             // A routine bound to a value hashes by the routine and by

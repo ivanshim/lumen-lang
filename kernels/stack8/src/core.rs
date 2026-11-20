@@ -331,6 +331,7 @@ impl Value {
             Value::Class(kind) => Some((crate::value::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::Routine(code) => Some((crate::value::Rc::as_ptr(code) as usize >> 4) as i64),
             Value::Adapter(parts) if parts.0 == 7 => Self::code_field_hash(self),
+            Value::Adapter(held) if held.0 == 64 => Some(finish((crate::value::Rc::as_ptr(held) as usize >> 4) as i64)),
             Value::Method(owner, code, _) => Some(((crate::value::Keep::as_ptr(owner) as usize ^ crate::value::Rc::as_ptr(code) as usize) >> 4) as i64),
 
             Value::Adapter(bound) if bound.0 == 3 && matches!(bound.1.first(), Some(Value::Adapter(method)) if method.0 == 29) || bound.0 == 3 && matches!(bound.1.first(), Some(Value::Native(..))) => {

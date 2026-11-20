@@ -94,6 +94,22 @@ static WAKEUP_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::n
 static WAKEUP_WARN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 static WAKEUP_ERROR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
+fn pend_signal(number: i32) {
+    unsafe {
+        let saved = *libc::__errno_location();
+        SIGNALS_PENDING.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+        let fd = WAKEUP_FD.load(std::sync::atomic::Ordering::Relaxed);
+        let byte = number as u8;
+        if fd >= 0 && libc::write(fd, (&byte as *const u8).cast(), 1) < 0 {
+            let error = *libc::__errno_location();
+            if error != libc::EAGAIN || WAKEUP_WARN.load(std::sync::atomic::Ordering::Relaxed) {
+                WAKEUP_ERROR.store(error, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        *libc::__errno_location() = saved;
+    }
+}
+
 extern "C" fn signal_arrived(number: i32) {
     unsafe {
         let saved = *libc::__errno_location();
@@ -102,15 +118,7 @@ extern "C" fn signal_arrived(number: i32) {
         if owner > 0 && owner != here {
             libc::syscall(libc::SYS_tgkill, libc::getpid() as libc::c_long, owner as libc::c_long, number as libc::c_long);
         } else if (1..=64).contains(&number) {
-            SIGNALS_PENDING.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
-            let fd = WAKEUP_FD.load(std::sync::atomic::Ordering::Relaxed);
-            let byte = number as u8;
-            if fd >= 0 && libc::write(fd, (&byte as *const u8).cast(), 1) < 0 {
-                let error = *libc::__errno_location();
-                if error != libc::EAGAIN || WAKEUP_WARN.load(std::sync::atomic::Ordering::Relaxed) {
-                    WAKEUP_ERROR.store(error, std::sync::atomic::Ordering::Relaxed);
-                }
-            }
+            pend_signal(number);
         }
         *libc::__errno_location() = saved;
     }
@@ -181,7 +189,7 @@ pub struct Engine<'a> {
     coroutines: HashMap<usize, (Weak<RefCell<Generator>>, Rc<Routine>, Option<Weak<Instance>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>), crate::value::FxBuildHasher>,
     delegated_tokens: std::collections::HashSet<usize, crate::value::FxBuildHasher>,
-    code_watches: Vec<(Weak<RefCell<Value>>, bool)>,
+    code_watches: Vec<(Weak<RefCell<Value>>, bool, Vec<crate::faint::Hold>)>,
     frame_codes: HashMap<usize, Weak<(u8, Vec<Value>)>>,
     class_root: Option<Rc<Class>>,
     /// The class every metaclass stands on, made once when one is asked for.
@@ -208,6 +216,8 @@ pub struct Engine<'a> {
     byte_members_seen: RefCell<HashMap<String, [Option<Option<&'static str>>; 2], crate::value::FxBuildHasher>>,
     /// The prepared entry the tokens last read by `text_tokens` came from, if any.
     prepared_hint: std::cell::Cell<Option<usize>>,
+    /// In-memory compiled code and scope staged for `exec`/`eval`.
+    prepared_compiled: Option<(Rc<Routine>, Rc<crate::compile::Registry>)>,
     collecting_cycles: bool,
     cycle_checkpoint_slots: usize,
     /// The bytes alive after the last collection.
@@ -644,10 +654,24 @@ fn made_absolute(path: &str) -> String {
 }
 
 type DirectoryVersion = Result<(u64, u64, i64, i64, i64, i64, u32), std::io::ErrorKind>;
+type LinkStamp = (u64, u64, i64, i64, i64, i64);
 
 fn directory_version(path: &std::path::Path) -> DirectoryVersion {
     use std::os::unix::fs::MetadataExt;
     std::fs::metadata(path).map(|m| (m.dev(), m.ino(), m.mtime(), m.mtime_nsec(), m.ctime(), m.ctime_nsec(), m.mode())).map_err(|error| error.kind())
+}
+
+fn link_stamp(info: &std::fs::Metadata) -> LinkStamp {
+    use std::os::unix::fs::MetadataExt;
+    (info.dev(), info.ino(), info.mtime(), info.mtime_nsec(), info.ctime(), info.ctime_nsec())
+}
+
+// A replaced symlink gets a new inode or new timestamps, and canonicalize
+// would walk every ancestor of every link on each import.
+fn symlink_stamp(path: &std::path::Path) -> Option<LinkStamp> {
+    let info = std::fs::symlink_metadata(path).ok()?;
+    if !info.file_type().is_symlink() { return None; }
+    Some(link_stamp(&info))
 }
 
 struct SourceLocations {
@@ -655,13 +679,13 @@ struct SourceLocations {
     locations: HashMap<std::path::PathBuf, String>,
     directories: std::collections::HashSet<std::path::PathBuf>,
     watches: Vec<(std::path::PathBuf, DirectoryVersion)>,
-    links: Vec<(std::path::PathBuf, Option<std::path::PathBuf>)>,
+    links: Vec<(std::path::PathBuf, LinkStamp)>,
 }
 
 impl SourceLocations {
     fn current(&self, root: &std::path::Path) -> bool {
         self.root == root && self.watches.iter().all(|(path, version)| directory_version(path) == *version)
-            && self.links.iter().all(|(path, target)| module_location(path, None) == *target)
+            && self.links.iter().all(|(path, stamp)| symlink_stamp(path).as_ref() == Some(stamp))
     }
 }
 
@@ -742,7 +766,7 @@ impl Drop for Engine<'_> {
     fn drop(&mut self) {
         if !self.lang.signals_between_statements {return;}
         for (&number, handler) in &self.signal_handlers {
-            if !matches!(handler.contents(), Value::Small(0 | 1)) {
+            if !matches!(handler.contents(), Value::Null | Value::Small(0 | 1)) {
                 unsafe {libc::signal(number as i32, libc::SIG_DFL);}
             }
         }
@@ -1795,7 +1819,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_rows: RefCell::new(HashMap::new()), function_sweep: 0, byte_members_seen: RefCell::new(HashMap::default()), prepared_hint: std::cell::Cell::new(None), collecting_cycles: false, cycle_checkpoint_slots: 0, cycle_checkpoint_bytes: 0, quiet_module_slots: Default::default(), kind_names: RefCell::new(HashMap::new()),
+            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_rows: RefCell::new(HashMap::new()), function_sweep: 0, byte_members_seen: RefCell::new(HashMap::default()), prepared_hint: std::cell::Cell::new(None), prepared_compiled: None, collecting_cycles: false, cycle_checkpoint_slots: 0, cycle_checkpoint_bytes: 0, quiet_module_slots: Default::default(), kind_names: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
             native_exceptions,
             exception_roster,
@@ -2277,6 +2301,19 @@ impl<'a> Engine<'a> {
     pub fn let_things_go(&mut self) {
         if !self.lang.trace_fields.is_empty() {
             self.finalizing = true;
+            if self.lang.signals_between_statements {
+                // Keep cleared slots distinct from the implicit initial SIGINT handler.
+                for number in 1..=64 {
+                    let previous = self.signal_handlers.insert(number, Value::Null);
+                    let reset = match previous {
+                        Some(Value::Small(0 | 1) | Value::Null) => false,
+                        None => number == i64::from(libc::SIGINT),
+                        Some(_) => true,
+                    };
+                    if reset { unsafe { libc::signal(number as i32, libc::SIG_DFL); } }
+                }
+                SIGNALS_PENDING.store(0, std::sync::atomic::Ordering::Relaxed);
+            }
             // CPython clears the import cache before module-owned finalizers.
             // Existing references to a module continue to own its dictionary.
             if let [owner, member] = self.lang.module_cache.as_slice() {
@@ -2523,6 +2560,11 @@ impl<'a> Engine<'a> {
             let fault = self.thread.carried.take().unwrap_or(Fault::Note(words));
             self.ignore_fault(fault, &shown, kind);
         }
+        if self.lang.signals_between_statements {
+            if let Err(fault) = self.deliver_signals() {
+                self.ignore_fault(fault, &shown, kind);
+            }
+        }
     }
 
     fn ignore_fault(&mut self, fault: Fault, about: &Value, kind: &str) {
@@ -2597,7 +2639,7 @@ impl<'a> Engine<'a> {
         });
         if limit.is_some_and(|limit| swollen || large_source || growth >= limit) {
             let pending = self.thread.carried.take();
-            self.collect_cycles();
+            self.collect_cycles(false);
             self.thread.carried = pending;
         }
     }
@@ -2687,7 +2729,7 @@ impl<'a> Engine<'a> {
     /// what the engine itself holds is held from outside the graph, which keeps all that
     /// is under it, exactly as walking it would have. `whole` also walks the engine's
     /// own values and traces every edge, for listing the objects.
-    fn cycle_graph(&self, retained: &[Value], whole: bool, quiet_slots: &[usize]) -> crate::faint::Graph {
+    fn cycle_graph(&self, retained: &[Value], whole: bool, quiet_slots: &[usize], young: bool) -> crate::faint::Graph {
         let books = self.text_books.iter().flat_map(|book| {
             std::iter::once(Value::Bond(book.near.clone()))
                 .chain(book.outer.iter().cloned().map(Value::Bond))
@@ -2719,8 +2761,8 @@ impl<'a> Engine<'a> {
         {
             // Weak metadata keys are candidates, never proven outside owners.
             let weak_keys = self.function_members.iter().filter_map(|(function, _)| function.revive()).collect();
-            let mut graph = crate::faint::Graph::from_candidates(bookkeeping, live, weak_keys, whole);
-            for (function, holder) in &self.function_members { if let Some(function) = function.revive() { graph.link_attributes(&function, &Value::Object(holder.clone())); } }
+            let mut graph = crate::faint::Graph::from_candidates(bookkeeping, live, weak_keys, whole, young);
+            for (function, holder) in &self.function_members { if let Some(function) = function.revive() { graph.link_attributes(&function, &Value::Object(holder.clone()), young); } }
             graph
         }
     }
@@ -2729,7 +2771,10 @@ impl<'a> Engine<'a> {
     /// its finalizers. Recheck the same retained group for resurrection
     /// before severing it; cycles created by those calls belong to a later
     /// collection. A nested collect never enters these phases again.
-    fn collect_cycles(&mut self) -> usize {
+    fn collect_cycles(&mut self, youngest: bool) -> usize {
+        // Until something has endured a walk, generation 0 is a full walk,
+        // so the first collection still sees the whole heap.
+        let youngest = youngest && crate::faint::any_endured();
         if self.collecting_cycles { return 0; }
         self.collecting_cycles = true;
         self.cycle_checkpoint_slots = self.world.len();
@@ -2739,12 +2784,13 @@ impl<'a> Engine<'a> {
         self.function_members.retain(|(function, _)| function.revive().is_some());
         if self.function_members.len() != members_before { self.reindex_function_rows(); }
         self.settle_departed();
-        let mut graph = self.cycle_graph(&[], false, &quiet_slots);
+        let mut graph = self.cycle_graph(&[], false, &quiet_slots, youngest);
         let mut group = graph.unreached();
         // Nothing unreachable means nothing is said or cleared, so the
         // heap is the same afterwards and the first walk still stands.
         if group.is_empty() {
             let kept_before = self.function_members.len();
+            crate::faint::keep_endured(graph.endured_identities(), !youngest);
             self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !graph.unowned(&function)));
             if self.function_members.len() != kept_before { self.reindex_function_rows(); }
             drop(graph);
@@ -2784,11 +2830,12 @@ impl<'a> Engine<'a> {
         // stands and that walk answers for it.
         let (unreached, after) = if spoke {
             drop(graph);
-            let mut after = self.cycle_graph(&group, false, &quiet_slots);
+            let mut after = self.cycle_graph(&group, false, &quiet_slots, youngest);
             (after.still_unreached(group), after)
         } else {
             (group, graph)
         };
+        crate::faint::keep_endured(after.endured_identities(), !youngest);
         let count = unreached.len();
         self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !after.unowned(&function)));
         self.reindex_function_rows();
@@ -5382,11 +5429,13 @@ impl<'a> Engine<'a> {
         if self.lang.closes_over {
             // Each local owns a binding cell; mutable values inside it
             // retain their separate identity when the name is rebound.
-            let mut inherited_cells = vec![false; frame.len()];
-            for (at, _) in &program.enclosed { inherited_cells[*at] = true; }
+            let enclosed = &program.enclosed;
+            let no_enclosed = enclosed.is_empty();
             for (at, value) in frame.iter_mut().enumerate() {
-                if !inherited_cells[at] {
-                    *value = Value::Binding(Rc::new(RefCell::new(self.keep_collection(value.clone()))));
+                if no_enclosed || !enclosed.iter().any(|&(slot, _)| slot == at) {
+                    let held = std::mem::replace(value, Value::Blank);
+                    let kept = if matches!(held, Value::Blank) { held } else { self.keep_collection(held) };
+                    *value = Value::Binding(Rc::new(RefCell::new(kept)));
                 }
             }
         }
@@ -14831,10 +14880,12 @@ impl<'a> Engine<'a> {
                     },
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
                     Value::Method(object, method, _) => {
-                        let args = self.drop_many(argc - 1)?;
-                        let mut given = vec![Value::Object(object)];
-                        given.extend(args);
-                        self.invoke(&method, given)
+                        if self.data.len() < argc - 1 {
+                            return Err("Stack underflow".to_string().into());
+                        }
+                        let insert_at = self.data.len() - (argc - 1);
+                        self.data.insert(insert_at, Value::Object(object));
+                        self.invoke_top(&method, argc)
                     }
                     Value::Object(object) if !self.lang.class_special.is_empty() => {
                         let args = self.drop_many(argc - 1)?;
@@ -20932,6 +20983,10 @@ impl<'a> Engine<'a> {
             handled |= bit;
             let handler = self.signal_handlers.get(&(number as i64)).cloned();
             let outcome: Flow<()> = match handler {
+                Some(Value::Null | Value::Small(0 | 1)) if self.lang.python_numbers => {
+                    self.ignore_fault(Fault::Note(format!("OSError: Signal {number} ignored due to race condition")), &Value::Null, "signal_handler");
+                    Ok(())
+                }
                 Some(Value::Small(1)) => Ok(()),
                 Some(routine) if !matches!(routine, Value::Small(_)) => {
                     match self.call_held(routine, vec![Value::Small(number as i64), Value::Null]) {
@@ -21198,23 +21253,40 @@ impl<'a> Engine<'a> {
             if routed {
                 let route = self.lang.print_route.clone();
                 if matches!(destination, Value::Null) {
-                    for value in &args {
-                        let held = value.contents();
-                        if matches!(held, Value::Codepoints(_)) { self.codec_library("_encode_surrogates", vec![held])?; }
-                    }
                     let module = self.route_module(&route[0])?;
                     destination = self.member_of(module, &route[1])?.unwrap_or(Value::Null);
-                    if matches!(destination, Value::Null) { return Ok(Value::Null); }
+                    if matches!(destination, Value::Null) {
+                        for value in &args { self.printed_surrogate_check(value)?; }
+                        return Ok(Value::Null);
+                    }
                 }
-                for value in &args { self.printed_surrogate_check(value)?; }
+                // io.StringIO stores characters. Its encoding is missing or
+                // None, so a surrogate has to reach write() intact. An
+                // encoded stream still refuses one, as utf-8 strict would.
+                let encoding_name = self.lang.print_stream_encoding.first().cloned();
+                let keeps_raw = if let Some(name) = encoding_name {
+                    args.iter().any(|value| matches!(value.contents(), Value::Codepoints(_)))
+                        && match self.member_of(destination.clone(), &name)? {
+                            None => true,
+                            Some(encoding) => matches!(encoding.contents(), Value::Null),
+                        }
+                } else { false };
+                if !keeps_raw {
+                    for value in &args { self.printed_surrogate_check(value)?; }
+                }
                 let writer = match self.member_of(destination.clone(), &route[2])? {
                     Some(writer) => writer,
                     None => return Err(self.member_amiss(&destination, &route[2])),
                 };
                 for (index, value) in args.iter().enumerate() {
                     if index > 0 { self.call_held(writer.clone(), vec![Value::text(&between)])?; }
-                    let text = self.special_text(value, false)?;
-                    self.call_held(writer.clone(), vec![Value::text(&text)])?;
+                    if keeps_raw {
+                        let text = self.string_conversion(value, false)?;
+                        self.call_held(writer.clone(), vec![text])?;
+                    } else {
+                        let rendered = self.special_text(value, false)?;
+                        self.call_held(writer.clone(), vec![Value::text(&rendered)])?;
+                    }
                 }
                 self.call_held(writer, vec![Value::text(&ending)])?;
                 if flushed {
@@ -24681,10 +24753,12 @@ impl<'a> Engine<'a> {
         Ok(actual.same_place(saved))
     }
 
-    pub(super) fn invalidate_code_watches(&mut self, code_changed: bool) {
-        self.code_watches.retain(|(weak, defaults_too)| {
+    pub(super) fn invalidate_code_watches(&mut self, subject: &Value, code_changed: bool) {
+        self.code_watches.retain(|(weak, defaults_too, functions)| {
             let Some(cell) = weak.upgrade() else { return false };
-            if code_changed || *defaults_too { *cell.borrow_mut() = Value::array(vec![Value::Flag(false)]); }
+            let belongs = functions.is_empty() || functions.iter().any(|function|
+                function.revive().is_some_and(|value| value.equals(subject)));
+            if belongs && (code_changed || *defaults_too) { *cell.borrow_mut() = Value::array(vec![Value::Flag(false)]); }
             true
         });
     }
@@ -24697,7 +24771,10 @@ impl<'a> Engine<'a> {
             if !self.byte_fingerprint_matches(function, field, body)? { approved = false; }
         }
         let cell = Rc::new(RefCell::new(Value::array(vec![Value::Flag(approved)])));
-        self.code_watches.push((Rc::downgrade(&cell), *defaults_too));
+        let watched = if functions.iter().all(|function| matches!(function, Value::Routine(_))) {
+            functions.iter().map(crate::faint::hold_of).collect::<Option<Vec<_>>>().unwrap_or_default()
+        } else { Vec::new() };
+        self.code_watches.push((Rc::downgrade(&cell), *defaults_too, watched));
         Ok(Value::Collection(cell, false))
     }
 
@@ -26868,8 +26945,9 @@ impl<'a> Engine<'a> {
             Builtin::WeakMake => return self.faint_allocate(name, args),
             Builtin::WeakGet => return self.faint_reading(args),
             Builtin::Collect => {
-                arity(0)?;
-                Value::Small(self.collect_cycles() as i64)
+                if args.len() > 1 { arity(0)?; }
+                let youngest = args.first().is_some_and(|given| matches!(given.contents(), Value::Small(0)));
+                Value::Small(self.collect_cycles(youngest) as i64)
             }
             Builtin::FaultInHand => { return self.builtin_arm_15(builtin, name, args); }
             // One for a file, two for a directory, nought for neither.
@@ -27541,6 +27619,30 @@ impl<'a> Engine<'a> {
             Builtin::StreamTake
             => {
                 use std::io::Read;
+                // One read, not a fill: a text chunk must return while the writer is still open.
+                if args.len() == 4 && self.truth(&args[2]) && self.truth(&args[3]) {
+                    let Value::Small(asked) = args[0].contents() else {
+                        return Err(self.lang.stream_amiss[0].clone());
+                    };
+                    let room = match asked {
+                        0 => return Ok(self.byte_make(Vec::<u8>::new(), false)),
+                        n if n < 0 => 8192usize,
+                        n => (n as usize).min(8192),
+                    };
+                    let mut pocket = [0u8; 8192];
+                    let mut held = std::io::stdin().lock();
+                    let gained = loop {
+                        match held.read(&mut pocket[..room]) {
+                            Ok(count) => break count,
+                            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                                self.signal_checkpoint()?;
+                                continue;
+                            }
+                            Err(_) => return Err(self.lang.stream_failed[0].clone()),
+                        }
+                    };
+                    return Ok(self.byte_make(pocket[..gained].to_vec(), false));
+                }
                 if args.len() == 3 && self.truth(&args[2]) {
                     let Value::Small(wanted) = args[0].contents() else { return Err(self.lang.stream_amiss[0].clone()); };
                     let by_line = self.truth(&args[1]);
@@ -27847,7 +27949,7 @@ impl<'a> Engine<'a> {
             Builtin::TrackedObjects
             => {
                 if args.len()!=0 {return Err(format!("TypeError: {}() takes no arguments",self.lang.gc_objects.first().map_or("gc.get_objects",String::as_str)));}
-                let graph=self.cycle_graph(&[], true, &[]);
+                let graph=self.cycle_graph(&[], true, &[], false);
                 let mut seen=std::collections::HashSet::new();
                 let mut objects=Vec::new();
                 for object in graph.tracked_objects() {
@@ -27961,6 +28063,12 @@ impl<'a> Engine<'a> {
             => {
                 arity(1)?;
                 let Value::Text(name) = args[0].contents() else { return Err("TypeError: module name must be a string".into()); };
+                if name.as_ref() == "__main__" && self.root_source.contains(".zip/") && std::fs::read(self.root_source.as_ref()).is_err() {
+                    // The program names an archive entry. The host cannot read that path.
+                    let module = self.route_module("_tokenize")?;
+                    let archived = self.member_of(module, "_archived_source")?.ok_or_else(|| "ImportError: source decoder is unavailable".to_string())?;
+                    return self.call_held(archived, vec![Value::text(self.root_source.as_ref())]);
+                }
                 let raw = if name.as_ref() == "__main__" {
                     std::fs::read(self.root_source.as_ref()).ok()
                 } else {
@@ -28099,17 +28207,32 @@ impl<'a> Engine<'a> {
                         arity(6)?;
                         self.catalog_paths(args)?
                     }
-                    Some(Value::Text(op)) if op.as_ref() == "stat_native" => {
-                        arity(4)?;
+                    Some(Value::Text(op)) if matches!(op.as_ref(), "stat_native" | "statat_native" | "fstat_native") => {
+                        let is_fstat = op.as_ref() == "fstat_native";
+                        let is_statat = op.as_ref() == "statat_native";
+                        arity(if is_statat { 5 } else if is_fstat { 3 } else { 4 })?;
                         let Value::Class(class) = args[1].contents() else { return Err("TypeError: a class is required".into()); };
-                        let request = [Value::text("stat"), args[2].clone(), Value::Small(-100), Value::Small(i64::from(matches!(args[3], Value::Flag(true))))];
-                        let outcome = crate::posix::call(&request, || Ok(()))?;
+                        let outcome = if is_fstat {
+                            let request = [Value::text("fstat"), args[2].clone()];
+                            crate::posix::call(&request, || Ok(()))?
+                        } else if is_statat {
+                            let request = [Value::text("stat"), args[2].clone(), args[3].clone(), Value::Small(i64::from(matches!(args[4], Value::Flag(true))))];
+                            crate::posix::call(&request, || Ok(()))?
+                        } else {
+                            let request = [Value::text("stat"), args[2].clone(), Value::Small(-100), Value::Small(i64::from(matches!(args[3], Value::Flag(true))))];
+                            crate::posix::call(&request, || Ok(()))?
+                        };
                         let Value::Tuple(pair) = outcome else { unreachable!() };
                         if let Value::Small(errno) = pair[0] {
                             if errno != 0 {
                                 let Value::Tuple(message) = crate::posix::call(&[Value::text("strerror"), Value::Small(errno)], || Ok(()))? else { unreachable!() };
                                 let kind = self.furnished(20).ok_or_else(|| "OSError: missing exception class".to_string())?;
-                                let error = self.exception_instance(kind, vec![Value::Small(errno), message[1].clone(), args[2].clone()], Value::Null);
+                                let err_args = if is_fstat {
+                                    vec![Value::Small(errno), message[1].clone()]
+                                } else {
+                                    vec![Value::Small(errno), message[1].clone(), args[2].clone()]
+                                };
+                                let error = self.exception_instance(kind, err_args, Value::Null);
                                 self.thread.carried = Some(Fault::Thrown(error));
                                 return Err(String::new());
                             }
@@ -28521,6 +28644,27 @@ impl<'a> Engine<'a> {
                         Value::Small(WAKEUP_FD.swap(fd, std::sync::atomic::Ordering::Relaxed) as i64)
                     }
                     6 => { arity(1)?; Value::Null }
+                    7 => {
+                        arity(2)?;
+                        let which = match args[1].as_big() {
+                            Ok(number) => number.to_i64().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_string())?,
+                            Err(_) => return Err("TypeError: an integer is required".to_string()),
+                        };
+                        if !(1..=64).contains(&which) {
+                            return Err("ValueError: signal number out of range".to_string());
+                        }
+                        // SIG_DFL and SIG_IGN do nothing. No stored handler is
+                        // SIG_DFL, except signal 2, which Python handles.
+                        let schedule = match self.signal_handlers.get(&which) {
+                            Some(Value::Small(0) | Value::Small(1)) => false,
+                            None => which == 2,
+                            Some(_) => true,
+                        };
+                        if schedule {
+                            pend_signal(which as i32);
+                        }
+                        Value::Null
+                    }
                     _ => return Err(format!("{name}() knows no step {step}")),
                 }
             },
@@ -29401,6 +29545,12 @@ impl<'a> Engine<'a> {
             Builtin::MemberSet
             => {
                 arity(3)?;
+                if let Value::Class(class) = &args[0] {
+                    if class.constants.iter().any(|(key, _)| key == "\0native-name") {
+                        let member = args[1].display(&sp);
+                        return Err(format!("TypeError: cannot set '{member}' attribute of immutable type '{}'", class.name).into());
+                    }
+                }
                 if matches!(&args[0], Value::Object(object) if object.fields.borrow().iter().any(|(key, _)| key == "\0immutable"))
                     || matches!(&args[0], Value::Class(class) if class.sealed.get()) {
                     return Err("AttributeError: sealed storage is immutable".into());
@@ -34573,7 +34723,7 @@ impl Engine<'_> {
         result
     }
 
-    fn initialize_source_file_spec(&mut self, path: &str, module: &Value, file: Option<&str>) -> Flow<bool> {
+    pub(super) fn initialize_source_file_spec(&mut self, path: &str, module: &Value, file: Option<&str>) -> Flow<bool> {
         if self.lang.module_path.is_none() { return Ok(false); }
         let maker = self.modules.get("sys").cloned()
             .and_then(|system| self.member_of(system, "_make_spec").ok().flatten());
@@ -34594,7 +34744,13 @@ impl Engine<'_> {
             && !self.modules.contains_key("os") && !self.importing.contains("os") {
             self.import_module("os")?;
         }
-        if path == "_typing" && self.lang.type_parameters { return Ok(self.typing_module()); }
+        if path == "_typing" && self.lang.type_parameters {
+            let module = self.typing_module();
+            if matches!(self.member_of(module.clone(), "__spec__")?, None | Some(Value::Null)) {
+                let _ = self.initialize_source_file_spec(path, &module, Some(""));
+            }
+            return Ok(module);
+        }
 
         if path.starts_with('.') { let resolved = self.import_path(path)?; return self.import_module(&resolved); }
         if let Some(cached) = self.module_cache_value(path) {
@@ -35016,7 +35172,7 @@ impl Engine<'_> {
                 let location = match std::fs::symlink_metadata(&file) {
                     Ok(info) if info.file_type().is_symlink() => {
                         let target = module_location(&file, None);
-                        links.push((file, target.clone()));
+                        links.push((file, link_stamp(&info)));
                         target
                     },
                     Ok(_) => Some(file),
@@ -35878,6 +36034,18 @@ impl Engine<'_> {
     /// dictionary a program handed over for its own names.
     fn our_native_dict(&self, held: &Value) -> bool {
         matches!(held, Value::Bond(cell) if self.natives.as_ref().map_or(false, |ours| Rc::ptr_eq(cell, ours)))
+    }
+
+    /// Whether a builtin mapping is still the canonical module builtins dict
+    /// or the kernel's native marker.
+    fn is_default_builtins(&mut self, held: &Value) -> bool {
+        if self.our_native_dict(held) { return true; }
+        let Some(name) = self.lang.names_module.first().cloned() else { return false };
+        if !self.modules.contains_key(&name) || self.importing.contains("sys") { return false; }
+        match (self.canonical_builtin_dict(), held) {
+            (Ok(Value::Bond(canon)), Value::Bond(given)) => Rc::ptr_eq(&canon, given),
+            _ => false,
+        }
     }
 
     /// The module a program asking for the builtins by name is handed:
@@ -36859,6 +37027,7 @@ impl Engine<'_> {
     /// `compile`, `eval` or `exec` is told apart the same way a file
     /// is, through `text_syntax`.
     fn text_tokens(&mut self, source: &str, mode: usize) -> Result<Vec<crate::lex::Token>, (String, usize, usize)> {
+        self.prepared_hint.set(None);
         if source.len() >= 65_536 { self.collect_namespace_garbage(true); }
         if source.is_empty() && self.archived_text.is_some() { return Ok(Vec::new()); }
         let terminated = if mode == 0 && !source.is_empty() && !source.ends_with('\n') {
@@ -37844,8 +38013,9 @@ impl Engine<'_> {
         let positions = Self::ast_position_rows(&supplied_positions)?;
         trial.optimize = optimization;
         trial.source = Some(source.clone());
+        let prepared = self.prepared_hint.take();
         crate::compile::holding_figures(self.current_digit_limit());
-        let mut checked = match crate::compile::at_ast_positions(&positions, || crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref())))) {
+        let mut checked = match crate::compile::at_ast_positions(&positions, || crate::compile::compile_prepared(&tokens, self.lang, &mut trial, Some(Rc::from(file.as_ref())), prepared)) {
             Ok(checked) => checked,
             Err(said) => {
                 if allow_incomplete && mode != 0 && !Self::past_reading_complaint(&said) {
@@ -37894,18 +38064,19 @@ impl Engine<'_> {
             Value::Routine(body) => self.routine_code(body), other => other.clone(),
         }).collect());
         let module_name = self.lang.trace_fields.get(10).map_or("<module>", String::as_str);
-        let binding_cache = serde_json::to_string(&trial).map_err(|e| format!("ValueError: {e}"))?;
         let mut metadata = (*checked).clone();
         metadata.ident = "<module>".into();
         metadata.qualified = "<module>".into();
         metadata.declared_on = 1;
         metadata.code_flags = bits;
+        trial.compiled_wide_globals = crate::compile::text_wide_globals(&tokens, self.lang);
+        let trial_future_bits = trial.future_bits;
+        Rc::make_mut(&mut checked).compiled_registry = Some(Rc::new(trial));
         let (imports, stores) = crate::compile::code_imports_stores(&checked.instrs, &checked.local_names);
-        let fields = vec![("\0initial_constants".to_string(), constants.clone()), ("\0compile_features".to_string(), Value::Small(trial.future_bits | if allow_top_await { 8192 } else { 0 })), ("co_consts".to_string(), constants), ("\0native_code".to_string(), self.routine_code(&Rc::new(metadata))), ("co_name".into(), Value::text(module_name)), ("co_qualname".into(), Value::text(module_name)),
+        let fields = vec![("\0initial_constants".to_string(), constants.clone()), ("\0compile_features".to_string(), Value::Small(trial_future_bits | if allow_top_await { 8192 } else { 0 })), ("co_consts".to_string(), constants), ("\0native_code".to_string(), self.routine_code(&Rc::new(metadata))), ("co_name".into(), Value::text(module_name)), ("co_qualname".into(), Value::text(module_name)),
             ("co_filename".into(), Value::Text(file.clone())),
             ("\0optimization".into(), Value::Small(optimization as i64)),
-            ("\0compiled_program".into(), Value::Routine(checked)),
-            ("\0compiled_bindings".into(), Value::text(&binding_cache))];
+            ("\0compiled_program".into(), Value::Routine(checked))];
         let mut fields = fields;
         let source_fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file.clone())), (words[2].clone(), Value::Small(mode as i64)), ("co_filename".to_string(), Value::Text(file)), ("co_flags".to_string(), Value::Small(bits)), ("co_firstlineno".to_string(), Value::Small(1)), ("co_optimize".to_string(), Value::Small(optimization))];
         fields.splice(0..0, source_fields);
@@ -38072,21 +38243,37 @@ impl Engine<'_> {
                 }
             }
         }
+        self.archived_text = None;
+        self.prepared_compiled = None;
         let Some(first) = args.first().map(Value::contents) else { return Err(self.core_fault("core.arity", name)) };
         if let Value::Object(code) = &first {
-            if let Some((_, saved)) = code.fields.borrow().iter().find(|(key, _)| key == "\0code_archive") {
-                match saved {
-                    Value::Bytes(bytes, ..) => self.archived_text = Some(crate::cache::unpack_json(&bytes.borrow())?),
-                    Value::Text(packet) => self.archived_text = Some(serde_json::from_str(packet).map_err(|e| format!("ValueError: {e}"))?),
-                    _ => {}
+            let fields = code.fields.borrow();
+            let has_replacements = fields.iter().any(|(key, _)| key == "\0replace_constants");
+            let staged = if !has_replacements {
+                fields.iter().find_map(|(key, value)| {
+                    if key == "\0compiled_program" {
+                        if let Value::Routine(prog) = value {
+                            prog.compiled_registry.as_ref().map(|reg| (prog.clone(), reg.clone()))
+                        } else { None }
+                    } else { None }
+                })
+            } else { None };
+            if let Some(pair) = staged {
+                self.prepared_compiled = Some(pair);
+            } else {
+                if let Some((_, saved)) = fields.iter().find(|(key, _)| key == "\0code_archive") {
+                    match saved {
+                        Value::Bytes(bytes, ..) => self.archived_text = Some(crate::cache::unpack_json(&bytes.borrow())?),
+                        Value::Text(packet) => self.archived_text = Some(serde_json::from_str(packet).map_err(|e| format!("ValueError: {e}"))?),
+                        _ => {}
+                    }
                 }
-            }
-        }
-        if let Value::Object(code) = &first {
-            if code.fields.borrow().iter().any(|(key, value)| key == "\0optimization" && matches!(value, Value::Small(1..=2))) {
-                let writer = self.lang.code_cache[0].clone();
-                let Value::Bytes(bytes, ..) = self.code_cache(&writer, vec![first.clone()])? else { return Err(self.source_unready()); };
-                self.archived_text = Some(crate::cache::unpack_json(&bytes.borrow())?);
+                if fields.iter().any(|(key, value)| key == "\0optimization" && matches!(value, Value::Small(1..=2))) {
+                    drop(fields);
+                    let writer = self.lang.code_cache[0].clone();
+                    let Value::Bytes(bytes, ..) = self.code_cache(&writer, vec![first.clone()])? else { return Err(self.source_unready()); };
+                    self.archived_text = Some(crate::cache::unpack_json(&bytes.borrow())?);
+                }
             }
         }
         let positions = match &first {
@@ -38246,8 +38433,30 @@ impl Engine<'_> {
             }
             return self.run_text_booked(source, file, mode, globals, None, top_await, replacements, optimization, positions);
         }
+        let direct = self.prepared_compiled.take();
         let warn_from_text = file.is_none();
         let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
+        self.registry.optimize = optimization;
+        let previous = self.registry.born.clone();
+        if !self.lang.module_builtins.is_empty() {
+            let builtins = self.source_builtin_dict().map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() })?;
+            self.registry.born = Some(builtins);
+        }
+        if replacements.is_none() && !self.registry.program_bound.iter().any(|k| self.lang.builtins.contains_key(k)) {
+            if let Some((proto, scope)) = direct {
+                let places: Vec<usize> = scope.idents.iter().map(|n| self.registry.slot(n)).collect();
+                self.registry.globals.extend(scope.globals.iter().cloned());
+                self.registry.program_bound.extend(scope.program_bound.iter().cloned());
+                self.registry.shared_args.extend(scope.shared_args.iter().map(|(k, v)| (k.clone(), v.clone())));
+                self.registry.arg_names.extend(scope.arg_names.iter().map(|(k, v)| (k.clone(), v.clone())));
+                self.registry.gives_back.extend(scope.gives_back.iter().cloned());
+                let program = proto.relocated(&places, &self.registry.globe, &self.registry.born, &self.registry.home)?;
+                self.registry.born = previous;
+                self.world.resize(self.registry.idents.len(), Value::Blank);
+                return self.text_finished(&program, &file, false);
+            }
+        }
+        self.registry.born = previous;
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
@@ -38276,6 +38485,7 @@ impl Engine<'_> {
     /// the routine goes on holding what it held and a name the text
     /// makes is gone once the text is done.
     fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64, positions: &[[u32; 8]]) -> Res<Value> {
+        self.prepared_compiled = None;
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
         let warn_from_text = file.is_none();
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
@@ -38335,14 +38545,19 @@ impl Engine<'_> {
 
     /// Text run in dictionaries of its own: its names are given slots
     /// of their own in the world, and a book is kept for them.
+    fn book_has_no_builtin(&self, cell: &Rc<RefCell<Value>>) -> bool {
+        match &*cell.borrow() {
+            Value::Map(pairs) => !pairs.iter().any(|(k, _)| matches!(k, Value::Text(w) if self.lang.builtins.contains_key(w.as_ref()))),
+            Value::Fields(inst) => !inst.fields.borrow().iter().any(|(k, _)| self.lang.builtins.contains_key(k.as_str())),
+            _ => false,
+        }
+    }
+
     fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64, positions: &[[u32; 8]]) -> Res<Value> {
+        let direct = self.prepared_compiled.take();
         let supplied_builtins = self.compiled_builtins.take();
         let warn_from_text = file.is_none();
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
-        let tokens = match self.text_tokens(source, mode) {
-            Ok(tokens) => tokens,
-            Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
-        };
         let offset = self.registry.idents.len();
         let mut local = crate::compile::Registry::with_outside_slots(offset);
         local.optimize = optimization;
@@ -38375,8 +38590,34 @@ impl Engine<'_> {
         // that every routine the text makes answers with the name the
         // namespace had when they were made, not one written later.
         local.home = Some(module_hint.as_deref().map(Rc::from));
-        let (program, shown, warnings) = self.text_program(source, &tokens, &file, mode, Some(&mut local), top_await, module_hint.as_deref(), positions)?;
-        let program = match replacements { Some(values) => Rc::new(program.replacing_constants(&values)?), None => program };
+        let default_builtins = match local.born.as_ref() {
+            Some(b) => self.is_default_builtins(b),
+            None => true,
+        };
+        let can_direct = (1..=2).contains(&optimization)
+            && replacements.is_none()
+            && default_builtins
+            && self.book_has_no_builtin(&outer)
+            && near.as_ref().map_or(true, |n| self.book_has_no_builtin(n));
+        let (program, shown, warnings, wide_globals) = if let Some((proto, scope)) = direct.filter(|_| can_direct) {
+            let places: Vec<usize> = scope.idents.iter().map(|n| local.slot(n)).collect();
+            local.globals.extend(scope.globals.iter().cloned());
+            local.declared_outer = scope.declared_outer.clone();
+            local.shared_args.extend(scope.shared_args.iter().map(|(k, v)| (k.clone(), v.clone())));
+            local.arg_names.extend(scope.arg_names.iter().map(|(k, v)| (k.clone(), v.clone())));
+            local.gives_back.extend(scope.gives_back.iter().cloned());
+            let relocated = proto.relocated(&places, &local.globe, &local.born, &local.home)?;
+            (relocated, false, Vec::new(), Some(scope.compiled_wide_globals.clone()))
+        } else {
+            let tokens = match self.text_tokens(source, mode) {
+                Ok(tokens) => tokens,
+                Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
+            };
+            let (program, shown, warnings) = self.text_program(source, &tokens, &file, mode, Some(&mut local), top_await, module_hint.as_deref(), positions)?;
+            let program = match replacements { Some(values) => Rc::new(program.replacing_constants(&values)?), None => program };
+            let wide = crate::compile::text_wide_globals(&tokens, self.lang);
+            (program, shown, warnings, Some(wide))
+        };
         let names = std::mem::take(&mut local.idents);
         for name in &names { self.registry.slot(&format!("\0names:{offset}:{name}")); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
@@ -38386,8 +38627,10 @@ impl Engine<'_> {
         }
         let (near, outer) = match near { Some(near) => (near, Some(outer)), None => (outer, None) };
         let mut declared = local.declared_outer;
-        for name in crate::compile::text_wide_globals(&tokens, self.lang) {
-            if !declared.contains(&name) { declared.push(name); }
+        if let Some(wide) = wide_globals {
+            for name in wide {
+                if !declared.contains(&name) { declared.push(name); }
+            }
         }
         let builtins = local.born.clone().unwrap_or_else(|| self.native_dict());
         self.text_books.push(TextBook { builtins, near, outer, from: offset, upto: offset + names.len(), declared });
@@ -38526,11 +38769,18 @@ impl Engine<'_> {
         let Some(Value::Object(module)) = self.modules.get(owner) else { return };
         let mut fields = module.fields.borrow_mut();
         let Some((_, place)) = fields.iter_mut().find(|(name, _)| name == member) else { return };
-        let mut entries = if path == owner {
-            self.modules.iter().map(|(key, value)| (Value::text(key), value.clone())).collect::<Vec<_>>()
-        } else {
-            match place.contents() { Value::Map(row) => row.to_vec(), _ => Vec::new() }
+        let mut entries = match place.contents() {
+            Value::Map(row) => row.to_vec(),
+            _ => Vec::new(),
         };
+        if path == owner {
+            // Imports during startup can register aliases absent from the native map.
+            for (key, value) in &self.modules {
+                if !entries.iter().any(|(name, _)| key_spells(name, key)) {
+                    entries.push((Value::text(key), value.clone()));
+                }
+            }
+        }
         entries.retain(|(key, _)| !key_spells(key, path));
         if let Some(value) = self.modules.get(path) { entries.push((Value::text(path), value.clone())); }
         let map = Value::Map(Rc::new(entries.into()));
@@ -38619,8 +38869,13 @@ impl Engine<'_> {
                 }
             }
             let Some((_, Value::Routine(program))) = fields.iter().find(|(key, _)| key == "\0compiled_program") else { return Err("ValueError: no compiled instruction graph".into()); };
-            let Some((_, Value::Text(bindings))) = fields.iter().find(|(key, _)| key == "\0compiled_bindings") else { return Err("ValueError: no compiled bindings".into()); };
-            let mut scope: crate::compile::Registry = serde_json::from_str(bindings).map_err(|e| format!("ValueError: {e}"))?;
+            let mut scope: crate::compile::Registry = if let Some((_, Value::Text(bindings))) = fields.iter().find(|(key, _)| key == "\0compiled_bindings") {
+                serde_json::from_str(bindings).map_err(|e| format!("ValueError: {e}"))?
+            } else if let Some(cached) = &program.compiled_registry {
+                (**cached).clone()
+            } else {
+                return Err("ValueError: no compiled bindings".into());
+            };
             let program = if fields.iter().any(|(key, _)| key == "\0replace_constants") {
                 let values = fields.iter().find_map(|(key, value)| match (key.as_str(), value) { ("co_consts", Value::Tuple(values)) => Some(values), _ => None }).ok_or("ValueError: missing code constants")?;
                 let mut relocated = values.to_vec();
