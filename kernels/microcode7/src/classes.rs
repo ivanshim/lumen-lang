@@ -7571,6 +7571,9 @@ impl<'a> Machine<'a> {
                     if key == "__replace__" || self.table.strings("ext.stmt.class.detail.code.replace").first().map_or(false, |word| word == key) {
                         return Ok(Value::Member(Rc::new(value.clone()), String::from("code_replace")));
                     }
+                    if self.table.strings("ext.stmt.class.detail.code.branches").first().is_some_and(|word| word == key) {
+                        return Ok(Value::Member(Rc::new(value.clone()), "code_branches".to_owned()));
+                    }
                     match key {
                         "co_lines" | "co_positions" => {
                             let operation = if key == "co_positions" { "code_positions" } else { "code_lines" };

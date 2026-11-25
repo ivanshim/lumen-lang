@@ -3017,6 +3017,9 @@
     "co_linetable",
     "co_positions"
   ],
+  "ext.stmt.class.detail.code.branches": [
+    "co_branches"
+  ],
   "ext.stmt.class.detail.argcount": [
     "co_argcount"
   ],

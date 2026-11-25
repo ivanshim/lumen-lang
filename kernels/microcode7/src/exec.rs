@@ -13425,6 +13425,15 @@ impl<'a> Machine<'a> {
             if !(arguments.is_empty() && keywords.is_empty()) { return Err(String::from("TypeError: code location iterator takes no arguments").into()); }
             return self.code_metadata_call(if name == "code_lines" { "lines" } else { "positions" }, vec![receiver.clone()]);
         }
+        if name == "code_branches" {
+            if !(arguments.is_empty() && keywords.is_empty()) { return Err(String::from("TypeError: code location iterator takes no arguments").into()); }
+            let Value::Wrapped(7, parts) = receiver.settled() else { return Err(self.class_unready().into()) };
+            let Some(Value::Routine(program) | Value::Bound(program, _)) = parts.first() else { return Err(self.class_unready().into()) };
+            let triples = program.body.branch_spans().into_iter().map(|(src, left, right)| {
+                Value::tuple(vec![Value::Small(src as i64), Value::Small(left as i64), Value::Small(right as i64)])
+            }).collect();
+            return self.make_iterator(Value::tuple(triples));
+        }
         if name == "code_replace" {
             if let Value::Thing(item) = receiver.settled() {
                 if self.code_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
