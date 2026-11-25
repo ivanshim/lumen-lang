@@ -21649,7 +21649,7 @@ impl<'a> Engine<'a> {
                     Value::Small((right * 2) as i64),
                 ]));
             }
-            return self.iterator(Value::tuple(branches)).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
+            return self.iterator(Value::tuple(branches)).map_err(|fault| { self.thread.carried = Some(fault); self.special_fault() });
         }
         if operation == "code_replace" {
             if let Value::Object(object) = receiver.contents() {
