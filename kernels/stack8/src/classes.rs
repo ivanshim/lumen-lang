@@ -6886,8 +6886,12 @@ impl<'a> Engine<'a> {
                     if name == "__replace__" || self.lang.class_details.get("code.replace").and_then(|words| words.first()).map_or(false, |word| word == name) {
                         return Ok(Value::ValueMethod(Rc::new((subject.clone(), "code_replace".to_string()))));
                     }
-                    if name == "co_lines" || name == "co_positions" {
-                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), if name == "co_lines" { "code_lines" } else { "code_positions" }.to_string()))));
+                    if self.lang.class_details.get("code.branches").and_then(|words| words.first()).is_some_and(|word| word == name) {
+                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), "code_branches".to_owned()))));
+                    }
+                    if matches!(name, "co_lines" | "co_positions") {
+                        let method = if name == "co_lines" { "code_lines" } else { "code_positions" };
+                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), method.to_string()))));
                     }
                     if name == "co_linetable" {
                         if let Some(table) = &f.location_bytes { return Ok(table.clone()); }
