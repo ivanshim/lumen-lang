@@ -173,11 +173,12 @@ def _break_down(seconds):
             weekday, day_of_year, 0)
 
 def mktime(fields):
+    from operator import index
     parts = list(fields)
     if len(parts) != 9:
         raise TypeError('mktime() requires a 9-sequence, not ' + type(fields).__name__)
-    days = _ymd2ord(parts[0], parts[1], parts[2]) - _EPOCH_ORD
-    return float(days * 86400 + parts[3] * 3600 + parts[4] * 60 + parts[5])
+    # Local civil time, daylight flag included; the host clock names the epoch second.
+    return float(_host_clock('mktime', tuple(index(part) for part in parts)))
 
 def _pair(number):
     word = str(number)

@@ -42383,9 +42383,70 @@ mod deque;
 mod binascii;
 
 // Host answers for the process locale, the zone, and collation weights.
+fn stamp_civil_time(given: &[Value]) -> Result<Value, String> {
+    if given.len() < 2 {
+        return Err(String::from("TypeError: mktime() takes a time tuple"));
+    }
+    let source = given[1].settled();
+    let fields = match &source {
+        Value::Tuple(items) | Value::Vector(items) => items.to_vec(),
+        _ => return Err(String::from("TypeError: mktime(): illegal time tuple argument")),
+    };
+    if fields.len() != 9 {
+        return Err(String::from("TypeError: mktime(): illegal time tuple argument"));
+    }
+    let mut raw = [0i32; 9];
+    let mut cursor = 0usize;
+    while cursor < 9 {
+        raw[cursor] = match i32::try_from(expect_int(&fields[cursor].settled())?) {
+            Ok(number) => number,
+            Err(_) => return Err(String::from("OverflowError: mktime argument out of range")),
+        };
+        cursor += 1;
+    }
+    #[repr(C)]
+    struct BrokenDown {
+        parts: [i32; 9],
+        shift: i64,
+        label: *const std::ffi::c_char,
+    }
+    let mut broken = BrokenDown {
+        parts: [0; 9],
+        shift: 0,
+        label: std::ptr::null(),
+    };
+    let places = [5usize, 4, 3, 2];
+    let mut slot = 0usize;
+    while slot < places.len() {
+        broken.parts[slot] = raw[places[slot]];
+        slot += 1;
+    }
+    // Month subtraction has C int wraparound before host normalization.
+    broken.parts[4] = raw[1].wrapping_sub(1);
+    broken.parts[5] = match raw[0].checked_sub(1900) {
+        Some(year) => year,
+        None => return Err(String::from("OverflowError: mktime argument out of range")),
+    };
+    // Weekday stays -1 until the host accepts the stamp.
+    broken.parts[6] = -1;
+    broken.parts[8] = raw[8];
+    extern "C" {
+        fn tzset();
+        fn mktime(broken: *mut BrokenDown) -> i64;
+    }
+    unsafe { tzset() };
+    let epoch_seconds = unsafe { mktime(&mut broken) };
+    if epoch_seconds == -1 && broken.parts[6] < 0 {
+        return Err(String::from("OverflowError: mktime argument out of range"));
+    }
+    Ok(Value::Small(epoch_seconds))
+}
+
 fn serve_civil_request(word: &str, given: &[Value]) -> Option<Result<Value, String>> {
     let outcome = if word == "locale" {
         read_process_locale(given)
+    } else if word == "mktime" {
+        stamp_civil_time(given)
     } else if word == "zone" {
         publish_zone_figures(given)
     } else if word == "picture" {
