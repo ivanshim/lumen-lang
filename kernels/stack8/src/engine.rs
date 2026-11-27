@@ -38993,7 +38993,73 @@ mod map_write_tests {
     }
 }
 // Locales, zone figures and pictures kept by the host C library.
+fn civil_local_stamp(args: &[Value]) -> Result<Value, String> {
+    let Some(given) = args.get(1) else {
+        return Err("TypeError: mktime() takes a time tuple".to_string());
+    };
+    let held = given.contents();
+    let row = match &held {
+        Value::Tuple(items) | Value::Array(items) => items.to_vec(),
+        _ => return Err("TypeError: mktime(): illegal time tuple argument".to_string()),
+    };
+    if row.len() != 9 {
+        return Err("TypeError: mktime(): illegal time tuple argument".to_string());
+    }
+    let mut piece = [0i32; 9];
+    for (at, item) in row.iter().enumerate() {
+        let unpacked = item.contents();
+        piece[at] = i32::try_from(civil_whole(&unpacked)?)
+            .map_err(|_| "OverflowError: mktime argument out of range".to_string())?;
+    }
+    let year = match piece[0].checked_sub(1900) {
+        Some(year) => year,
+        None => return Err("OverflowError: mktime argument out of range".to_string()),
+    };
+    #[repr(C)]
+    struct CivilWhen {
+        sec: i32,
+        min: i32,
+        hour: i32,
+        mday: i32,
+        mon: i32,
+        year: i32,
+        wday: i32,
+        yday: i32,
+        isdst: i32,
+        gmtoff: i64,
+        zone: *const std::ffi::c_char,
+    }
+    extern "C" {
+        fn mktime(when: *mut CivilWhen) -> i64;
+        fn tzset();
+    }
+    let mut when = CivilWhen {
+        sec: piece[5],
+        min: piece[4],
+        hour: piece[3],
+        mday: piece[2],
+        // CPython adjusts the C int month before libc normalizes it.
+        mon: piece[1].wrapping_sub(1),
+        year,
+        // Left at -1 so a real stamp of -1 is told apart from a refusal.
+        wday: -1,
+        yday: 0,
+        isdst: piece[8],
+        gmtoff: 0,
+        zone: std::ptr::null(),
+    };
+    unsafe { tzset() };
+    let stamped = unsafe { mktime(&mut when) };
+    if stamped == -1 && when.wday < 0 {
+        return Err("OverflowError: mktime argument out of range".to_string());
+    }
+    Ok(Value::Small(stamped))
+}
+
 fn host_civil_clock(task: &str, args: &[Value]) -> Option<Result<Value, String>> {
+    if task == "mktime" {
+        return Some(civil_local_stamp(args));
+    }
     if task == "locale" {
         return Some(civil_locale(args));
     }
